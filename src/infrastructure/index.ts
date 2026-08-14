@@ -1,6 +1,7 @@
 /**
  * Infrastructure ports — replaceable adapters.
- * No GitHub, LLM, shell, or secret-bearing implementations in Phase 0.
+ * No GitHub, LLM, shell, or secret-bearing implementations.
+ * Phase 1 ships in-memory control-plane registries only.
  */
 
 export interface ClockPort {
@@ -10,6 +11,14 @@ export interface ClockPort {
 export class SystemClock implements ClockPort {
   nowIso(): string {
     return new Date().toISOString();
+  }
+}
+
+export class FixedClock implements ClockPort {
+  constructor(private readonly iso: string) {}
+
+  nowIso(): string {
+    return this.iso;
   }
 }
 
@@ -43,3 +52,10 @@ export interface GitHubPort {
 }
 
 export const DISCONNECTED_GITHUB: GitHubPort = { connected: false };
+
+export {
+  InMemoryProjectRegistry,
+  InMemoryCapabilityRegistry,
+  InMemoryPolicyRegistry,
+  InMemoryResourceBudgetRegistry,
+} from "./control-plane/index.js";

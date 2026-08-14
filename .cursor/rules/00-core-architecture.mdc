@@ -1,0 +1,25 @@
+---
+description: Permanent authority separation and deterministic control rules
+alwaysApply: true
+---
+
+# Core architecture
+
+Permanent authority separation:
+
+```text
+PLANNER → proposes
+VALIDATOR → evaluates
+APPROVER → authorizes
+EXECUTOR → acts
+VERIFIER → measures
+MEMORY → stores governed precedents
+```
+
+The Control Plane is configuration authority only. It does not execute.
+
+Identity, permissions, state transitions, hashes, policies, budgets, approval binding, and execution authority must remain deterministic.
+
+AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
+
+Fail closed when authority is missing. Do not infer permissions. Do not add LLM, GitHub, or other external integrations unless the current milestone explicitly requires them.

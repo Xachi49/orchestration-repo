@@ -2,7 +2,7 @@
   "name": "orchestrator-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 0 foundation",
+  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 1 control plane",
   "type": "module",
   "engines": {
     "node": ">=22"

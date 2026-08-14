@@ -1,14 +1,28 @@
-/**
- * Control-plane: budget contracts.
- * Phase 0: types only — no spend enforcement yet.
- */
-export interface BudgetLimit {
-  budgetId: string;
-  projectId: string;
-  maxCostUsd: number;
-  currency: "USD";
-}
+export {
+  ExecutionWindowSchema,
+  ResourceBudgetProfileSchema,
+  BudgetResourceEstimateSchema,
+  BudgetComparisonResultSchema,
+  BUDGET_DIMENSIONS,
+  BUDGET_LIMIT_BY_DIMENSION,
+  parseResourceBudgetProfile,
+  type ExecutionWindow,
+  type ResourceBudgetProfile,
+  type BudgetResourceEstimate,
+  type BudgetComparisonResult,
+  type BudgetDimension,
+} from "./budget.js";
 
-export interface BudgetRegistryPort {
-  getProjectBudget(projectId: string): Promise<BudgetLimit | null>;
-}
+export {
+  compareBudget,
+  budgetComparisonResult,
+  type BudgetComparison,
+} from "./compare.js";
+
+export type {
+  ResourceBudgetRegistry,
+  BudgetRegistryPort,
+} from "./registry.js";
+
+/** Phase 0 placeholder name. */
+export type { ResourceBudgetProfile as BudgetLimit } from "./budget.js";

@@ -1,13 +1,18 @@
-/**
- * Control-plane: policy bundle contracts.
- * Phase 0: types only — policies are not evaluated yet.
- */
-export interface PolicyBundleRef {
-  policyBundleId: string;
-  policyBundleHash: string;
-  version: string;
-}
+export {
+  PolicyStatusSchema,
+  PolicyEffectSchema,
+  PolicyConditionSchema,
+  PolicyRuleSchema,
+  PolicyBundleSchema,
+  parsePolicyBundle,
+  type PolicyStatus,
+  type PolicyEffect,
+  type PolicyCondition,
+  type PolicyRule,
+  type PolicyBundle,
+} from "./policy.js";
 
-export interface PolicyRegistryPort {
-  getActiveBundle(projectId: string): Promise<PolicyBundleRef | null>;
-}
+export type { PolicyRegistry, PolicyRegistryPort } from "./registry.js";
+
+/** Phase 0 placeholder name. */
+export type { PolicyBundle as PolicyBundleRef } from "./policy.js";

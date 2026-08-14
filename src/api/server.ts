@@ -9,7 +9,7 @@ export async function buildServer() {
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: 0,
+    phase: 1,
     orchestrator: "foundation",
     llmConnected: false,
     githubConnected: false,

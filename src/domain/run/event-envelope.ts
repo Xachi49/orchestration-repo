@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ObjectiveVersionSchema } from "../objective/objective.js";
 
 /**
  * Envelope for all control-plane / run-lifecycle events.
@@ -15,7 +16,7 @@ export const EventEnvelopeSchema = z
     idempotencyKey: z.string().min(1),
     projectId: z.string().min(1),
     objectiveId: z.string().min(1),
-    objectiveVersion: z.string().min(1),
+    objectiveVersion: ObjectiveVersionSchema,
     traceId: z.string().min(1),
     createdAt: z.string().datetime(),
     expiresAt: z.string().datetime(),

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ObjectiveVersionSchema } from "../objective/objective.js";
 
 export const ResourceEstimateSchema = z
   .object({
@@ -123,7 +124,7 @@ export const ExecutionPlanSchema = z
     planId: z.string().min(1),
     planVersion: z.string().min(1),
     objectiveId: z.string().min(1),
-    objectiveVersion: z.string().min(1),
+    objectiveVersion: ObjectiveVersionSchema,
     repositoryCommitSha: z.string().min(1),
     repositoryFingerprint: z.string().min(1),
     policyBundleId: z.string().min(1),

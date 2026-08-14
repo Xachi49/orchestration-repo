@@ -9,10 +9,14 @@ export const ObjectivePrioritySchema = z.enum([
 
 export type ObjectivePriority = z.infer<typeof ObjectivePrioritySchema>;
 
+/** Canonical objective version: positive integer only. */
+export const ObjectiveVersionSchema = z.number().int().positive();
+export type ObjectiveVersion = z.infer<typeof ObjectiveVersionSchema>;
+
 export const ObjectiveSchema = z
   .object({
     objectiveId: z.string().min(1),
-    objectiveVersion: z.string().min(1),
+    objectiveVersion: ObjectiveVersionSchema,
     projectId: z.string().min(1),
     requestedOutcome: z.string().min(1),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),

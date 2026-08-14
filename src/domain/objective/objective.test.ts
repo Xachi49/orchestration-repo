@@ -8,7 +8,7 @@ import {
 function validObjective(overrides: Partial<Objective> = {}): Objective {
   return {
     objectiveId: "obj_1",
-    objectiveVersion: "1",
+    objectiveVersion: 1,
     projectId: "proj_1",
     requestedOutcome: "Deliver Phase 0 foundation",
     acceptanceCriteria: ["Repository builds", "Tests pass"],
@@ -41,6 +41,21 @@ describe("Objective validation", () => {
       // missing required fields
     });
     expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid objective versions", () => {
+    expect(
+      safeParseObjective({ ...validObjective(), objectiveVersion: 0 }).success,
+    ).toBe(false);
+    expect(
+      safeParseObjective({ ...validObjective(), objectiveVersion: -1 }).success,
+    ).toBe(false);
+    expect(
+      safeParseObjective({ ...validObjective(), objectiveVersion: 1.5 }).success,
+    ).toBe(false);
+    expect(
+      safeParseObjective({ ...validObjective(), objectiveVersion: "1" }).success,
+    ).toBe(false);
   });
 
   it("rejects unknown fields under strict schema", () => {

@@ -9,7 +9,7 @@ function basePlan(
     planId: "plan_1",
     planVersion: "1",
     objectiveId: "obj_1",
-    objectiveVersion: "1",
+    objectiveVersion: 1,
     repositoryCommitSha: "abc123",
     repositoryFingerprint: "fp_1",
     policyBundleId: "pol_1",

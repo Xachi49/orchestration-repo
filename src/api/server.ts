@@ -1,26 +1,37 @@
 import Fastify from "fastify";
+import type { ObjectiveAdmissionService } from "../admission/service.js";
+import { registerRunRoutes } from "./runs.js";
+import { createLocalAdmissionStack } from "../infrastructure/admission/local-stack.js";
+
+export interface ApiDeps {
+  admission?: ObjectiveAdmissionService;
+}
 
 /**
- * Minimal HTTP surface for Phase 0.
- * Exposes health only — no orchestration endpoints yet.
+ * HTTP surface. Business logic lives in ObjectiveAdmissionService.
  */
-export async function buildServer() {
+export async function buildServer(deps: ApiDeps = {}) {
   const app = Fastify({ logger: false });
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: 1,
-    orchestrator: "foundation",
+    phase: 2,
+    orchestrator: "admission",
     llmConnected: false,
     githubConnected: false,
     executionEnabled: false,
   }));
 
+  if (deps.admission) {
+    registerRunRoutes(app, deps.admission);
+  }
+
   return app;
 }
 
 async function main(): Promise<void> {
-  const app = await buildServer();
+  const stack = createLocalAdmissionStack();
+  const app = await buildServer({ admission: stack.service });
   const port = Number(process.env["PORT"] ?? 3000);
   await app.listen({ port, host: "127.0.0.1" });
 }

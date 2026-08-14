@@ -1,0 +1,35 @@
+export {
+  ResourceEstimateSchema,
+  RiskLevelSchema,
+  StepRiskSchema,
+  StepValidationSpecSchema,
+  StepRollbackSpecSchema,
+  ExecutionStepSchema,
+  WorkstreamSchema,
+  ApprovalRequirementSchema,
+  FailurePolicySchema,
+  ResourceTotalsSchema,
+  ExecutionPlanSchema,
+  ExecutionPlanForHashSchema,
+  parseExecutionPlan,
+  parseExecutionStep,
+  type ResourceEstimate,
+  type RiskLevel,
+  type StepRisk,
+  type StepValidationSpec,
+  type StepRollbackSpec,
+  type ExecutionStep,
+  type Workstream,
+  type ApprovalRequirement,
+  type FailurePolicy,
+  type ResourceTotals,
+  type ExecutionPlan,
+  type ExecutionPlanForHash,
+} from "./execution-plan.js";
+
+export {
+  Sha256PlanHasher,
+  canonicalizePlan,
+  canonicalizeValue,
+} from "./plan-hasher.js";
+export type { PlanHasher } from "./plan-hasher.js";

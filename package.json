@@ -1,0 +1,27 @@
+{
+  "name": "orchestrator-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 0 foundation",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node --import tsx src/api/server.ts"
+  },
+  "dependencies": {
+    "fastify": "^5.4.0",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.3"
+  }
+}

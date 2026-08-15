@@ -9,6 +9,7 @@ export {
   type ClockPort,
   SystemClock,
   FixedClock,
+  MutableClock,
   type IdGeneratorPort,
   CryptoIdGenerator,
 } from "./clock.js";
@@ -83,3 +84,8 @@ export {
   createLocalValidationStack,
   type LocalValidationStack,
 } from "./validation/index.js";
+
+export {
+  createLocalAuthorizationStack,
+  type LocalAuthorizationStack,
+} from "./authorization/index.js";

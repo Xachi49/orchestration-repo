@@ -82,8 +82,8 @@ export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> =
       "SUPERSEDED",
     ],
     // Phase 5 has no approval authority: VALIDATING → APPROVED is illegal.
-    // A terminal ValidationDecision is data for Phase 6. Phase 6 may later
-    // route VALIDATING → AWAITING_APPROVAL (or other Phase-6-owned edges).
+    // Phase 6 routes VALIDATING → AWAITING_APPROVAL | BLOCKED.
+    // Only Phase 6 may then transition AWAITING_APPROVAL → APPROVED.
     VALIDATING: [
       "AWAITING_APPROVAL",
       "BLOCKED",
@@ -93,6 +93,7 @@ export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> =
       "EXPIRED",
       "CANCELLED",
     ],
+    // Phase 6 human authorization outcomes.
     AWAITING_APPROVAL: [
       "APPROVED",
       "REJECTED",

@@ -1,19 +1,28 @@
-import Fastify from "fastify";
 import type { ObjectiveAdmissionService } from "../admission/service.js";
 import type { RepositoryTruthService } from "../ingestion/service.js";
 import type { PlanningService } from "../planning/service.js";
 import type { ValidationService } from "../validation/service.js";
+import type { AuthorizationRoutingService } from "../authorization/routing.js";
+import type { HumanAuthorizationService } from "../authorization/service.js";
+import type { ApprovalExpiryService } from "../authorization/expiry.js";
+import type { AuthorizationReadinessService } from "../authorization/readiness.js";
+import Fastify from "fastify";
 import { registerRunRoutes } from "./runs.js";
 import { registerIngestRoutes } from "./ingest.js";
 import { registerPlanRoutes } from "./plan.js";
 import { registerValidationRoutes } from "./validate.js";
-import { createLocalValidationStack } from "../infrastructure/validation/local-stack.js";
+import { registerAuthorizationRoutes } from "./authorize.js";
+import { createLocalAuthorizationStack } from "../infrastructure/authorization/local-stack.js";
 
 export interface ApiDeps {
   admission?: ObjectiveAdmissionService;
   ingestion?: RepositoryTruthService;
   planning?: PlanningService;
   validation?: ValidationService;
+  authorizationRouting?: AuthorizationRoutingService;
+  humanAuthorization?: HumanAuthorizationService;
+  approvalExpiry?: ApprovalExpiryService;
+  authorizationReadiness?: AuthorizationReadinessService;
 }
 
 /**
@@ -22,15 +31,23 @@ export interface ApiDeps {
 export async function buildServer(deps: ApiDeps = {}) {
   const app = Fastify({ logger: false });
 
+  const approvalEnabled = Boolean(
+    deps.authorizationRouting && deps.humanAuthorization,
+  );
+
   app.get("/health", async () => ({
     status: "ok",
-    phase: 5,
-    orchestrator: "validation",
+    phase: 6,
+    orchestrator: approvalEnabled
+      ? "authorization"
+      : deps.validation
+        ? "validation"
+        : "planning",
     llmConnected: false,
     githubConnected: false,
     githubWritesEnabled: false,
     executionEnabled: false,
-    approvalEnabled: false,
+    approvalEnabled,
     planningModelToolsEnabled: false,
     validationModelToolsEnabled: false,
   }));
@@ -47,17 +64,34 @@ export async function buildServer(deps: ApiDeps = {}) {
   if (deps.validation) {
     registerValidationRoutes(app, deps.validation);
   }
+  if (
+    deps.authorizationRouting &&
+    deps.humanAuthorization &&
+    deps.approvalExpiry &&
+    deps.authorizationReadiness
+  ) {
+    registerAuthorizationRoutes(app, {
+      routing: deps.authorizationRouting,
+      humanAuthorization: deps.humanAuthorization,
+      expiry: deps.approvalExpiry,
+      readiness: deps.authorizationReadiness,
+    });
+  }
 
   return app;
 }
 
 async function main(): Promise<void> {
-  const stack = createLocalValidationStack();
+  const stack = createLocalAuthorizationStack();
   const app = await buildServer({
     admission: stack.admission,
     ingestion: stack.ingestion,
     planning: stack.planning,
     validation: stack.validation,
+    authorizationRouting: stack.authorizationRouting,
+    humanAuthorization: stack.humanAuthorization,
+    approvalExpiry: stack.approvalExpiry,
+    authorizationReadiness: stack.authorizationReadiness,
   });
   const port = Number(process.env["PORT"] ?? 3000);
   await app.listen({ port, host: "127.0.0.1" });

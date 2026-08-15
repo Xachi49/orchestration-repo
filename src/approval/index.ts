@@ -1,7 +1,7 @@
 /**
  * Approver authority boundary.
  * May authorize an exact plan version. Cannot silently modify that plan.
- * Phase 0: contract only.
+ * Ordinary AI/model conversation is not a trusted authorization channel.
  */
 export interface ApproverPort {
   readonly authority: "AUTHORIZE_EXACT_PLAN_VERSION";
@@ -10,4 +10,13 @@ export interface ApproverPort {
 export const APPROVER_AUTHORITY = {
   mayAuthorizeExactPlanVersion: true,
   mayModifyPlan: false,
+  mayApproveViaModelConversation: false,
+  mayInferApprovalFromValidationPass: false,
 } as const;
+
+export {
+  AuthorizationRoutingService,
+  HumanAuthorizationService,
+  AuthorizationReadinessService,
+  ApprovalExpiryService,
+} from "../authorization/index.js";

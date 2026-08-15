@@ -7,3 +7,4 @@ export * from "./run/index.js";
 export * from "./plan/index.js";
 export * from "./evidence/index.js";
 export * from "./validation/index.js";
+export * from "./authorization/index.js";

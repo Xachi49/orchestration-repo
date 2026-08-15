@@ -6,3 +6,7 @@ export {
   httpStatusForValidation,
   registerValidationRoutes,
 } from "./validate.js";
+export {
+  httpStatusForAuthorization,
+  registerAuthorizationRoutes,
+} from "./authorize.js";

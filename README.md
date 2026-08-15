@@ -1,34 +1,40 @@
 # Orchestrator Agent
 
-Evidence-grounded, policy-governed orchestration: contracts, control plane, admission, verified repository truth, bounded planning, and independent validation.
+Evidence-grounded, policy-governed orchestration: contracts, control plane, admission, verified repository truth, bounded planning, independent validation, and human authorization.
 
 **Package name:** `orchestrator-agent`  
 **Repository folder / remote:** `orchestration-repo`
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
-## Current milestone: Phase 5 — Independent validation
+## Current milestone: Phase 6 — Human authorization & exception inbox
 
-Phase 5 adjudicates a candidate plan and records a `ValidationDecision` of `PASS`, `BLOCK`, `HUMAN_APPROVAL_REQUIRED`, or `REVISE`. A deterministic validator ladder runs first (schema and hash recompute, plan state, freshness, policy, capability, dependency, resource, security). A separate validation model may then add advisory contextual observations; it cannot force a block, approve, or execute.
+Phase 6 consumes terminal Phase 5 `ValidationDecision` values and determines operational authorization before any future execution.
 
-- `PASS` is not `APPROVED`. The run-state machine rejects `VALIDATING → APPROVED`. The run stays in `VALIDATING`; approval is Phase 6.
-- Hard violations — policy `DENY`, hash mismatch, stale or invalid repository lock, rotated policy bundle, hard budget exceed — produce `BLOCK` with no revision.
-- A repairable violation may trigger one bounded revision: `planVersion` 1 → 2 → 3 only. There is no v4.
-- A repeated semantic fingerprint escalates to `HUMAN_APPROVAL_REQUIRED` with `REPEATED_SEMANTIC_VIOLATION`; exhausting the revision budget escalates with `REVISION_ATTEMPTS_EXHAUSTED`. Both raise a `PlanningException`.
+- `PASS != APPROVED`. PASS still creates an `ApprovalRequest` and routes `VALIDATING → AWAITING_APPROVAL`.
+- `BLOCK` routes `VALIDATING → BLOCKED` with no approval request.
+- `HUMAN_APPROVAL_REQUIRED` creates an approval request and decision card, then `AWAITING_APPROVAL`.
+- Only Phase 6 may transition `AWAITING_APPROVAL → APPROVED` after an authorized human decision bound to the exact immutable plan.
+- `APPROVED != EXECUTED`. Phase 6 does not execute, write to GitHub, or apply patches.
+- Ordinary AI/model conversation is not a trusted authorization channel. Delivery uses a provider-neutral port (`FakeApprovalDeliveryService` locally).
 
 See [docs/architecture.md](docs/architecture.md).
 
+## Phase 5 — Independent validation
+
+Phase 5 adjudicates a candidate plan (`PASS` / `BLOCK` / `HUMAN_APPROVAL_REQUIRED` / `REVISE`). The run stays `VALIDATING`. `VALIDATING → APPROVED` remains illegal.
+
 ## Phase 4 — Context compilation & planning
 
-Phase 4 compiles verified repository truth into a bounded planning context and produces a `READY_FOR_VALIDATION` candidate `ExecutionPlan`. The planning model may only propose. It does not approve, execute, write to GitHub, or grant capabilities.
+Bounded planning context and a `READY_FOR_VALIDATION` candidate plan. The planning model may only propose.
 
 ## Phase 3 — Verified repository truth
 
-Immutable commit-SHA lock, detached workspace, fingerprint, deterministic index, evidence registry, drift detection, ingestion fencing.
+Immutable commit-SHA lock, fingerprint, evidence registry, drift detection.
 
 ## Phase 2 — Objective admission
 
-`RECEIVED → ADMITTED` with requester authorization, idempotency, and admission fencing. Objectives are persisted for later planning.
+`RECEIVED → ADMITTED` with requester authorization and fencing.
 
 ## Phase 1 — Deterministic Control Plane
 
@@ -40,12 +46,12 @@ Domain contracts, run-state machine, plan hashing, evidence records.
 
 ## What remains unimplemented
 
-- Human approval (Discord/Slack)
+- Discord/Slack vendor delivery (port + fake only in Phase 6)
 - Execution, patches, shell, GitHub writes
 - Embeddings / vector memory
 - Production databases
 
-Default `npm start` / `npm test` use `FakePlanningModel` and `FakeValidationModel` (no paid API calls).
+Default `npm start` / `npm test` use fake planning/validation models and fake approval delivery (no paid API calls).
 
 ## Commands
 
@@ -68,6 +74,12 @@ POST /v1/runs/:runId/validate
 GET  /v1/runs/:runId/validation
 GET  /v1/runs/:runId/validations
 GET  /v1/runs/:runId/validation-readiness
+POST /v1/runs/:runId/authorization-route
+GET  /v1/runs/:runId/approval-request
+GET  /v1/runs/:runId/authorization-readiness
+POST /v1/approval-requests/:approvalRequestId/decision
+GET  /v1/runs/:runId/authorization
+POST /v1/approval-requests/expire
 ```
 
 ## Auth / live model

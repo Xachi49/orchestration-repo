@@ -24,6 +24,7 @@ export const ApprovalBindingSchema = z
     decisionTimestamp: z.string().datetime(),
     expiryTimestamp: z.string().datetime(),
     decisionCardHash: z.string().min(1),
+    capabilitySetFingerprint: z.string().min(1),
   })
   .strict();
 

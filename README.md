@@ -1,32 +1,37 @@
 # Orchestrator Agent
 
-Evidence-grounded, policy-governed orchestration: contracts, control plane, admission, verified repository truth, bounded planning, independent validation, and human authorization.
+Evidence-grounded, policy-governed orchestration: contracts, control plane, admission, verified repository truth, bounded planning, independent validation, human authorization, and bounded execution.
 
 **Package name:** `orchestrator-agent`  
 **Repository folder / remote:** `orchestration-repo`
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
-## Current milestone: Phase 6 — Human authorization & exception inbox
+## Current milestone: Phase 7 — Bounded execution & safe actuation
 
-Phase 6 consumes terminal Phase 5 `ValidationDecision` values and determines operational authorization before any future execution.
+Phase 7 executes only an exact, human-authorized, still-fresh plan through a narrow capability surface.
 
-- `PASS != APPROVED`. PASS still creates an `ApprovalRequest` and routes `VALIDATING → AWAITING_APPROVAL`.
-- `BLOCK` routes `VALIDATING → BLOCKED` with no approval request.
-- `HUMAN_APPROVAL_REQUIRED` creates an approval request and decision card, then `AWAITING_APPROVAL`.
-- Only Phase 6 may transition `AWAITING_APPROVAL → APPROVED` after an authorized human decision bound to the exact immutable plan.
-- `APPROVED != EXECUTED`. Phase 6 does not execute, write to GitHub, or apply patches.
-- Ordinary AI/model conversation is not a trusted authorization channel. Delivery uses a provider-neutral port (`FakeApprovalDeliveryService` locally).
+- `APPROVED != EXECUTED`. Authorization alone does not actuate.
+- `EXECUTION_SUCCEEDED != VERIFIED_SUCCESS`. Actuator completion is not Phase 8 verification.
+- Only `APPROVED → EXECUTING` is owned here. The run stays `EXECUTING`; Phase 7 does not `COMPLETE`.
+- `VALIDATING` / `AWAITING_APPROVAL` cannot execute.
+- Allowed actions only: `CREATE_LOCAL_PATCH`, `RUN_TESTS`, `CREATE_TASK`, `PREPARE_PULL_REQUEST`.
+- No arbitrary shell, GitHub writes, Discord/Slack, or LLM calls in execution.
+- Default stack uses `FakeSafeActuator`. Use `createExecutionFriendlyPlanningModel()` in tests (default `FakePlanningModel` emits `READ_FILE`, which dry-run rejects).
 
 See [docs/architecture.md](docs/architecture.md).
 
+## Phase 6 — Human authorization & exception inbox
+
+Exact-plan approval binding. `PASS != APPROVED`. `AWAITING_APPROVAL → APPROVED` only.
+
 ## Phase 5 — Independent validation
 
-Phase 5 adjudicates a candidate plan (`PASS` / `BLOCK` / `HUMAN_APPROVAL_REQUIRED` / `REVISE`). The run stays `VALIDATING`. `VALIDATING → APPROVED` remains illegal.
+`PASS` / `BLOCK` / `HUMAN_APPROVAL_REQUIRED` / `REVISE`. Run stays `VALIDATING`.
 
 ## Phase 4 — Context compilation & planning
 
-Bounded planning context and a `READY_FOR_VALIDATION` candidate plan. The planning model may only propose.
+Bounded planning context and a `READY_FOR_VALIDATION` candidate plan.
 
 ## Phase 3 — Verified repository truth
 
@@ -46,12 +51,13 @@ Domain contracts, run-state machine, plan hashing, evidence records.
 
 ## What remains unimplemented
 
-- Discord/Slack vendor delivery (port + fake only in Phase 6)
-- Execution, patches, shell, GitHub writes
+- Discord/Slack vendor delivery (port + fake only)
+- Phase 8 verification / learning
+- GitHub writes, arbitrary shell, deployments
 - Embeddings / vector memory
 - Production databases
 
-Default `npm start` / `npm test` use fake planning/validation models and fake approval delivery (no paid API calls).
+Default `npm start` / `npm test` use fake planning/validation models, fake approval delivery, and fake actuators (no paid API calls).
 
 ## Commands
 
@@ -80,6 +86,9 @@ GET  /v1/runs/:runId/authorization-readiness
 POST /v1/approval-requests/:approvalRequestId/decision
 GET  /v1/runs/:runId/authorization
 POST /v1/approval-requests/expire
+POST /v1/runs/:runId/execute
+GET  /v1/runs/:runId/execution
+GET  /v1/runs/:runId/execution-artifacts
 ```
 
 ## Auth / live model

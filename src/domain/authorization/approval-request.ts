@@ -74,6 +74,11 @@ export const ApprovalRequestSchema = z
     expiresAt: z.string().datetime(),
     status: ApprovalRequestStatusSchema,
     decisionCardHash: z.string().min(1),
+    /**
+     * Frozen Control Plane capability authority for the exact plan.
+     * System-derived at request creation; immutable thereafter.
+     */
+    capabilitySetFingerprint: z.string().min(1),
     /** Hash of the system-issued decision nonce. Plaintext is never persisted. */
     decisionNonceHash: z.string().min(1),
     /** Audit lineage only — not authoritative for execution. */

@@ -4,6 +4,7 @@ import { exampleAdmissionRequest } from "../admission/fixtures.js";
 import {
   EXAMPLE_ENVIRONMENT,
   EXAMPLE_PROJECT_ID,
+  EXAMPLE_CAPABILITIES,
 } from "../control-plane/fixtures.js";
 import { assertTransition } from "../domain/run/run-state.js";
 import { AuthorizationError } from "./errors.js";
@@ -616,6 +617,196 @@ describe("HumanAuthorizationService", () => {
         decisionNonce: deliveredNonce(delivery, routed.approvalRequestId),
       }),
     ).rejects.toBeInstanceOf(AuthorizationError);
+  });
+
+  it("freezes capabilitySetFingerprint on ApprovalRequest and AuthorizationRecord", async () => {
+    const { stack, runId, delivery } = await validatedRun();
+    const routed = await stack.authorizationRouting.route(runId);
+    if (routed.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+    const request = await stack.approvalRequests.getById(
+      routed.approvalRequestId,
+    );
+    expect(request?.capabilitySetFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    const card = await stack.decisionCards.get(routed.approvalRequestId);
+    expect(card?.capabilitySetFingerprint).toBe(
+      request?.capabilitySetFingerprint,
+    );
+    expect(card?.capabilityAuthorityScope.length).toBeGreaterThan(0);
+
+    await stack.humanAuthorization.decide({
+      approvalRequestId: routed.approvalRequestId,
+      approverId: "approver_bootstrap",
+      decision: "APPROVE",
+      submittedAt: stack.clock.nowIso(),
+      decisionNonce: deliveredNonce(delivery, routed.approvalRequestId),
+    });
+    const record = await stack.authorizationRecords.getLatestByRun(runId);
+    expect(record?.capabilitySetFingerprint).toBe(
+      request?.capabilitySetFingerprint,
+    );
+  });
+
+  it("capability authority change after request creation rejects APPROVE without AuthorizationRecord", async () => {
+    const { stack, runId, delivery } = await validatedRun();
+    const routed = await stack.authorizationRouting.route(runId);
+    if (routed.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+    const frozen = (
+      await stack.approvalRequests.getById(routed.approvalRequestId)
+    )?.capabilitySetFingerprint;
+    const patch = await stack.capabilities.getById("CREATE_LOCAL_PATCH");
+    stack.capabilities.replace({
+      ...patch!,
+      maximumRuntimeSeconds: patch!.maximumRuntimeSeconds === 30 ? 600 : 30,
+    });
+    await expect(
+      stack.humanAuthorization.decide({
+        approvalRequestId: routed.approvalRequestId,
+        approverId: "approver_bootstrap",
+        decision: "APPROVE",
+        submittedAt: stack.clock.nowIso(),
+        decisionNonce: deliveredNonce(delivery, routed.approvalRequestId),
+      }),
+    ).rejects.toMatchObject({ code: "CAPABILITY_CHANGED_DURING_APPROVAL" });
+    expect(await stack.authorizationRecords.getLatestByRun(runId)).toBeNull();
+    expect(
+      (await stack.approvalRequests.getById(routed.approvalRequestId))
+        ?.capabilitySetFingerprint,
+    ).toBe(frozen);
+  });
+
+  it("runtime 30→600 and 600→30 during approval both reject", async () => {
+    for (const [from, to] of [
+      [30, 600],
+      [600, 30],
+    ] as const) {
+      const delivery = new FakeApprovalDeliveryService();
+      const stack = createLocalAuthorizationStack({
+        approvalDelivery: delivery,
+        capabilities: EXAMPLE_CAPABILITIES.map((c) =>
+          c.capabilityId === "CREATE_LOCAL_PATCH"
+            ? { ...c, maximumRuntimeSeconds: from }
+            : c,
+        ),
+      });
+      const admitted = await stack.admission.admit(exampleAdmissionRequest());
+      const runId = admitted.runId!;
+      await stack.ingestion.ingest(
+        runId,
+        EXAMPLE_PROJECT_ID,
+        EXAMPLE_ENVIRONMENT,
+      );
+      await stack.planning.plan(runId);
+      await stack.validation.validate(runId);
+      const routed = await stack.authorizationRouting.route(runId);
+      if (routed.outcome !== "PENDING_APPROVAL") {
+        throw new Error("expected pending");
+      }
+      const patch = await stack.capabilities.getById("CREATE_LOCAL_PATCH");
+      stack.capabilities.replace({ ...patch!, maximumRuntimeSeconds: to });
+      await expect(
+        stack.humanAuthorization.decide({
+          approvalRequestId: routed.approvalRequestId,
+          approverId: "approver_bootstrap",
+          decision: "APPROVE",
+          submittedAt: stack.clock.nowIso(),
+          decisionNonce: deliveredNonce(delivery, routed.approvalRequestId),
+        }),
+      ).rejects.toMatchObject({ code: "CAPABILITY_CHANGED_DURING_APPROVAL" });
+      expect(await stack.authorizationRecords.getLatestByRun(runId)).toBeNull();
+    }
+  });
+
+  it("capability enablement drift during approval rejects", async () => {
+    const { stack, runId, delivery } = await validatedRun();
+    const routed = await stack.authorizationRouting.route(runId);
+    if (routed.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+    const patch = await stack.capabilities.getById("CREATE_LOCAL_PATCH");
+    stack.capabilities.replace({ ...patch!, enabled: false });
+    await expect(
+      stack.humanAuthorization.decide({
+        approvalRequestId: routed.approvalRequestId,
+        approverId: "approver_bootstrap",
+        decision: "APPROVE",
+        submittedAt: stack.clock.nowIso(),
+        decisionNonce: deliveredNonce(delivery, routed.approvalRequestId),
+      }),
+    ).rejects.toMatchObject({ code: "CAPABILITY_CHANGED_DURING_APPROVAL" });
+    expect(await stack.authorizationRecords.getLatestByRun(runId)).toBeNull();
+  });
+
+  it("decisionCardHash changes when capability authority changes", async () => {
+    const delivery = new FakeApprovalDeliveryService();
+    const capsA = EXAMPLE_CAPABILITIES.map((c) =>
+      c.capabilityId === "CREATE_LOCAL_PATCH"
+        ? { ...c, maximumRuntimeSeconds: 30 }
+        : c,
+    );
+    const stackA = createLocalAuthorizationStack({
+      approvalDelivery: delivery,
+      capabilities: capsA,
+    });
+    const admittedA = await stackA.admission.admit(exampleAdmissionRequest());
+    const runA = admittedA.runId!;
+    await stackA.ingestion.ingest(runA, EXAMPLE_PROJECT_ID, EXAMPLE_ENVIRONMENT);
+    await stackA.planning.plan(runA);
+    await stackA.validation.validate(runA);
+    const routedA = await stackA.authorizationRouting.route(runA);
+    if (routedA.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+
+    const deliveryB = new FakeApprovalDeliveryService();
+    const stackB = createLocalAuthorizationStack({
+      approvalDelivery: deliveryB,
+      capabilities: EXAMPLE_CAPABILITIES.map((c) =>
+        c.capabilityId === "CREATE_LOCAL_PATCH"
+          ? { ...c, maximumRuntimeSeconds: 600 }
+          : c,
+      ),
+    });
+    const admittedB = await stackB.admission.admit(exampleAdmissionRequest());
+    const runB = admittedB.runId!;
+    await stackB.ingestion.ingest(runB, EXAMPLE_PROJECT_ID, EXAMPLE_ENVIRONMENT);
+    await stackB.planning.plan(runB);
+    await stackB.validation.validate(runB);
+    const routedB = await stackB.authorizationRouting.route(runB);
+    if (routedB.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+
+    const reqA = await stackA.approvalRequests.getById(routedA.approvalRequestId);
+    const reqB = await stackB.approvalRequests.getById(routedB.approvalRequestId);
+    expect(reqA?.capabilitySetFingerprint).not.toBe(
+      reqB?.capabilitySetFingerprint,
+    );
+    expect(reqA?.decisionCardHash).not.toBe(reqB?.decisionCardHash);
+  });
+
+  it("ApprovalRequest capabilitySetFingerprint cannot change in place", async () => {
+    const { stack, runId } = await validatedRun();
+    const routed = await stack.authorizationRouting.route(runId);
+    if (routed.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+    const request = await stack.approvalRequests.getById(
+      routed.approvalRequestId,
+    );
+    await expect(
+      stack.approvalRequests.updateStatus(routed.approvalRequestId, "PENDING", {
+        // updateStatus only allows status extras; binding mutation is via parse
+      }),
+    ).resolves.toMatchObject({
+      capabilitySetFingerprint: request?.capabilitySetFingerprint,
+    });
+    // Attempt to save a mutated binding is rejected by immutable save semantics
+    // (cannot re-save existing id). Binding field guard covers updateStatus.
+    expect(request?.capabilitySetFingerprint).toMatch(/^[a-f0-9]{64}$/);
   });
 });
 

@@ -32,6 +32,10 @@ import {
 } from "./identity.js";
 import { AuthorizationError } from "./errors.js";
 import type { AuthorizationResult } from "./result.js";
+import {
+  capabilitySetFingerprint,
+  uniqueCapabilitiesForPlanActions,
+} from "../execution/capability-fingerprint.js";
 
 export interface HumanAuthorizationServiceDeps {
   runs: RunRepository;
@@ -207,6 +211,7 @@ export class HumanAuthorizationService {
         decision: decision.decision,
         decisionTimestamp: decision.submittedAt,
         decisionCardHash: request.decisionCardHash,
+        capabilitySetFingerprint: request.capabilitySetFingerprint,
         nonceHash,
         createdAt: now,
         ...(decision.note !== undefined ? { note: decision.note } : {}),
@@ -382,6 +387,33 @@ export class HumanAuthorizationService {
       );
     }
 
+    const liveCaps = uniqueCapabilitiesForPlanActions({
+      stepActionTypes: plan.plan.steps.map((s) => s.actionType),
+      availableCapabilities: resolved.availableCapabilities,
+    });
+    for (const step of plan.plan.steps) {
+      const permitted = resolved.availableCapabilities.some((c) =>
+        c.allowedActions.includes(step.actionType),
+      );
+      if (!permitted) {
+        throw new AuthorizationError(
+          "CAPABILITY_CHANGED_DURING_APPROVAL",
+          `Capability for ${step.actionType} unavailable during approval`,
+        );
+      }
+    }
+    const liveCapabilityFingerprint = capabilitySetFingerprint(liveCaps);
+    if (liveCapabilityFingerprint !== request.capabilitySetFingerprint) {
+      throw new AuthorizationError(
+        "CAPABILITY_CHANGED_DURING_APPROVAL",
+        "Capability set fingerprint changed during approval review",
+        {
+          expected: request.capabilitySetFingerprint,
+          live: liveCapabilityFingerprint,
+        },
+      );
+    }
+
     const validation = await this.deps.decisions.getById(
       request.validationDecisionId,
     );
@@ -426,7 +458,8 @@ export class HumanAuthorizationService {
       storedCard.planVersion !== request.planVersion ||
       storedCard.validationDecisionId !== request.validationDecisionId ||
       storedCard.policyBundleHash !== request.policyBundleHash ||
-      storedCard.repositoryFingerprint !== request.repositoryFingerprint
+      storedCard.repositoryFingerprint !== request.repositoryFingerprint ||
+      storedCard.capabilitySetFingerprint !== request.capabilitySetFingerprint
     ) {
       throw new AuthorizationError(
         "AUTHORIZATION_BINDING_STALE",

@@ -6,6 +6,11 @@ import {
   type ApprovalDecisionCard,
 } from "../domain/authorization/index.js";
 import type { PlanningException } from "../validation/exception.js";
+import {
+  capabilitySetFingerprint,
+  uniqueCapabilitiesForPlanActions,
+  type CapabilityAuthorityFields,
+} from "../execution/capability-fingerprint.js";
 
 export function buildApprovalDecisionCard(input: {
   objective: Objective;
@@ -14,6 +19,8 @@ export function buildApprovalDecisionCard(input: {
   whyApprovalRequired: string;
   createdAt: string;
   expiresAt: string;
+  /** Authoritative Control Plane capabilities for the requested environment. */
+  availableCapabilities: readonly CapabilityAuthorityFields[];
   planningException?: PlanningException;
 }): ApprovalDecisionCard {
   const actionTypes = [
@@ -43,6 +50,37 @@ export function buildApprovalDecisionCard(input: {
       (finding) =>
         `[${finding.severity}] ${finding.ruleId}: ${finding.message}`,
     );
+
+  const uniqueCaps = uniqueCapabilitiesForPlanActions({
+    stepActionTypes: input.plan.steps.map((s) => s.actionType),
+    availableCapabilities: input.availableCapabilities,
+  });
+  if (uniqueCaps.length === 0) {
+    throw new Error(
+      "Cannot build approval decision card: no capabilities permit plan actions",
+    );
+  }
+  for (const step of input.plan.steps) {
+    const permitted = input.availableCapabilities.some((c) =>
+      c.allowedActions.includes(step.actionType),
+    );
+    if (!permitted) {
+      throw new Error(
+        `Cannot build approval decision card: no capability permits ${step.actionType}`,
+      );
+    }
+  }
+
+  const fingerprint = capabilitySetFingerprint(uniqueCaps);
+  const capabilityAuthorityScope = uniqueCaps
+    .map((cap) => ({
+      capabilityId: cap.capabilityId,
+      allowedActions: [...cap.allowedActions].sort(),
+      maximumRuntimeSeconds: cap.maximumRuntimeSeconds,
+      enabled: cap.enabled,
+      allowedEnvironments: [...cap.allowedEnvironments].sort(),
+    }))
+    .sort((a, b) => a.capabilityId.localeCompare(b.capabilityId));
 
   const card: ApprovalDecisionCard = {
     objectiveId: input.objective.objectiveId,
@@ -82,6 +120,8 @@ export function buildApprovalDecisionCard(input: {
       ...input.plan.unknowns,
     ],
     approvalEligibleFindingSummaries,
+    capabilitySetFingerprint: fingerprint,
+    capabilityAuthorityScope,
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
   };

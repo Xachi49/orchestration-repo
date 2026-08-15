@@ -6,6 +6,7 @@ import {
   EXAMPLE_PROJECT,
 } from "../../control-plane/fixtures.js";
 import type { ResourceBudgetProfile } from "../../control-plane/budgets/budget.js";
+import type { Capability } from "../../control-plane/capabilities/capability.js";
 import { EXAMPLE_REQUESTER_GRANTS } from "../../admission/fixtures.js";
 import type { RequesterGrant } from "../../admission/authorization.js";
 import { ObjectiveAdmissionService } from "../../admission/service.js";
@@ -26,6 +27,8 @@ import { InMemoryObjectiveRepository } from "./in-memory-objective-repository.js
 export interface LocalAdmissionStack {
   service: ObjectiveAdmissionService;
   controlPlane: ControlPlaneService;
+  /** Single Control Plane capability authority for the whole local stack. */
+  capabilities: InMemoryCapabilityRegistry;
   runs: InMemoryRunRepository;
   events: InMemoryEventStore;
   locks: InMemoryProjectLockService;
@@ -38,11 +41,15 @@ export function createLocalAdmissionStack(options?: {
   grants?: readonly RequesterGrant[];
   clockIso?: string;
   budgets?: readonly ResourceBudgetProfile[];
+  capabilities?: readonly Capability[];
 }): LocalAdmissionStack {
   const clock = new FixedClock(options?.clockIso ?? "2026-08-14T12:00:00.000Z");
+  const capabilities = new InMemoryCapabilityRegistry(
+    options?.capabilities ?? EXAMPLE_CAPABILITIES,
+  );
   const controlPlane = new ControlPlaneService({
     projects: new InMemoryProjectRegistry([EXAMPLE_PROJECT]),
-    capabilities: new InMemoryCapabilityRegistry(EXAMPLE_CAPABILITIES),
+    capabilities,
     policies: new InMemoryPolicyRegistry([EXAMPLE_POLICY_BUNDLE], { clock }),
     budgets: new InMemoryResourceBudgetRegistry(
       options?.budgets ?? [EXAMPLE_BUDGET],
@@ -71,6 +78,7 @@ export function createLocalAdmissionStack(options?: {
   return {
     service,
     controlPlane,
+    capabilities,
     runs,
     events,
     locks,

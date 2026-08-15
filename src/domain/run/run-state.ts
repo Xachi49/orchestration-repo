@@ -103,6 +103,7 @@ export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> =
       "CANCELLED",
       "SUPERSEDED",
     ],
+    // Phase 7 owns APPROVED → EXECUTING. Phase 7 does not COMPLETE.
     APPROVED: [
       "EXECUTING",
       "CANCELLED",
@@ -110,6 +111,9 @@ export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> =
       "SUPERSEDED",
       "BLOCKED",
     ],
+    // Phase 7 leaves the run EXECUTING after actuation; VERIFYING/COMPLETED
+    // are owned by later phases. VALIDATING/AWAITING_APPROVAL → EXECUTING
+    // remain illegal.
     EXECUTING: [
       "VERIFYING",
       "FAILED",

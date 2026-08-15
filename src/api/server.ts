@@ -6,13 +6,16 @@ import type { AuthorizationRoutingService } from "../authorization/routing.js";
 import type { HumanAuthorizationService } from "../authorization/service.js";
 import type { ApprovalExpiryService } from "../authorization/expiry.js";
 import type { AuthorizationReadinessService } from "../authorization/readiness.js";
+import type { ExecutionService } from "../execution/service.js";
+import type { ExecutionReadinessService } from "../execution/readiness.js";
 import Fastify from "fastify";
 import { registerRunRoutes } from "./runs.js";
 import { registerIngestRoutes } from "./ingest.js";
 import { registerPlanRoutes } from "./plan.js";
 import { registerValidationRoutes } from "./validate.js";
 import { registerAuthorizationRoutes } from "./authorize.js";
-import { createLocalAuthorizationStack } from "../infrastructure/authorization/local-stack.js";
+import { registerExecutionRoutes } from "./execute.js";
+import { createLocalExecutionStack } from "../infrastructure/execution/local-stack.js";
 
 export interface ApiDeps {
   admission?: ObjectiveAdmissionService;
@@ -23,6 +26,8 @@ export interface ApiDeps {
   humanAuthorization?: HumanAuthorizationService;
   approvalExpiry?: ApprovalExpiryService;
   authorizationReadiness?: AuthorizationReadinessService;
+  execution?: ExecutionService;
+  executionReadiness?: ExecutionReadinessService;
 }
 
 /**
@@ -34,19 +39,22 @@ export async function buildServer(deps: ApiDeps = {}) {
   const approvalEnabled = Boolean(
     deps.authorizationRouting && deps.humanAuthorization,
   );
+  const executionEnabled = Boolean(deps.execution);
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: 6,
-    orchestrator: approvalEnabled
-      ? "authorization"
-      : deps.validation
-        ? "validation"
-        : "planning",
+    phase: executionEnabled ? 7 : 6,
+    orchestrator: executionEnabled
+      ? "execution"
+      : approvalEnabled
+        ? "authorization"
+        : deps.validation
+          ? "validation"
+          : "planning",
     llmConnected: false,
     githubConnected: false,
     githubWritesEnabled: false,
-    executionEnabled: false,
+    executionEnabled,
     approvalEnabled,
     planningModelToolsEnabled: false,
     validationModelToolsEnabled: false,
@@ -77,12 +85,18 @@ export async function buildServer(deps: ApiDeps = {}) {
       readiness: deps.authorizationReadiness,
     });
   }
+  if (deps.execution && deps.executionReadiness) {
+    registerExecutionRoutes(app, {
+      execution: deps.execution,
+      readiness: deps.executionReadiness,
+    });
+  }
 
   return app;
 }
 
 async function main(): Promise<void> {
-  const stack = createLocalAuthorizationStack();
+  const stack = createLocalExecutionStack();
   const app = await buildServer({
     admission: stack.admission,
     ingestion: stack.ingestion,
@@ -92,6 +106,8 @@ async function main(): Promise<void> {
     humanAuthorization: stack.humanAuthorization,
     approvalExpiry: stack.approvalExpiry,
     authorizationReadiness: stack.authorizationReadiness,
+    execution: stack.execution,
+    executionReadiness: stack.executionReadiness,
   });
   const port = Number(process.env["PORT"] ?? 3000);
   await app.listen({ port, host: "127.0.0.1" });

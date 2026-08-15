@@ -28,6 +28,7 @@ export const ProposedStepSchema = z
       .strict(),
     validationChecks: z.array(z.string().min(1)).min(1),
     rollbackStrategy: z.enum(["NONE", "COMPENSATING_ACTION", "MANUAL"]),
+    compensatingStepIds: z.array(z.string().min(1)).optional(),
     rollbackInstructions: z.array(z.string()).optional(),
   })
   .strict();

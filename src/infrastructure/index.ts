@@ -2,6 +2,7 @@
  * Infrastructure ports — replaceable adapters.
  * Shell execution and GitHub writes remain disconnected.
  * Phase 4 adds an optional OpenAI planning adapter (opt-in; default stack is fake).
+ * Phase 5 adds an optional OpenAI validation adapter (opt-in; default stack is fake).
  */
 
 export {
@@ -76,3 +77,9 @@ export {
   OpenAIPlanningModel,
   createLocalPlanningStack,
 } from "./planning/index.js";
+
+export {
+  OpenAIValidationModel,
+  createLocalValidationStack,
+  type LocalValidationStack,
+} from "./validation/index.js";

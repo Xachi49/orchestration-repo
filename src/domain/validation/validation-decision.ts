@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PlanVersionSchema } from "../plan/execution-plan.js";
 
 export const ValidationDecisionClassSchema = z.enum([
   "PASS",
@@ -42,7 +43,7 @@ export const ValidationDecisionSchema = z
     decidedAt: z.string().datetime(),
     validatorId: z.string().min(1),
     planId: z.string().min(1),
-    planVersion: z.string().min(1),
+    planVersion: PlanVersionSchema,
     planHash: z.string().min(1),
   })
   .strict();

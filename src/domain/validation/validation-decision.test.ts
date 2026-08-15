@@ -35,9 +35,32 @@ describe("Validation contract", () => {
       decidedAt: "2026-08-13T00:00:00.000Z",
       validatorId: "validator_rules_v1",
       planId: "plan_1",
-      planVersion: "1",
+      planVersion: 1,
       planHash: "abc",
     });
     expect(decision.findings).toHaveLength(1);
+  });
+
+  it("rejects non-positive-integer planVersion", () => {
+    const base = {
+      decision: "PASS" as const,
+      findings: [],
+      decidedAt: "2026-08-13T00:00:00.000Z",
+      validatorId: "validator_rules_v1",
+      planId: "plan_1",
+      planHash: "abc",
+    };
+    expect(() =>
+      parseValidationDecision({ ...base, planVersion: "1" }),
+    ).toThrow();
+    expect(() =>
+      parseValidationDecision({ ...base, planVersion: 1.5 }),
+    ).toThrow();
+    expect(() =>
+      parseValidationDecision({ ...base, planVersion: 0 }),
+    ).toThrow();
+    expect(() =>
+      parseValidationDecision({ ...base, planVersion: -1 }),
+    ).toThrow();
   });
 });

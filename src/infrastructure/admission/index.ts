@@ -3,6 +3,7 @@ export { InMemoryIdempotencyStore } from "./in-memory-idempotency-store.js";
 export { InMemoryProjectLockService } from "./in-memory-project-lock.js";
 export { InMemoryRunRepository } from "./in-memory-run-repository.js";
 export { InMemoryEventStore } from "./in-memory-event-store.js";
+export { InMemoryObjectiveRepository } from "./in-memory-objective-repository.js";
 export {
   UuidAdmissionIdentityGenerator,
   SequenceAdmissionIdentityGenerator,

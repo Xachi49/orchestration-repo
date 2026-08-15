@@ -9,6 +9,8 @@ export {
   ApprovalRequirementSchema,
   FailurePolicySchema,
   ResourceTotalsSchema,
+  PlanVersionSchema,
+  INITIAL_PLAN_VERSION,
   ExecutionPlanSchema,
   ExecutionPlanForHashSchema,
   parseExecutionPlan,
@@ -23,6 +25,7 @@ export {
   type ApprovalRequirement,
   type FailurePolicy,
   type ResourceTotals,
+  type PlanVersion,
   type ExecutionPlan,
   type ExecutionPlanForHash,
 } from "./execution-plan.js";

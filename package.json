@@ -2,7 +2,7 @@
   "name": "orchestrator-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 6 human authorization",
+  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 7 bounded execution",
   "type": "module",
   "engines": {
     "node": ">=22"

@@ -5,21 +5,39 @@ import {
 } from "../../control-plane/capabilities/capability.js";
 import type { CapabilityRegistry } from "../../control-plane/capabilities/registry.js";
 
+/**
+ * In-memory CapabilityRegistry — the single Control Plane capability authority
+ * when wired into ControlPlaneService.
+ */
 export class InMemoryCapabilityRegistry implements CapabilityRegistry {
-  private readonly capabilities: ReadonlyMap<string, Capability>;
+  private readonly capabilities: Map<string, Capability>;
 
   constructor(seed: readonly Capability[] = []) {
-    const map = new Map<string, Capability>();
+    this.capabilities = new Map();
     for (const item of seed) {
       const capability = parseCapability(item);
-      if (map.has(capability.capabilityId)) {
+      if (this.capabilities.has(capability.capabilityId)) {
         throw new Error(
           `Duplicate capabilityId in seed: ${capability.capabilityId}`,
         );
       }
-      map.set(capability.capabilityId, Object.freeze(capability));
+      this.capabilities.set(capability.capabilityId, Object.freeze(capability));
     }
-    this.capabilities = map;
+  }
+
+  /**
+   * Replace an existing capability in the single authoritative registry.
+   * Used for config-reload / drift tests — not a parallel capability truth.
+   */
+  replace(input: Capability): Capability {
+    const capability = parseCapability(input);
+    if (!this.capabilities.has(capability.capabilityId)) {
+      throw new Error(
+        `Cannot replace unknown capabilityId: ${capability.capabilityId}`,
+      );
+    }
+    this.capabilities.set(capability.capabilityId, Object.freeze(capability));
+    return capability;
   }
 
   async getById(capabilityId: string): Promise<Capability | null> {

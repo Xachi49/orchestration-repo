@@ -10,3 +10,7 @@ export {
   httpStatusForAuthorization,
   registerAuthorizationRoutes,
 } from "./authorize.js";
+export {
+  httpStatusForExecution,
+  registerExecutionRoutes,
+} from "./execute.js";

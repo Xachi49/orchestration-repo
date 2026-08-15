@@ -7,6 +7,7 @@ Phase 2 added **admission authority**: objective admission and durable run ident
 Phase 3 added **verified repository truth**: an immutable, evidence-backed view of a registered repository.
 Phase 4–5 added bounded planning and independent validation.
 Phase 6 added **human authorization**: exact-plan approval binding and the exception inbox.
+Phase 7 added **bounded execution**: SafeActuator side effects under readiness, preflight, and fencing.
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
@@ -25,13 +26,13 @@ The Control Plane is none of those. It is **CONFIGURATION AUTHORITY**.
 
 ### CONFIGURATION AUTHORITY vs EXECUTION AUTHORITY
 
-| Configuration authority (Phase 1) | Execution authority (deferred) |
+| Configuration authority (Phase 1) | Execution authority (Phase 7, bounded) |
 | --- | --- |
-| What projects exist | Changing a repository |
-| Which capabilities exist and whether they are enabled | Invoking a capability |
-| Which policy bundle is active | Evaluating a full policy engine against a live plan |
-| Which resource ceilings apply | Spending tokens, calling APIs, running jobs |
-| Whether an environment is listed as allowed | Connecting to that environment |
+| What projects exist | Changing a repository (local patch artifacts only) |
+| Which capabilities exist and whether they are enabled | Invoking a registered Phase 7 capability via SafeActuator |
+| Which policy bundle is active | Evaluating freshness against the authorized plan |
+| Which resource ceilings apply | Spending against ExecutionResourceLedger ceilings |
+| Whether an environment is listed as allowed | Connecting only within allowed environment + containment |
 
 The Control Plane defines what may **eventually** be permissible.
 It does **not** execute, approve, plan, or remember outcomes.
@@ -63,6 +64,10 @@ the project is `ACTIVE` and the requested environment is listed.
 
 A capability is a named, versioned description of something a future executor
 might be permitted to do. It is not an executable tool.
+
+**The Control Plane Capability Registry is the single execution authority.
+Validation and execution may expose separate application services, but they do
+not maintain independent capability truths.**
 
 Port: `CapabilityRegistry` — `getById`, `exists`, `list`, `isActionAllowed`.
 
@@ -858,18 +863,45 @@ An approval binds to:
 projectId, objectiveId/version, planId/version/hash,
 repositoryCommitSha/fingerprint, policyBundleHash,
 validationDecisionId, approvalRequestId, decisionCardHash,
+capabilitySetFingerprint,
 approverId, decision, timestamps
 ```
 
+**Human authorization binds not only to the exact plan but also to the exact
+execution capability authority under which that plan was approved.**
+
+Therefore:
+
+```text
+PLAN HASH MATCH
+```
+
+is necessary but not sufficient.
+
+```text
+PLAN HASH
++ REPOSITORY
++ POLICY
++ VALIDATION DECISION
++ CAPABILITY SET FINGERPRINT
+```
+
+must all remain identical.
+
 Any material change invalidates approval. Plan v2 cannot authorize via a v1
 request. Before `APPROVE`, Phase 6 rechecks plan hash, repository lock/freshness,
-policy hash, validation decision identity, card hash, and expiry.
+policy hash, **capability set fingerprint**, validation decision identity, card
+hash, and expiry. Capability drift during review yields
+`CAPABILITY_CHANGED_DURING_APPROVAL` (no AuthorizationRecord is created).
 
 ### Decision card
 
 `ApprovalDecisionCard` is a compressed human-review artifact (what / why / where /
-expected result / risk / blast radius / rollback / validation result). No hidden
-reasoning. `DecisionCardHasher` hashes authoritative semantic content only.
+expected result / risk / blast radius / rollback / validation result / capability
+authority scope). No hidden reasoning. `DecisionCardHasher` hashes authoritative
+semantic content only, including system-derived `capabilitySetFingerprint` and
+`capabilityAuthorityScope`. A capability authority change requires a new card,
+new `decisionCardHash`, new `ApprovalRequest`, and a new human decision.
 
 ### Human decisions
 
@@ -898,7 +930,8 @@ Phase 5 revision loop. A future explicit workflow must create new plan lineage.
 
 ### Authorization record
 
-Append-only `AuthorizationRecord` captures the immutable authorization event.
+Append-only `AuthorizationRecord` captures the immutable authorization event,
+including the frozen `capabilitySetFingerprint` copied from the ApprovalRequest.
 Corrections require a new record, never an edit.
 
 ### HTTP
@@ -912,4 +945,152 @@ Corrections require a new record, never an edit.
 
 Decision endpoints resolve binding from the stored `ApprovalRequest`. Callers
 cannot supply an authoritative `planHash`.
+
+---
+
+## Phase 7 — Bounded execution & safe actuation
+
+Phase 7 is the first controlled side-effect boundary. It executes only an exact,
+human-authorized, still-fresh plan through a narrowly registered capability
+surface. It has **no planning authority**, **no approval authority**, and **no
+authority to invent new actions**.
+
+```text
+APPROVED != EXECUTED
+EXECUTION_SUCCEEDED != VERIFIED_SUCCESS
+APPROVED → EXECUTING   (Phase 7 owns)
+VALIDATING → EXECUTING (illegal)
+AWAITING_APPROVAL → EXECUTING (illegal)
+Phase 7 does not transition to COMPLETED
+```
+
+### Flow
+
+```text
+APPROVED run
+  + AuthorizationRecord (APPROVE)
+  + immutable ExecutionPlan
+      ↓
+ExecutionReadinessService
+      ↓
+ExecutionCoordinator fence
+      ↓
+ExecutionPreflightService (freshness)
+      ↓
+DryRunCompiler → CompiledExecutionStep[]
+      ↓
+ExecutionAttempt + ExecutionAuthoritySnapshot
+      ↓
+APPROVED → EXECUTING
+      ↓
+sequential dependency-ordered SafeActuator steps
+      ↓
+ExecutionResult (run remains EXECUTING)
+```
+
+### Allowed actions
+
+```text
+CREATE_LOCAL_PATCH   — local patch artifact only (no commit/push/merge)
+RUN_TESTS            — registered testProfileId → trusted argv (shell:false)
+CREATE_TASK          — local/in-memory task representation
+PREPARE_PULL_REQUEST — local PR metadata artifact (no GitHub write)
+```
+
+### Side-effect lifecycle
+
+```text
+RESERVED  → side-effect boundary NOT crossed (safe to continue / re-reserve)
+RUNNING   → side-effect boundary MAY have been crossed (markRunning before SafeActuator)
+SUCCEEDED | FAILED → terminal
+```
+
+If the process fails after `RUNNING` but before terminal persistence: do not blind
+re-run; attempt actuator-specific reconciliation; otherwise
+`STEP_EXECUTION_STATE_UNKNOWN` and contain (`EXECUTING → CONTAINED`).
+
+### Rollback pipeline
+
+Automatic rollback (max 1) executes only pre-authorized compensating steps already
+in the approved plan, through the same bounded pipeline:
+
+```text
+authorized rollback definition
+  → deterministic compilation
+  → capability / argument / target validation
+  → rollback idempotency key
+  → reserve → markRunning → SafeActuator → persist → audit
+```
+
+No invented rollback commands. No generic rollback shell.
+
+### Runtime / resources
+
+Before each actuator: strictest of `capability.maximumRuntimeSeconds`, remaining
+`maximumExecutionMinutes`, and registered test-profile timeout. Insufficient time
+→ `EXECUTION_RESOURCE_BUDGET_EXCEEDED` without starting the actuator.
+
+### Containment
+
+When side-effect state is uncertain, rollback fails/is unsafe, or further automatic
+action is prohibited: `EXECUTING → CONTAINED`. Normal actuator success leaves the run
+`EXECUTING` for Phase 8 (not `COMPLETED`, not `VERIFIED_SUCCESS`).
+
+### Key components
+
+| Component | Role |
+| --- | --- |
+| `ExecutionReadinessService` | Gate: APPROVED + AuthorizationRecord + binding + VERIFIED lock + capabilities |
+| `ExecutionPreflightService` | Immediate pre-actuation freshness; never silently reapproves |
+| `ExecutionCoordinator` | Fence `NOT_STARTED→IN_PROGRESS→COMPLETED\|FAILED\|CONTAINED` keyed by run+plan+auth |
+| `DryRunCompiler` | Plan → actuator instructions; rejects unsupported actions, shell, absolute paths |
+| `CapabilityExecutionSchema` | Exact argument schemas per Phase 7 action |
+| `ExecutionTargetValidator` | Path containment + protected targets (`.git`, `.env`, authority files) |
+| `SafeActuator` | Narrow port: createLocalPatch / runRegisteredTestProfile / createLocalTask / preparePullRequestArtifact |
+| `TestProfileRegistry` | TYPECHECK / UNIT_TESTS / BUILD → trusted argv + timeoutSeconds |
+| `StepExecutionRepository` | RESERVED → RUNNING → SUCCEEDED\|FAILED; RUNNING re-entry → unknown |
+| `ExecutionResourceLedger` | Runtime reservation + discrete budget ceilings before side effects |
+| `RollbackService` | Max 1 automatic rollback; compensating-only steps excluded from happy path |
+| `ContainmentResult` | Stop further automatic action; preserve artifacts; not success |
+| `ExecutionService` | Orchestrates the full flow; success → EXECUTING; containment → CONTAINED |
+| `ExecutionAuthoritySnapshot` | Exact authority at actuation time (incl. capabilitySetFingerprint) |
+
+### Execution result statuses
+
+```text
+EXECUTION_SUCCEEDED  — actuators completed (not verified objective success)
+EXECUTION_FAILED
+EXECUTION_PARTIAL
+EXECUTION_CONTAINED
+```
+
+### HTTP
+
+- `POST /v1/runs/{runId}/execute`
+- `GET  /v1/runs/{runId}/execution`
+- `GET  /v1/runs/{runId}/execution-artifacts`
+
+### Local stack
+
+`createLocalExecutionStack` extends the Phase 6 authorization stack with
+`FakeSafeActuator` (deterministic; no real npm spawn in unit tests). Artifacts
+land under `dataRoot/runs/{runId}/artifacts/`. Tests that need executable plans
+should use `createExecutionFriendlyPlanningModel()` because the default
+`FakePlanningModel` emits `READ_FILE`, which Phase 7 dry-run rejects.
+
+Capability fixtures passed as `capabilities` seed the **Control Plane**
+`CapabilityRegistry` at admission. The same registry instance is used by
+planning, validation, readiness, preflight, execution, and rollback-time
+re-resolution. There is no separate validation-only capability truth.
+
+`capabilitySetFingerprint` covers execution-authority fields only (including
+`maximumRuntimeSeconds`, `approvalRequirement`, actions, environments, enabled,
+and `version`). Descriptions and timestamps are excluded.
+
+Phase 6 freezes the fingerprint onto the ApprovalRequest / decision card /
+AuthorizationRecord. Phase 7 expected authority is
+`AuthorizationRecord.capabilitySetFingerprint` — **not** a live recompute at
+readiness. Live Control Plane fingerprint must equal that frozen value or
+execution fails with `EXECUTION_CAPABILITY_CHANGED` (including at rollback
+re-resolution). Fail closed; do not judge whether a change is "safe enough."
 

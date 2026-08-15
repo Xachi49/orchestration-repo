@@ -89,3 +89,13 @@ export {
   createLocalAuthorizationStack,
   type LocalAuthorizationStack,
 } from "./authorization/index.js";
+
+export {
+  createLocalExecutionStack,
+  FakeSafeActuator,
+  LocalPatchActuator,
+  RegisteredTestActuator,
+  LocalTaskActuator,
+  PullRequestPreparationActuator,
+  type LocalExecutionStack,
+} from "./execution/index.js";

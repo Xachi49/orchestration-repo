@@ -24,6 +24,11 @@ export const AuthorizationRecordSchema = z
     decision: HumanDecisionKindSchema,
     decisionTimestamp: z.string().datetime(),
     decisionCardHash: z.string().min(1),
+    /**
+     * Frozen capability authority from the ApprovalRequest / decision card.
+     * Exact match required at execution readiness and preflight.
+     */
+    capabilitySetFingerprint: z.string().min(1),
     nonceHash: z.string().min(1),
     createdAt: z.string().datetime(),
     note: z.string().max(4000).optional(),

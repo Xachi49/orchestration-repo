@@ -62,6 +62,26 @@ export const ApprovalDecisionCardSchema = z
       .strict()
       .optional(),
     approvalEligibleFindingSummaries: z.array(z.string()),
+    /**
+     * System-derived fingerprint of Control Plane capability authority for
+     * plan-referenced actions. Bound into decisionCardHash. Not caller-supplied.
+     */
+    capabilitySetFingerprint: z.string().min(1),
+    /**
+     * Human-readable capability/action scope authorized by this card.
+     * Authority material — included in decisionCardHash.
+     */
+    capabilityAuthorityScope: z.array(
+      z
+        .object({
+          capabilityId: z.string().min(1),
+          allowedActions: z.array(z.string().min(1)),
+          maximumRuntimeSeconds: z.number().int().nonnegative(),
+          enabled: z.boolean(),
+          allowedEnvironments: z.array(z.string().min(1)),
+        })
+        .strict(),
+    ),
     createdAt: z.string().datetime(),
     expiresAt: z.string().datetime(),
   })

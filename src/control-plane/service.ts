@@ -37,6 +37,15 @@ export class ControlPlaneService {
     this.clock = deps.clock;
   }
 
+  /**
+   * The single Control Plane capability authority backing resolve().
+   * Validation/execution services may hold this same reference; they must not
+   * substitute an independent registry.
+   */
+  capabilityRegistry(): CapabilityRegistry {
+    return this.capabilities;
+  }
+
   async resolve(
     projectId: string,
     environment: string,

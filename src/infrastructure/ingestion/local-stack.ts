@@ -24,14 +24,18 @@ import { FakeRemoteRepository } from "./fake-remote.js";
 import { FakeRepositoryWorkspace } from "./fake-workspace.js";
 import type { RequesterGrant } from "../../admission/authorization.js";
 import type { ResourceBudgetProfile } from "../../control-plane/budgets/budget.js";
+import type { Capability } from "../../control-plane/capabilities/capability.js";
 import type { InMemoryRunRepository } from "../admission/in-memory-run-repository.js";
 import type { InMemoryObjectiveRepository } from "../admission/in-memory-objective-repository.js";
 import type { FixedClock } from "../clock.js";
+import type { InMemoryCapabilityRegistry } from "../control-plane/in-memory-capability-registry.js";
 
 export interface LocalIngestionStack {
   admission: ObjectiveAdmissionService;
   ingestion: RepositoryTruthService;
   controlPlane: ControlPlaneService;
+  /** Same registry instance wired into ControlPlaneService. */
+  capabilities: InMemoryCapabilityRegistry;
   runs: InMemoryRunRepository;
   objectives: InMemoryObjectiveRepository;
   remote: FakeRemoteRepository;
@@ -48,6 +52,7 @@ export function createLocalIngestionStack(options?: {
   grants?: readonly RequesterGrant[];
   clockIso?: string;
   budgets?: readonly ResourceBudgetProfile[];
+  capabilities?: readonly Capability[];
   remote?: RemoteRepositoryService;
   workspace?: RepositoryWorkspaceService;
   indexer?: ProjectIndexer;
@@ -56,6 +61,7 @@ export function createLocalIngestionStack(options?: {
     grants?: readonly RequesterGrant[];
     clockIso?: string;
     budgets?: readonly ResourceBudgetProfile[];
+    capabilities?: readonly Capability[];
   } = {};
   if (options?.grants) {
     admissionOptions.grants = options.grants;
@@ -65,6 +71,9 @@ export function createLocalIngestionStack(options?: {
   }
   if (options?.budgets) {
     admissionOptions.budgets = options.budgets;
+  }
+  if (options?.capabilities) {
+    admissionOptions.capabilities = options.capabilities;
   }
   const admissionStack = createLocalAdmissionStack(admissionOptions);
   const remote =
@@ -119,6 +128,7 @@ export function createLocalIngestionStack(options?: {
     admission: admissionStack.service,
     ingestion,
     controlPlane: admissionStack.controlPlane,
+    capabilities: admissionStack.capabilities,
     runs: admissionStack.runs,
     objectives: admissionStack.objectives,
     remote: remote as FakeRemoteRepository,

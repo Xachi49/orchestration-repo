@@ -229,6 +229,7 @@ export class AuthorizationRoutingService {
       whyApprovalRequired: whyApprovalRequiredForDecision(decision),
       createdAt: now,
       expiresAt,
+      availableCapabilities: resolved.availableCapabilities,
       ...(exception ? { planningException: exception } : {}),
     });
     const decisionCardHash = this.cardHasher.hash(card);
@@ -309,6 +310,7 @@ export class AuthorizationRoutingService {
       expiresAt,
       status: "PENDING",
       decisionCardHash,
+      capabilitySetFingerprint: card.capabilitySetFingerprint,
       decisionNonceHash: issued.nonceHash,
       ...(priorCancelled
         ? { replacesApprovalRequestId: priorCancelled.approvalRequestId }

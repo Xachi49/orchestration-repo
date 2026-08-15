@@ -4,11 +4,9 @@ import {
 } from "../planning/local-stack.js";
 import type { RequesterGrant } from "../../admission/authorization.js";
 import type { ResourceBudgetProfile } from "../../control-plane/budgets/budget.js";
-import { EXAMPLE_CAPABILITIES } from "../../control-plane/fixtures.js";
 import type { Capability } from "../../control-plane/capabilities/capability.js";
 import type { PlanningModel } from "../../planning/model.js";
 import type { PlanIdentityGenerator } from "../../planning/plan-compiler.js";
-import { InMemoryCapabilityRegistry } from "../control-plane/in-memory-capability-registry.js";
 import {
   FakeValidationModel,
   InMemoryValidationCoordinator,
@@ -32,7 +30,6 @@ export interface LocalValidationStack extends LocalPlanningStack {
   validationUsage: InMemoryValidationUsageLedger;
   validationModel: ValidationModel;
   revisionModel: PlanRevisionModel;
-  capabilities: InMemoryCapabilityRegistry;
 }
 
 /** Revised plans get their own id sequence so a revision never collides with v1. */
@@ -49,6 +46,9 @@ class RevisionPlanIdentityGenerator implements PlanIdentityGenerator {
  * Local stack for Phase 5. Uses `FakeValidationModel` by default and reuses the
  * fake planning model for bounded revision.
  * Never constructs `OpenAIValidationModel` unless one is explicitly injected.
+ *
+ * Capability authority is the Control Plane registry from admission — validation
+ * does not maintain an independent capability truth.
  */
 export function createLocalValidationStack(options?: {
   grants?: readonly RequesterGrant[];
@@ -67,6 +67,7 @@ export function createLocalValidationStack(options?: {
     grants?: readonly RequesterGrant[];
     clockIso?: string;
     budgets?: readonly ResourceBudgetProfile[];
+    capabilities?: readonly Capability[];
     model?: PlanningModel;
   } = {};
   if (options?.grants) {
@@ -78,14 +79,14 @@ export function createLocalValidationStack(options?: {
   if (options?.budgets) {
     planningOptions.budgets = options.budgets;
   }
+  if (options?.capabilities) {
+    planningOptions.capabilities = options.capabilities;
+  }
   if (options?.planningModel) {
     planningOptions.model = options.planningModel;
   }
 
   const base = createLocalPlanningStack(planningOptions);
-  const capabilities = new InMemoryCapabilityRegistry(
-    options?.capabilities ?? EXAMPLE_CAPABILITIES,
-  );
   const validationCoordinator = new InMemoryValidationCoordinator();
   const validationDecisions = new InMemoryValidationDecisionRepository();
   const validationUsage = new InMemoryValidationUsageLedger();
@@ -111,7 +112,7 @@ export function createLocalValidationStack(options?: {
     evidence: base.evidence,
     workspace: base.workspace,
     plans: base.plans,
-    capabilities,
+    capabilities: base.capabilities,
     decisions: validationDecisions,
     model: validationModel,
     usage: validationUsage,
@@ -142,6 +143,5 @@ export function createLocalValidationStack(options?: {
     validationUsage,
     validationModel,
     revisionModel,
-    capabilities,
   };
 }

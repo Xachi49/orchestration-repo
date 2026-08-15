@@ -68,8 +68,10 @@ export class PlanQualityScorer {
     const rollbackCompleteness = proposal.steps.every(
       (step) =>
         step.rollbackStrategy === "NONE" ||
+        step.rollbackStrategy === "MANUAL" ||
         (step.rollbackInstructions?.length ?? 0) > 0 ||
-        step.rollbackStrategy === "MANUAL",
+        (step.rollbackStrategy === "COMPENSATING_ACTION" &&
+          (step.compensatingStepIds?.length ?? 0) > 0),
     )
       ? proposal.proposedRollbackApproach.length > 0
         ? 1

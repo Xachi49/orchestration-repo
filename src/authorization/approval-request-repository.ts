@@ -179,6 +179,7 @@ function assertBindingUnchanged(
     "validationDecisionId",
     "validationDecision",
     "decisionCardHash",
+    "capabilitySetFingerprint",
     "decisionNonceHash",
     "createdAt",
     "expiresAt",

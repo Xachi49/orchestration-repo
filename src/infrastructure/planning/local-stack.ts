@@ -12,12 +12,11 @@ import {
 } from "../../planning/index.js";
 import type { RequesterGrant } from "../../admission/authorization.js";
 import type { ResourceBudgetProfile } from "../../control-plane/budgets/budget.js";
+import type { Capability } from "../../control-plane/capabilities/capability.js";
 import type {
   PlanningMaxOutputTokensByOperation,
   PlanningTokenReservationEstimator,
 } from "../../planning/token-reservation.js";
-import { InMemoryCapabilityRegistry } from "../control-plane/in-memory-capability-registry.js";
-import { EXAMPLE_CAPABILITIES } from "../../control-plane/fixtures.js";
 
 export interface LocalPlanningStack extends LocalIngestionStack {
   planning: PlanningService;
@@ -31,11 +30,13 @@ export interface LocalPlanningStack extends LocalIngestionStack {
 /**
  * Local stack for Phase 4. Uses FakePlanningModel by default.
  * Never constructs OpenAIPlanningModel unless explicitly injected.
+ * Capability authority is the Control Plane registry from admission.
  */
 export function createLocalPlanningStack(options?: {
   grants?: readonly RequesterGrant[];
   clockIso?: string;
   budgets?: readonly ResourceBudgetProfile[];
+  capabilities?: readonly Capability[];
   model?: PlanningModel;
   tokenEstimator?: PlanningTokenReservationEstimator;
   maxOutputTokensByOperation?: PlanningMaxOutputTokensByOperation;
@@ -44,6 +45,7 @@ export function createLocalPlanningStack(options?: {
     grants?: readonly RequesterGrant[];
     clockIso?: string;
     budgets?: readonly ResourceBudgetProfile[];
+    capabilities?: readonly Capability[];
   } = {};
   if (options?.grants) {
     baseOptions.grants = options.grants;
@@ -54,12 +56,14 @@ export function createLocalPlanningStack(options?: {
   if (options?.budgets) {
     baseOptions.budgets = options.budgets;
   }
+  if (options?.capabilities) {
+    baseOptions.capabilities = options.capabilities;
+  }
   const base = createLocalIngestionStack(baseOptions);
   const planningCoordinator = new InMemoryPlanningCoordinator();
   const plans = new InMemoryPlanRepository();
   const usage = new InMemoryPlanningUsageLedger();
   const planningModel = options?.model ?? new FakePlanningModel();
-  const capabilities = new InMemoryCapabilityRegistry(EXAMPLE_CAPABILITIES);
   const readiness = new PlanningReadinessService({
     runs: base.runs,
     contexts: base.contexts,
@@ -80,7 +84,7 @@ export function createLocalPlanningStack(options?: {
     model: planningModel,
     usage,
     plans,
-    capabilities,
+    capabilities: base.capabilities,
     identities: new SequencePlanIdentityGenerator(),
     clock: base.clock,
     ...(options?.tokenEstimator

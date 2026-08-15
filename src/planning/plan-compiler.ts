@@ -51,10 +51,14 @@ export class PlanCompiler {
     const steps = input.proposal.steps.map((step) => {
       const rollback: {
         strategy: "NONE" | "COMPENSATING_ACTION" | "MANUAL";
+        compensatingStepIds?: string[];
         instructions?: string[];
       } = {
         strategy: step.rollbackStrategy,
       };
+      if (step.compensatingStepIds !== undefined) {
+        rollback.compensatingStepIds = [...step.compensatingStepIds];
+      }
       if (step.rollbackInstructions !== undefined) {
         rollback.instructions = step.rollbackInstructions;
       }

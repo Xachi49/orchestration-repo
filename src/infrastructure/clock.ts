@@ -16,6 +16,23 @@ export class FixedClock implements ClockPort {
   }
 }
 
+/** Test/helper clock whose instant can be advanced for expiry scenarios. */
+export class MutableClock implements ClockPort {
+  constructor(private iso: string) {}
+
+  nowIso(): string {
+    return this.iso;
+  }
+
+  set(iso: string): void {
+    this.iso = iso;
+  }
+
+  advanceMs(ms: number): void {
+    this.iso = new Date(Date.parse(this.iso) + ms).toISOString();
+  }
+}
+
 export interface IdGeneratorPort {
   generate(prefix: string): string;
 }

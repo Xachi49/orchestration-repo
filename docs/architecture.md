@@ -5,6 +5,8 @@ Phase 0 defined domain contracts and a fail-closed run-state machine.
 Phase 1 added **configuration authority**: the deterministic Control Plane.
 Phase 2 added **admission authority**: objective admission and durable run identity.
 Phase 3 added **verified repository truth**: an immutable, evidence-backed view of a registered repository.
+Phase 4–5 added bounded planning and independent validation.
+Phase 6 added **human authorization**: exact-plan approval binding and the exception inbox.
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
@@ -804,4 +806,110 @@ durable implementations must use atomic compare-and-set per plan identity.
 - `GET  /v1/runs/{runId}/validation` (latest decision)
 - `GET  /v1/runs/{runId}/validations` (decision history)
 - `GET  /v1/runs/{runId}/validation-readiness`
+
+---
+
+## Phase 6 — Human authorization & exception inbox
+
+Phase 6 consumes terminal Phase 5 decisions and determines whether an identified
+human authorized an exact immutable plan. It does not execute.
+
+```text
+PASS != APPROVED
+APPROVED != EXECUTED
+Ordinary AI/model conversation is not a trusted authorization channel.
+Only Phase 6 may transition AWAITING_APPROVAL → APPROVED.
+VALIDATING → APPROVED remains illegal.
+```
+
+### Routing
+
+```text
+ValidationDecision = BLOCK
+  → VALIDATING → BLOCKED
+  → no ApprovalRequest
+
+ValidationDecision = PASS | HUMAN_APPROVAL_REQUIRED
+  → build ApprovalDecisionCard + decisionCardHash
+  → persist ApprovalRequest
+  → deliver via ApprovalDeliveryService
+  → VALIDATING → AWAITING_APPROVAL
+```
+
+PASS still requires explicit human authorization before any future execution.
+
+Preferred delivery sequence:
+
+```text
+persist request → store card → deliver → transition AWAITING_APPROVAL
+```
+
+If delivery fails: request is `CANCELLED` with `APPROVAL_DELIVERY_FAILED`, the
+run stays `VALIDATING`, and an explicit retry creates a **new** ApprovalRequest
+(new id, system-issued nonce, createdAt/expiresAt, decisionCardHash). The failed
+request remains permanently CANCELLED for audit (`replacesApprovalRequestId` is
+lineage only). Binding fields including `expiresAt` are immutable after creation.
+
+### Exact approval binding
+
+An approval binds to:
+
+```text
+projectId, objectiveId/version, planId/version/hash,
+repositoryCommitSha/fingerprint, policyBundleHash,
+validationDecisionId, approvalRequestId, decisionCardHash,
+approverId, decision, timestamps
+```
+
+Any material change invalidates approval. Plan v2 cannot authorize via a v1
+request. Before `APPROVE`, Phase 6 rechecks plan hash, repository lock/freshness,
+policy hash, validation decision identity, card hash, and expiry.
+
+### Decision card
+
+`ApprovalDecisionCard` is a compressed human-review artifact (what / why / where /
+expected result / risk / blast radius / rollback / validation result). No hidden
+reasoning. `DecisionCardHasher` hashes authoritative semantic content only.
+
+### Human decisions
+
+```text
+APPROVE → ApprovalRequest APPROVED, run AWAITING_APPROVAL → APPROVED
+REJECT  → ApprovalRequest REJECTED, run → REJECTED
+REQUEST_MODIFICATION → ModificationRequest persisted, request
+                       MODIFICATION_REQUESTED, run → ESCALATED
+```
+
+`REQUEST_MODIFICATION` does not mutate the candidate plan and does not enter the
+Phase 5 revision loop. A future explicit workflow must create new plan lineage.
+
+### Replay, expiry, approvers
+
+- System issues a cryptographically strong `decisionNonce` at ApprovalRequest
+  creation; only the hash is stored. Plaintext is delivered out-of-band.
+  Caller-invented nonces fail closed (`INVALID_DECISION_NONCE`). Reuse →
+  `AUTHORIZATION_DECISION_REPLAYED`. Terminal/expired/cancelled/superseded
+  requests invalidate the nonce.
+- Default approval window: 24 hours (`DEFAULT_APPROVAL_WINDOW_MS`)
+- `ApprovalExpiryService.expireDueRequests(now)` → request `EXPIRED`, run `EXPIRED`
+- Expired approvals cannot be revived
+- `ApproverAuthorizationService` checks `project.authorizedApproverIds`; unknown
+  approver fails closed. Requester identity is not automatically an approver.
+
+### Authorization record
+
+Append-only `AuthorizationRecord` captures the immutable authorization event.
+Corrections require a new record, never an edit.
+
+### HTTP
+
+- `POST /v1/runs/{runId}/authorization-route`
+- `GET  /v1/runs/{runId}/approval-request`
+- `GET  /v1/runs/{runId}/authorization-readiness`
+- `POST /v1/approval-requests/{approvalRequestId}/decision`
+- `GET  /v1/runs/{runId}/authorization`
+- `POST /v1/approval-requests/expire`
+
+Decision endpoints resolve binding from the stored `ApprovalRequest`. Callers
+cannot supply an authoritative `planHash`.
 

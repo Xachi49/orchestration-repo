@@ -40,7 +40,7 @@ describe("validation HTTP", () => {
     const health = await app.inject({ method: "GET", url: "/health" });
     expect(health.json()).toMatchObject({
       status: "ok",
-      phase: 5,
+      phase: 6,
       llmConnected: false,
       githubConnected: false,
       executionEnabled: false,

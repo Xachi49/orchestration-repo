@@ -23,6 +23,10 @@ export const EvidenceRecordSchema = z
     trustLevel: TrustLevelSchema,
     observedAt: z.string().datetime(),
     summary: z.string().min(1),
+    runId: z.string().min(1).optional(),
+    projectId: z.string().min(1).optional(),
+    commitSha: z.string().min(1).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

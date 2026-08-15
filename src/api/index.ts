@@ -14,3 +14,7 @@ export {
   httpStatusForExecution,
   registerExecutionRoutes,
 } from "./execute.js";
+export {
+  httpStatusForVerification,
+  registerVerificationRoutes,
+} from "./verify.js";

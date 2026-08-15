@@ -8,6 +8,7 @@ Phase 3 added **verified repository truth**: an immutable, evidence-backed view 
 Phase 4–5 added bounded planning and independent validation.
 Phase 6 added **human authorization**: exact-plan approval binding and the exception inbox.
 Phase 7 added **bounded execution**: SafeActuator side effects under readiness, preflight, and fencing.
+Phase 8 added **independent outcome verification**: evidence-backed completion.
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
@@ -1093,4 +1094,182 @@ AuthorizationRecord. Phase 7 expected authority is
 readiness. Live Control Plane fingerprint must equal that frozen value or
 execution fails with `EXECUTION_CAPABILITY_CHANGED` (including at rollback
 re-resolution). Fail closed; do not judge whether a change is "safe enough."
+
+## Phase 8 — Independent outcome verification & evidence-backed completion
+
+Phase 8 independently determines whether reality after execution satisfies the
+authorized objective. The executor reports what it attempted; the verifier
+measures what actually happened. Completion requires evidence.
+
+### Governing invariants
+
+```text
+EXECUTION_SUCCEEDED  ≠  VERIFIED_SUCCESS
+VERIFIED_SUCCESS     ≠  "the model thinks it worked"
+COMPLETED            requires evidence-backed VERIFIED_SUCCESS + CompletionRecord
+```
+
+The executor cannot verify itself. Verification must not import SafeActuator,
+PlanningModel, or ValidationModel implementations.
+
+### Run-state semantics
+
+```text
+EXECUTING → VERIFYING → COMPLETED     (only when outcome = VERIFIED_SUCCESS)
+VERIFYING → ESCALATED                 (PARTIAL_SUCCESS | VERIFICATION_FAILED | INCONCLUSIVE)
+CONTAINED                             (may record verification; never → COMPLETED)
+```
+
+Illegal shortcuts (fail closed):
+
+```text
+EXECUTING → COMPLETED
+VALIDATING → COMPLETED
+APPROVED → COMPLETED
+AWAITING_APPROVAL → COMPLETED
+```
+
+### Flow
+
+```text
+ExecutionResult + StepResults + Artifacts + AcceptanceCriteria
+      ↓
+VerificationReadinessService
+      ↓
+VerificationCoordinator fence (runId+executionAttemptId+planId+version+hash)
+      ↓
+EXECUTING → VERIFYING
+      ↓
+PostExecutionTruthService → PostExecutionSnapshot (+ hash)
+      ↓
+VerificationSpecificationCompiler
+      ↓
+DeterministicOutcomeVerificationService (ladder)
+      ↓
+optional VerificationModel (advisory; may downgrade only)
+      ↓
+OutcomeDecisionEngine
+      ↓
+OutcomeVerificationRecord
+      ↓
+VERIFIED_SUCCESS → CompletionRecord → COMPLETED
+else → ESCALATED (or preserve CONTAINED)
+```
+
+### Historical authority vs current drift
+
+**Historical execution authority** asks: was this actuation performed under the
+exact human-authorized fingerprints at execution time?
+
+```text
+AuthorizationRecord.capabilitySetFingerprint
+  == ExecutionAuthoritySnapshot.authorizedCapabilitySetFingerprint
+  == ExecutionAuthoritySnapshot.liveCapabilitySetFingerprint
+```
+
+**Current Control Plane drift** (policy/capability changes after actuation) is
+recorded separately (`CURRENT_DRIFT` findings). It must not rewrite whether the
+already-observed execution was historically authorized. Future actions remain
+subject to current authority.
+
+### Evidence trust
+
+| Trust class | May support VERIFIED_SUCCESS |
+| --- | --- |
+| `SYSTEM_OBSERVED` / `SYSTEM_RECOMPUTED` | Yes (deterministic) |
+| `VERIFIED_EXECUTION_RECORD` | Yes (re-read stores) |
+| `MODEL_INTERPRETATION` | No — may only challenge/downgrade |
+
+Models must never create `SYSTEM_OBSERVED` or `SYSTEM_RECOMPUTED` evidence.
+Missing evidence → `INCONCLUSIVE` (never default success).
+
+### Deterministic ladder (order)
+
+1. Binding / execution identity
+2. Historical authority integrity
+3. Side-effect state completeness
+4. Artifact integrity (recompute hashes from disk)
+5. Actual execution boundary
+6. Governance / resource compliance
+7. Step postconditions
+8. Acceptance-criteria evidence coverage
+9. Acceptance-criteria verdicts
+10. Containment / unresolved uncertainty
+
+### OutcomeDecisionEngine precedence
+
+1. Contained / unresolved side-effect uncertainty → `CONTAINED`
+2. Binding corruption / tampering / unauthorized effects / hard governance → `VERIFICATION_FAILED`
+3. Required criterion `UNSATISFIED` → `PARTIAL_SUCCESS` if any satisfied, else `VERIFICATION_FAILED`
+4. Any `PARTIALLY_SATISFIED` → `PARTIAL_SUCCESS`
+5. Any `INCONCLUSIVE` / missing evidence → `INCONCLUSIVE`
+6. Contextual structured concerns may downgrade only
+7. `VERIFIED_SUCCESS` only when every required criterion and postcondition is
+   `SATISFIED`, coverage complete, artifacts/authority/boundary/governance pass,
+   and no success-blocking contextual finding
+
+The model recommendation itself never causes step 7.
+
+### Key components
+
+| Component | Role |
+| --- | --- |
+| `VerificationReadinessService` | Gate: EXECUTING/CONTAINED + terminal ExecutionResult + bindings |
+| `VerificationCoordinator` | Fence `NOT_STARTED→IN_PROGRESS→DECIDED\|FAILED` |
+| `VerificationAttempt` | Append-only attempt metadata |
+| `PostExecutionTruthService` | Reconstruct observable truth from stores (not ExecutionResult alone) |
+| `PostExecutionSnapshotHasher` | Canonical hash; excludes timestamps/display/absolute paths |
+| `VerificationEvidence` + repository | Append-only evidence with sourceType + trustClass |
+| `ExecutionArtifactVerifier` | Recompute content hashes under `dataRoot` |
+| `ActionOutcomeVerifierRegistry` | CREATE_LOCAL_PATCH / RUN_TESTS / CREATE_TASK / PREPARE_PULL_REQUEST |
+| `ExecutionBoundaryVerifier` | Actual effects ⊆ authorized scope |
+| `ExecutionGovernanceVerifier` | Phase 7 governance independently checked |
+| `VerificationSpecificationCompiler` | Objective criteria + plan postconditions; stable criterion IDs |
+| `VerificationCoverageService` | Every criterion represented; gaps → INCONCLUSIVE |
+| `DeterministicOutcomeVerificationService` | Ladder above |
+| `VerificationModel` / `FakeVerificationModel` | Contextual assessment; default fake; no tools |
+| `VerificationInferenceLedger` | Separate from planning/validation inference |
+| `OutcomeDecisionEngine` | Authoritative verdict |
+| `OutcomeVerificationRecord` | Append-only decision record |
+| `CompletionRecord` | ONLY for VERIFIED_SUCCESS; proves COMPLETED |
+| `OutcomeVerificationService` | Orchestrates the full flow; no remediation |
+
+Acceptance criteria are not mapped to execution evidence heuristically for
+completion authority. Every criterion must have an explicit verification
+binding inside the hashed, validated, human-authorized ExecutionPlan.
+
+```text
+HEURISTIC_RELEVANCE ≠ VERIFICATION_BINDING
+THE HUMAN AUTHORIZES BOTH THE ACTION AND THE DEFINITION OF PROOF.
+```
+
+Criterion IDs are assigned by shared `AcceptanceCriterionIdentityService`
+(objectiveFingerprint + ordinal + normalized text) used by Phases 4–8.
+`AcceptanceCriterionVerificationBinding` participates in `planHash`.
+Altering a binding requires a new plan → revalidation → new authorization.
+
+Keyword/actionType matching may appear only as a non-authoritative diagnostic
+suggestion. It must never create `SYSTEM_OBSERVED` evidence and must never
+cause `SATISFIED`, `VERIFIED_SUCCESS`, or `COMPLETED`.
+
+### No remediation
+
+For non-success outcomes Phase 8 must not re-execute, replan, revise, expand
+scope, request capabilities, or self-authorize remediation.
+
+### HTTP
+
+- `POST /v1/runs/{runId}/verify`
+- `GET  /v1/runs/{runId}/verification`
+- `GET  /v1/runs/{runId}/verification-evidence`
+
+No `/mark-success`, `/complete`, or `/override-verification`.
+
+### Local stack
+
+`createLocalVerificationStack` extends `createLocalExecutionStack` with
+`FakeVerificationModel`, in-memory evidence/outcome/completion stores, and
+verification readiness/coordinator. Tests that need executable plans should
+continue to use `createExecutionFriendlyPlanningModel()` with acceptance
+criteria aligned to plan postconditions.
 

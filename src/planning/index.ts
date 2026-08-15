@@ -51,10 +51,12 @@ export {
   GapAnalysisSchema,
   PlanProposalSchema,
   ProposedStepSchema,
+  ProposedAcceptanceCriterionVerificationBindingSchema,
   parsePlanProposal,
   type GapAnalysis,
   type PlanProposal,
   type ProposedStep,
+  type ProposedAcceptanceCriterionVerificationBinding,
 } from "./proposal.js";
 
 export type {
@@ -102,6 +104,10 @@ export {
   SequencePlanIdentityGenerator,
   type PlanIdentityGenerator,
 } from "./plan-compiler.js";
+export {
+  compileAcceptanceCriterionVerificationBindings,
+  proposeBindingsForSteps,
+} from "./verification-bindings.js";
 export { PlanningPromptAssembler } from "./prompt-assembler.js";
 export {
   StoredPlanStatusSchema,

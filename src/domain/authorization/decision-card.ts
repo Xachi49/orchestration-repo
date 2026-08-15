@@ -82,6 +82,23 @@ export const ApprovalDecisionCardSchema = z
         })
         .strict(),
     ),
+    /**
+     * Human-readable verification coverage: WHAT / HOW / WHICH for each criterion.
+     * Authoritative — participates in decisionCardHash.
+     * THE HUMAN AUTHORIZES BOTH THE ACTION AND THE DEFINITION OF PROOF.
+     */
+    verificationCoverageSummary: z.array(
+      z
+        .object({
+          criterionId: z.string().min(1),
+          criterionText: z.string().min(1),
+          verificationMethod: z.string().min(1),
+          howVerified: z.string().min(1),
+          stepIds: z.array(z.string().min(1)),
+          evidenceExpectation: z.string().min(1),
+        })
+        .strict(),
+    ),
     createdAt: z.string().datetime(),
     expiresAt: z.string().datetime(),
   })

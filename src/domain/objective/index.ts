@@ -18,3 +18,12 @@ export {
   objectiveFingerprint,
   type ObjectiveFingerprintContent,
 } from "./fingerprint.js";
+
+export {
+  AcceptanceCriterionIdentityService,
+  acceptanceCriterionIdentity,
+  acceptanceCriterionId,
+  normalizeCriterionText,
+  criterionTextHash,
+  type AcceptanceCriterionIdentity,
+} from "./criterion-identity.js";

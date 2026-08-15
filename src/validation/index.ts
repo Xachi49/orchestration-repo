@@ -87,6 +87,8 @@ export {
   type DeterministicValidationServiceDeps,
 } from "./deterministic.js";
 
+export { PlanVerificationBindingValidator } from "./verification-binding-validator.js";
+
 export {
   ContextualValidationAssessmentSchema,
   ContextualValidationObservationSchema,

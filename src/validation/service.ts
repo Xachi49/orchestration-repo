@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { RunRepository } from "../admission/run-repository.js";
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
+import type { Objective } from "../domain/objective/objective.js";
 import type {
   ControlPlaneClock,
   ControlPlaneService,
@@ -170,6 +171,7 @@ interface ValidationRunContext {
   control: ProjectControlContext;
   repositoryContext: VerifiedRepositoryContext | null;
   liveLock: LockedRepositoryState | null;
+  objective: Objective;
 }
 
 /**
@@ -343,6 +345,7 @@ export class ValidationService {
           environment: runContext.environment,
           liveLock: runContext.liveLock,
           repositoryContext: runContext.repositoryContext,
+          objective: runContext.objective,
         });
         const findings: ValidationFinding[] = [...deterministicResult.findings];
 
@@ -581,6 +584,17 @@ export class ValidationService {
         { runId },
       );
     }
+    const objective = await this.objectives.getById(
+      run.objectiveId,
+      run.objectiveVersion,
+    );
+    if (!objective) {
+      throw new ValidationError(
+        "VALIDATION_NOT_READY",
+        `Objective not found for run ${runId}`,
+        { runId, objectiveId: run.objectiveId },
+      );
+    }
     const control = await this.controlPlane.resolve(
       run.projectId,
       run.requestedEnvironment,
@@ -591,6 +605,7 @@ export class ValidationService {
       control,
       repositoryContext: await this.contexts.getByRunId(runId),
       liveLock: await this.locks.getByRunId(runId),
+      objective,
     };
   }
 

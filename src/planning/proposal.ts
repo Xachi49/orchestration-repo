@@ -3,6 +3,31 @@ import {
   RiskLevelSchema,
   ResourceEstimateSchema,
 } from "../domain/plan/execution-plan.js";
+import { VerificationBindingMethodSchema } from "../domain/plan/verification-binding.js";
+
+/**
+ * Model-proposed verification binding. Criterion identity is resolved by
+ * PlanCompiler from the immutable Objective — the model may not invent IDs.
+ */
+export const ProposedAcceptanceCriterionVerificationBindingSchema = z
+  .object({
+    /** Must match an objective acceptance criterion text exactly (trim-insensitive at compile). */
+    criterionText: z.string().min(1),
+    verificationMethod: VerificationBindingMethodSchema,
+    stepIds: z.array(z.string().min(1)).min(1),
+    /** Texts of expectedPostconditions on referenced steps (resolved to ids). */
+    postconditionTexts: z.array(z.string().min(1)).optional(),
+    /** Validation check texts on referenced steps (resolved to requirement ids). */
+    verificationCheckTexts: z.array(z.string().min(1)).optional(),
+    requireAll: z.boolean(),
+    testProfileId: z.string().min(1).optional(),
+    artifactTypes: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+export type ProposedAcceptanceCriterionVerificationBinding = z.infer<
+  typeof ProposedAcceptanceCriterionVerificationBindingSchema
+>;
 
 /**
  * Probabilistic model proposal — NOT the authoritative ExecutionPlan.
@@ -89,6 +114,13 @@ export const PlanProposalSchema = z
         estimatedLlmCalls: z.number().nonnegative().optional(),
       })
       .strict(),
+    /**
+     * Proposed verification contract for every acceptance criterion.
+     * PlanCompiler assigns canonical criterion IDs and validates coverage.
+     */
+    acceptanceCriterionVerificationBindings: z
+      .array(ProposedAcceptanceCriterionVerificationBindingSchema)
+      .default([]),
     conciseRationale: z.string().min(1),
   })
   .strict();

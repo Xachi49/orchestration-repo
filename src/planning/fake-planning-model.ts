@@ -10,6 +10,7 @@ import {
   type GapAnalysis,
   type PlanProposal,
 } from "./proposal.js";
+import { proposeBindingsForSteps } from "./verification-bindings.js";
 
 /**
  * Deterministic fake model for tests and default local stack.
@@ -146,6 +147,64 @@ export class FakePlanningModel implements PlanningModel {
         (cap) => cap.enabled && cap.allowedActions.includes("RUN_TESTS"),
       )?.allowedActions[0] ?? "RUN_TESTS";
 
+    const steps = [
+      {
+        stepId: "step_read",
+        actionType: allowedAction,
+        description: "Inspect verified repository evidence",
+        targetIds: ["workspace"],
+        evidenceRefs,
+        dependsOn: [],
+        preconditions: ["Verified repository context available"],
+        expectedPostconditions: ["Relevant files reviewed"],
+        resourceEstimate: {
+          durationMs: 60_000,
+          tokenEstimate: 1_000,
+          costEstimateUsd: 0.01,
+        },
+        risk: { level: "LOW" as const, categories: ["read-only"] },
+        validationChecks: ["Confirm evidence hashes match registry"],
+        rollbackStrategy: "NONE" as const,
+      },
+      {
+        stepId: "step_patch",
+        actionType: patchAction,
+        description: "Prepare a local patch addressing the objective",
+        targetIds: ["workspace"],
+        evidenceRefs,
+        dependsOn: ["step_read"],
+        preconditions: ["Read step complete"],
+        expectedPostconditions: ["Local patch artifact prepared"],
+        resourceEstimate: {
+          durationMs: 180_000,
+          tokenEstimate: 2_000,
+          costEstimateUsd: 0.05,
+        },
+        risk: { level: "MEDIUM" as const, categories: ["local-mutation"] },
+        validationChecks: ["Patch applies cleanly in workspace"],
+        rollbackStrategy: "MANUAL" as const,
+        rollbackInstructions: ["Discard local patch artifact"],
+      },
+      {
+        stepId: "step_test",
+        actionType: testAction,
+        description: "Run permitted local tests",
+        targetIds: ["workspace"],
+        evidenceRefs,
+        dependsOn: ["step_patch"],
+        preconditions: ["Patch prepared"],
+        expectedPostconditions: ["Tests executed"],
+        resourceEstimate: {
+          durationMs: 300_000,
+          tokenEstimate: 500,
+          costEstimateUsd: 0.02,
+        },
+        risk: { level: "LOW" as const, categories: ["verification"] },
+        validationChecks: ["Test command exits successfully"],
+        rollbackStrategy: "NONE" as const,
+      },
+    ];
+
     const output: PlanningModelOutput<PlanProposal> = {
       value: parsePlanProposal({
         gapAnalysis: input.gapAnalysis,
@@ -156,63 +215,7 @@ export class FakePlanningModel implements PlanningModel {
             stepIds: ["step_read", "step_patch", "step_test"],
           },
         ],
-        steps: [
-          {
-            stepId: "step_read",
-            actionType: allowedAction,
-            description: "Inspect verified repository evidence",
-            targetIds: ["workspace"],
-            evidenceRefs,
-            dependsOn: [],
-            preconditions: ["Verified repository context available"],
-            expectedPostconditions: ["Relevant files reviewed"],
-            resourceEstimate: {
-              durationMs: 60_000,
-              tokenEstimate: 1_000,
-              costEstimateUsd: 0.01,
-            },
-            risk: { level: "LOW", categories: ["read-only"] },
-            validationChecks: ["Confirm evidence hashes match registry"],
-            rollbackStrategy: "NONE",
-          },
-          {
-            stepId: "step_patch",
-            actionType: patchAction,
-            description: "Prepare a local patch addressing the objective",
-            targetIds: ["workspace"],
-            evidenceRefs,
-            dependsOn: ["step_read"],
-            preconditions: ["Read step complete"],
-            expectedPostconditions: ["Local patch artifact prepared"],
-            resourceEstimate: {
-              durationMs: 180_000,
-              tokenEstimate: 2_000,
-              costEstimateUsd: 0.05,
-            },
-            risk: { level: "MEDIUM", categories: ["local-mutation"] },
-            validationChecks: ["Patch applies cleanly in workspace"],
-            rollbackStrategy: "MANUAL",
-            rollbackInstructions: ["Discard local patch artifact"],
-          },
-          {
-            stepId: "step_test",
-            actionType: testAction,
-            description: "Run permitted local tests",
-            targetIds: ["workspace"],
-            evidenceRefs,
-            dependsOn: ["step_patch"],
-            preconditions: ["Patch prepared"],
-            expectedPostconditions: ["Tests executed"],
-            resourceEstimate: {
-              durationMs: 300_000,
-              tokenEstimate: 500,
-              costEstimateUsd: 0.02,
-            },
-            risk: { level: "LOW", categories: ["verification"] },
-            validationChecks: ["Test command exits successfully"],
-            rollbackStrategy: "NONE",
-          },
-        ],
+        steps,
         successDefinition: [...input.context.objective.acceptanceCriteria],
         assumptions: [...input.gapAnalysis.assumptions],
         unknowns: [...input.gapAnalysis.unknowns],
@@ -229,6 +232,10 @@ export class FakePlanningModel implements PlanningModel {
           maximumParallelWorkstreams: 1,
           estimatedLlmCalls: 2,
         },
+        acceptanceCriterionVerificationBindings: proposeBindingsForSteps({
+          acceptanceCriteria: input.context.objective.acceptanceCriteria,
+          steps,
+        }),
         conciseRationale:
           "Fake deterministic proposal grounded in verified context and available capabilities.",
       }),

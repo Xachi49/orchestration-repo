@@ -24,6 +24,10 @@ async function plannedFixture() {
   await stack.ingestion.ingest(runId, EXAMPLE_PROJECT_ID, EXAMPLE_ENVIRONMENT);
   await stack.planning.plan(runId);
   const record = (await stack.plans.getByRunId(runId))!;
+  const objective = (await stack.objectives.getById(
+    (await stack.runs.getById(runId))!.objectiveId,
+    (await stack.runs.getById(runId))!.objectiveVersion,
+  ))!;
   const control = await stack.controlPlane.resolve(
     EXAMPLE_PROJECT_ID,
     EXAMPLE_ENVIRONMENT,
@@ -40,6 +44,7 @@ async function plannedFixture() {
     environment: EXAMPLE_ENVIRONMENT,
     liveLock,
     repositoryContext,
+    objective,
   };
   return { stack, runId, record, control, input, deterministic };
 }
@@ -64,6 +69,7 @@ describe("DeterministicValidationService", () => {
       "DEPENDENCY",
       "RESOURCE",
       "SECURITY",
+      "VERIFICATION_BINDING",
     ]);
     expect(result.haltedAt).toBeNull();
     expect(result.contextualEligible).toBe(true);

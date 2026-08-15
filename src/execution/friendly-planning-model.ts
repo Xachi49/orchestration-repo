@@ -9,6 +9,7 @@ import type {
   PlanningModelOutput,
   PlanningModelTokenUsage,
 } from "../planning/model.js";
+import { proposeBindingsForSteps } from "../planning/verification-bindings.js";
 
 export interface ExecutionFriendlyPlanningOptions {
   /**
@@ -140,6 +141,10 @@ class ExecutionFriendlyPlanningModel extends FakePlanningModel {
         maximumParallelWorkstreams: 1,
         estimatedLlmCalls: 2,
       },
+      acceptanceCriterionVerificationBindings: proposeBindingsForSteps({
+        acceptanceCriteria: input.context.objective.acceptanceCriteria,
+        steps,
+      }),
       conciseRationale:
         "Execution-friendly proposal using only Phase 7 actuator actions.",
     });

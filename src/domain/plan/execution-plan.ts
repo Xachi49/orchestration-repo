@@ -116,13 +116,22 @@ export const ResourceTotalsSchema = z
 export type ResourceTotals = z.infer<typeof ResourceTotalsSchema>;
 
 /**
+ * Authoritative plan revision number.
+ * Integer only, strictly greater than zero. Initial revision is 1.
+ * Assigned by PlanCompiler — never by the planning model.
+ */
+export const PlanVersionSchema = z.number().int().positive();
+export type PlanVersion = z.infer<typeof PlanVersionSchema>;
+export const INITIAL_PLAN_VERSION: PlanVersion = 1;
+
+/**
  * Top-level execution plan contract.
  * `planHash` is computed over the canonical form excluding itself.
  */
 export const ExecutionPlanSchema = z
   .object({
     planId: z.string().min(1),
-    planVersion: z.string().min(1),
+    planVersion: PlanVersionSchema,
     objectiveId: z.string().min(1),
     objectiveVersion: ObjectiveVersionSchema,
     repositoryCommitSha: z.string().min(1),

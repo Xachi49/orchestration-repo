@@ -1,7 +1,7 @@
 /**
  * Infrastructure ports — replaceable adapters.
- * LLM, shell execution, and GitHub writes remain disconnected.
- * Phase 3 adds a read-only GitHub adapter and in-memory ingestion stores.
+ * Shell execution and GitHub writes remain disconnected.
+ * Phase 4 adds an optional OpenAI planning adapter (opt-in; default stack is fake).
  */
 
 export {
@@ -19,7 +19,10 @@ export interface ShellExecutionPort {
 
 export const DISABLED_SHELL: ShellExecutionPort = { enabled: false };
 
-/** Marker: LLM providers are not connected. */
+/**
+ * Marker: generic LLM providers are not connected by default.
+ * Optional OpenAIPlanningModel is separate and opt-in.
+ */
 export interface LlmPort {
   readonly connected: false;
 }
@@ -49,6 +52,7 @@ export {
   InMemoryProjectLockService,
   InMemoryRunRepository,
   InMemoryEventStore,
+  InMemoryObjectiveRepository,
   UuidAdmissionIdentityGenerator,
   SequenceAdmissionIdentityGenerator,
   createLocalAdmissionStack,
@@ -67,3 +71,8 @@ export {
   LocalGitWorkspaceService,
   createLocalIngestionStack,
 } from "./ingestion/index.js";
+
+export {
+  OpenAIPlanningModel,
+  createLocalPlanningStack,
+} from "./planning/index.js";

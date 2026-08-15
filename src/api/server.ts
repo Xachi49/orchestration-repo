@@ -1,13 +1,16 @@
 import Fastify from "fastify";
 import type { ObjectiveAdmissionService } from "../admission/service.js";
 import type { RepositoryTruthService } from "../ingestion/service.js";
+import type { PlanningService } from "../planning/service.js";
 import { registerRunRoutes } from "./runs.js";
 import { registerIngestRoutes } from "./ingest.js";
-import { createLocalIngestionStack } from "../infrastructure/ingestion/local-stack.js";
+import { registerPlanRoutes } from "./plan.js";
+import { createLocalPlanningStack } from "../infrastructure/planning/local-stack.js";
 
 export interface ApiDeps {
   admission?: ObjectiveAdmissionService;
   ingestion?: RepositoryTruthService;
+  planning?: PlanningService;
 }
 
 /**
@@ -18,12 +21,13 @@ export async function buildServer(deps: ApiDeps = {}) {
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: 3,
-    orchestrator: "repository-truth",
+    phase: 4,
+    orchestrator: "planning",
     llmConnected: false,
     githubConnected: false,
     githubWritesEnabled: false,
     executionEnabled: false,
+    planningModelToolsEnabled: false,
   }));
 
   if (deps.admission) {
@@ -32,15 +36,19 @@ export async function buildServer(deps: ApiDeps = {}) {
   if (deps.ingestion) {
     registerIngestRoutes(app, deps.ingestion);
   }
+  if (deps.planning) {
+    registerPlanRoutes(app, deps.planning);
+  }
 
   return app;
 }
 
 async function main(): Promise<void> {
-  const stack = createLocalIngestionStack();
+  const stack = createLocalPlanningStack();
   const app = await buildServer({
     admission: stack.admission,
     ingestion: stack.ingestion,
+    planning: stack.planning,
   });
   const port = Number(process.env["PORT"] ?? 3000);
   await app.listen({ port, host: "127.0.0.1" });

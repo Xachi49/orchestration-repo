@@ -23,7 +23,9 @@ import { InMemoryRepositoryIngestionCoordinator } from "./in-memory-ingestion-co
 import { FakeRemoteRepository } from "./fake-remote.js";
 import { FakeRepositoryWorkspace } from "./fake-workspace.js";
 import type { RequesterGrant } from "../../admission/authorization.js";
+import type { ResourceBudgetProfile } from "../../control-plane/budgets/budget.js";
 import type { InMemoryRunRepository } from "../admission/in-memory-run-repository.js";
+import type { InMemoryObjectiveRepository } from "../admission/in-memory-objective-repository.js";
 import type { FixedClock } from "../clock.js";
 
 export interface LocalIngestionStack {
@@ -31,6 +33,7 @@ export interface LocalIngestionStack {
   ingestion: RepositoryTruthService;
   controlPlane: ControlPlaneService;
   runs: InMemoryRunRepository;
+  objectives: InMemoryObjectiveRepository;
   remote: FakeRemoteRepository;
   workspace: FakeRepositoryWorkspace;
   locks: InMemoryLockedRepositoryStore;
@@ -44,6 +47,7 @@ export interface LocalIngestionStack {
 export function createLocalIngestionStack(options?: {
   grants?: readonly RequesterGrant[];
   clockIso?: string;
+  budgets?: readonly ResourceBudgetProfile[];
   remote?: RemoteRepositoryService;
   workspace?: RepositoryWorkspaceService;
   indexer?: ProjectIndexer;
@@ -51,12 +55,16 @@ export function createLocalIngestionStack(options?: {
   const admissionOptions: {
     grants?: readonly RequesterGrant[];
     clockIso?: string;
+    budgets?: readonly ResourceBudgetProfile[];
   } = {};
   if (options?.grants) {
     admissionOptions.grants = options.grants;
   }
   if (options?.clockIso) {
     admissionOptions.clockIso = options.clockIso;
+  }
+  if (options?.budgets) {
+    admissionOptions.budgets = options.budgets;
   }
   const admissionStack = createLocalAdmissionStack(admissionOptions);
   const remote =
@@ -112,6 +120,7 @@ export function createLocalIngestionStack(options?: {
     ingestion,
     controlPlane: admissionStack.controlPlane,
     runs: admissionStack.runs,
+    objectives: admissionStack.objectives,
     remote: remote as FakeRemoteRepository,
     workspace: workspace as FakeRepositoryWorkspace,
     locks,

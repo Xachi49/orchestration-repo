@@ -522,3 +522,117 @@ provide:
 
 Do not treat the current adapters as a production database.
 
+---
+
+## Phase 4 — Verified context compilation and planning
+
+Phase 4 introduces the first probabilistic reasoning capability.
+
+```text
+The planning model proposes.
+
+It does not establish repository truth.
+It does not grant capabilities.
+It does not interpret itself as policy authority.
+It does not approve.
+It does not execute.
+```
+
+```text
+Phase 4 output = READY_FOR_VALIDATION candidate plan.
+
+Phase 5 is responsible for independent validation,
+policy/risk adjudication, REVISE/BLOCK/PASS/APPROVAL routing,
+and bounded semantic revision.
+```
+
+### Flow
+
+```text
+INGESTING + VERIFIED context + VERIFIED live lock
+  → PlanningReadinessService
+  → PlanningCoordinator fence
+  → INGESTING → PLANNING
+  → ContextBudgetController + planningContextFingerprint
+  → PlanningModel (Fake by default; optional OpenAI)
+  → PlanProposal (not ExecutionPlan)
+  → EvidenceReferenceValidator + CapabilityReferenceValidator
+  → PlanCompiler + PlanHasher
+  → DependencyGraphService + PlanResourceAnalyzer + PlanQualityScorer
+  → PlanRepository READY_FOR_VALIDATION
+  → PlanningCoordinator PLANNED
+  → PLANNING → VALIDATING
+```
+
+### Resources
+
+Phase 4 distinguishes two resource ledgers:
+
+1. **Planning inference usage** (`PlanningUsageLedger`) — actual model calls
+   made while generating the plan (gap analysis + proposal). Before each call
+   the service computes a conservative token **reservation** =
+
+   `compiledInputEstimate + configuredMaxOutputTokens`
+
+   and atomically reserves against
+
+   `remaining = maximumTotalTokens - completedActualTokens - activeReservedTokens`.
+
+   Insufficient remaining capacity fails closed as `PLANNING_MODEL_BUDGET_EXCEEDED`
+   without invoking the model. After the provider returns, the reservation is
+   released and actual usage is charged (or the reservation is charged
+   conservatively when usage is unavailable). Actual usage exceeding the
+   reservation is recorded accurately and surfaces
+   `PLANNING_MODEL_BUDGET_INVARIANT_VIOLATION`, blocking subsequent model calls.
+   Call-limit exhaustion also fails as `PLANNING_MODEL_BUDGET_EXCEEDED`.
+   Monetary cost is tracked only when deterministically available; otherwise
+   deferred.
+
+   The in-memory ledger provides process-local atomic reservation per `runId`.
+   Durable implementations must use transactional or compare-and-swap
+   reservation so concurrent planners cannot oversubscribe the run budget.
+
+2. **Proposed plan resource estimate** (`PlanResourceAnalyzer`) — the model's
+   estimated *future* execution consumption on the `PlanProposal`. Hard exceed
+   fails Phase 4 as `PLAN_RESOURCE_BUDGET_EXCEEDED` and does not persist
+   `READY_FOR_VALIDATION` or transition to `VALIDATING`.
+
+Hard configured limits fail closed in Phase 4. Overrides are not implemented.
+Phase 5 may classify explicitly overrideable resource/risk conditions as
+`HUMAN_APPROVAL_REQUIRED`, but must never override a budget designated
+hard / non-overrideable.
+
+### Plan version
+
+`planVersion` is a positive integer (`number`, int, `> 0`). Initial revision is
+`1`, assigned by `PlanCompiler` (not the model). Future Phase 5 revisions
+increment numerically. String `"1"`, semver, decimals, zero, and negatives are
+rejected.
+
+### Model boundary
+
+`PlanningModel` has `toolsEnabled: false`. No shell, GitHub, file mutation,
+approval, or policy authority. `FakePlanningModel` is the default local/test
+adapter. `OpenAIPlanningModel` uses the OpenAI **Responses API** with schema-
+constrained Structured Outputs (`responses.parse` + `zodTextFormat`) and is
+opt-in via `OPENAI_API_KEY` / `OPENAI_MODEL`. It lives only under
+`src/infrastructure/planning/`. No tools, web search, file search, code
+interpreter, MCP, function calling, or `previous_response_id`. Tests and
+`npm start` never call live OpenAI unless an explicit live model is injected.
+
+Repository evidence is wrapped as `UNTRUSTED_PROJECT_DATA`. Prompt injection
+inside repository text has no authority.
+
+### Context fingerprint
+
+`planningContextFingerprint` hashes objective fingerprint, policy bundle,
+capabilities, budget profile id, repository fingerprint, locked commit SHA,
+selected evidence ids/content hashes, and compiler/prompt versions. It excludes
+timestamps and absolute machine paths.
+
+### HTTP
+
+- `POST /v1/runs/{runId}/plan`
+- `GET  /v1/runs/{runId}/plan`
+- `GET  /v1/runs/{runId}/planning-context` (metadata; no secrets)
+

@@ -36,6 +36,8 @@ import {
   type RunRecord,
   type RunRepository,
 } from "./run-repository.js";
+import type { ObjectiveRepository } from "./objective-repository.js";
+import { parseObjective } from "../domain/objective/objective.js";
 
 export interface ObjectiveAdmissionServiceDeps {
   controlPlane: ControlPlaneService;
@@ -47,6 +49,8 @@ export interface ObjectiveAdmissionServiceDeps {
   identities: AdmissionIdentityGenerator;
   clock: ControlPlaneClock;
   observability: ObservabilityPort;
+  /** Optional for Phase 2 compatibility; required for Phase 4 planning. */
+  objectives?: ObjectiveRepository;
 }
 
 const EVENT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -100,6 +104,7 @@ export class ObjectiveAdmissionService {
   private readonly identities: AdmissionIdentityGenerator;
   private readonly clock: ControlPlaneClock;
   private readonly observability: ObservabilityPort;
+  private readonly objectives: ObjectiveRepository | undefined;
 
   constructor(deps: ObjectiveAdmissionServiceDeps) {
     this.controlPlane = deps.controlPlane;
@@ -108,6 +113,7 @@ export class ObjectiveAdmissionService {
     this.locks = deps.locks;
     this.runs = deps.runs;
     this.events = deps.events;
+    this.objectives = deps.objectives;
     this.identities = deps.identities;
     this.clock = deps.clock;
     this.observability = deps.observability;
@@ -354,6 +360,30 @@ export class ObjectiveAdmissionService {
           "ADMISSION_COMPENSATION_FAILED",
           "Failed to release admission-scoped project lock",
           { runId: created.runId, cause: String(error) },
+        );
+      }
+
+      if (this.objectives) {
+        const objective = parseObjective({
+          objectiveId: request.objectiveId,
+          objectiveVersion: request.objectiveVersion,
+          projectId: request.projectId,
+          requestedOutcome: request.requestedOutcome,
+          acceptanceCriteria: request.acceptanceCriteria,
+          nonGoals: request.nonGoals,
+          constraints: request.constraints,
+          priority: request.priority,
+          requesterId: request.requesterId,
+          createdAt: request.submittedAt,
+          ...(request.deadline !== undefined
+            ? { deadline: request.deadline }
+            : {}),
+        });
+        await this.objectives.save(objective);
+        await this.objectives.bindRun(
+          created.runId,
+          objective.objectiveId,
+          objective.objectiveVersion,
         );
       }
 

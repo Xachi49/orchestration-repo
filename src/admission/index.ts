@@ -61,6 +61,7 @@ export {
   ObjectiveAdmissionService,
   type ObjectiveAdmissionServiceDeps,
 } from "./service.js";
+export type { ObjectiveRepository } from "./objective-repository.js";
 export {
   EXAMPLE_REQUESTER_ID,
   EXAMPLE_REQUESTER_GRANTS,

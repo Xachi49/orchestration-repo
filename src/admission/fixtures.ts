@@ -23,7 +23,10 @@ export function exampleAdmissionRequest(
     objectiveId: "obj_phase2_example",
     objectiveVersion: 1,
     requestedOutcome: "Admit a local patch-only objective",
-    acceptanceCriteria: ["Run is ADMITTED", "Event envelope is persisted"],
+    acceptanceCriteria: [
+      "Local patch artifact prepared",
+      "Tests executed",
+    ],
     nonGoals: ["Execution", "LLM planning"],
     constraints: ["No external side effects"],
     priority: "HIGH",

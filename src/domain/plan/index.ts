@@ -36,3 +36,17 @@ export {
   canonicalizeValue,
 } from "./plan-hasher.js";
 export type { PlanHasher } from "./plan-hasher.js";
+
+export {
+  VerificationBindingMethodSchema,
+  RequiredEvidenceClassSchema,
+  AcceptanceCriterionVerificationBindingSchema,
+  parseAcceptanceCriterionVerificationBinding,
+  planPostconditionId,
+  planVerificationRequirementId,
+  methodsCompatibleWithAction,
+  isMethodCompatibleWithAction,
+  type VerificationBindingMethod,
+  type RequiredEvidenceClass,
+  type AcceptanceCriterionVerificationBinding,
+} from "./verification-binding.js";

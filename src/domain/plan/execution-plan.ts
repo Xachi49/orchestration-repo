@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ObjectiveVersionSchema } from "../objective/objective.js";
+import { AcceptanceCriterionVerificationBindingSchema } from "./verification-binding.js";
 
 export const ResourceEstimateSchema = z
   .object({
@@ -148,6 +149,13 @@ export const ExecutionPlanSchema = z
     steps: z.array(ExecutionStepSchema),
     approvalRequirements: z.array(ApprovalRequirementSchema),
     failurePolicy: FailurePolicySchema,
+    /**
+     * Explicit verification contract for every acceptance criterion.
+     * Hashed into planHash. Required for later VERIFIED_SUCCESS.
+     */
+    acceptanceCriterionVerificationBindings: z.array(
+      AcceptanceCriterionVerificationBindingSchema,
+    ),
     planHash: z.string().min(1),
   })
   .strict();

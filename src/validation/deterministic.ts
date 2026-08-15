@@ -10,6 +10,7 @@ import type { LockedRepositoryState } from "../ingestion/locked-state.js";
 import type { VerifiedRepositoryContext } from "../ingestion/context.js";
 import type { StoredPlanRecord } from "../planning/plan-repository.js";
 import type { DependencyGraphResult } from "../planning/dependency-graph.js";
+import type { Objective } from "../domain/objective/objective.js";
 import { ValidationFindingFactory, isUnrepairableBlocking } from "./finding-factory.js";
 import { PlanSchemaValidator } from "./schema-validator.js";
 import { PlanFreshnessValidator } from "./freshness-validator.js";
@@ -18,6 +19,7 @@ import { IndependentCapabilityValidator } from "./capability-validator.js";
 import { PlanDependencyValidator } from "./dependency-validator.js";
 import { PlanResourceValidator } from "./resource-validator.js";
 import { PlanSecurityValidator } from "./security-validator.js";
+import { PlanVerificationBindingValidator } from "./verification-binding-validator.js";
 
 /** Fixed evaluation order of the deterministic validation ladder. */
 export const VALIDATION_LADDER = [
@@ -29,6 +31,7 @@ export const VALIDATION_LADDER = [
   "DEPENDENCY",
   "RESOURCE",
   "SECURITY",
+  "VERIFICATION_BINDING",
 ] as const satisfies readonly ValidationValidatorType[];
 
 export interface DeterministicValidationInput {
@@ -38,6 +41,7 @@ export interface DeterministicValidationInput {
   environment: string;
   liveLock: LockedRepositoryState | null;
   repositoryContext: VerifiedRepositoryContext | null;
+  objective: Objective;
 }
 
 export interface DeterministicValidationResult {
@@ -61,6 +65,7 @@ export interface DeterministicValidationServiceDeps {
   dependency?: PlanDependencyValidator;
   resource?: PlanResourceValidator;
   security?: PlanSecurityValidator;
+  verificationBinding?: PlanVerificationBindingValidator;
 }
 
 /**
@@ -83,6 +88,7 @@ export class DeterministicValidationService {
   private readonly dependency: PlanDependencyValidator;
   private readonly resource: PlanResourceValidator;
   private readonly security: PlanSecurityValidator;
+  private readonly verificationBinding: PlanVerificationBindingValidator;
   private readonly findings: ValidationFindingFactory;
 
   constructor(deps: DeterministicValidationServiceDeps) {
@@ -97,6 +103,9 @@ export class DeterministicValidationService {
       deps.dependency ?? new PlanDependencyValidator(undefined, this.findings);
     this.resource = deps.resource ?? new PlanResourceValidator(this.findings);
     this.security = deps.security ?? new PlanSecurityValidator(this.findings);
+    this.verificationBinding =
+      deps.verificationBinding ??
+      new PlanVerificationBindingValidator(this.findings);
   }
 
   async evaluate(
@@ -166,6 +175,14 @@ export class DeterministicValidationService {
         plan,
         control: input.control,
         environment: input.environment,
+      }),
+    );
+
+    validatorsRun.push("VERIFICATION_BINDING");
+    collected.push(
+      ...this.verificationBinding.validate({
+        plan,
+        objective: input.objective,
       }),
     );
 

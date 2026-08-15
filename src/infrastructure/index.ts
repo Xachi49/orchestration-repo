@@ -99,3 +99,8 @@ export {
   PullRequestPreparationActuator,
   type LocalExecutionStack,
 } from "./execution/index.js";
+
+export {
+  createLocalVerificationStack,
+  type LocalVerificationStack,
+} from "./verification/index.js";

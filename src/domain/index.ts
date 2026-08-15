@@ -9,3 +9,4 @@ export * from "./evidence/index.js";
 export * from "./validation/index.js";
 export * from "./authorization/index.js";
 export * from "./execution/index.js";
+export * from "./verification/index.js";

@@ -13,6 +13,7 @@ import type { PlanProposal } from "./proposal.js";
 import type { PlanningContext } from "./context.js";
 import type { DependencyGraphResult } from "./dependency-graph.js";
 import type { PlanResourceAnalysis } from "./resource-analyzer.js";
+import { compileAcceptanceCriterionVerificationBindings } from "./verification-bindings.js";
 
 export interface PlanIdentityGenerator {
   nextPlanId(): string;
@@ -38,6 +39,7 @@ export interface PlanCompilerInput {
 /**
  * Converts PlanProposal into authoritative ExecutionPlan.
  * Model cannot assign planId, planVersion, or planHash.
+ * Model cannot invent criterion IDs — bindings are resolved from Objective.
  */
 export class PlanCompiler {
   constructor(
@@ -60,7 +62,7 @@ export class PlanCompiler {
         rollback.compensatingStepIds = [...step.compensatingStepIds];
       }
       if (step.rollbackInstructions !== undefined) {
-        rollback.instructions = step.rollbackInstructions;
+        rollback.instructions = [...step.rollbackInstructions];
       }
       return {
         stepId: step.stepId,
@@ -75,7 +77,9 @@ export class PlanCompiler {
         risk: {
           level: step.risk.level,
           categories: [...step.risk.categories],
-          ...(step.risk.notes !== undefined ? { notes: [...step.risk.notes] } : {}),
+          ...(step.risk.notes !== undefined
+            ? { notes: [...step.risk.notes] }
+            : {}),
         },
         validation: {
           checks: [...step.validationChecks],
@@ -84,6 +88,13 @@ export class PlanCompiler {
         idempotencyKey: `${planId}:${step.stepId}`,
       };
     });
+
+    const acceptanceCriterionVerificationBindings =
+      compileAcceptanceCriterionVerificationBindings({
+        objective: input.context.objective,
+        proposal: input.proposal,
+        steps: input.proposal.steps,
+      });
 
     const forHash: ExecutionPlanForHash = {
       planId,
@@ -122,6 +133,7 @@ export class PlanCompiler {
         onStepFailure: "BLOCK",
         maxRetries: 0,
       },
+      acceptanceCriterionVerificationBindings,
     };
 
     const planHash = this.hasher.hash(forHash);

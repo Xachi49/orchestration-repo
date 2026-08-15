@@ -9,6 +9,7 @@ export const ValidationValidatorTypeSchema = z.enum([
   "DEPENDENCY",
   "RESOURCE",
   "SECURITY",
+  "VERIFICATION_BINDING",
   "CONTEXTUAL",
 ]);
 export type ValidationValidatorType = z.infer<

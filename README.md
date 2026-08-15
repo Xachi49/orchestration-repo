@@ -1,25 +1,29 @@
 # Orchestrator Agent
 
-Evidence-grounded, policy-governed orchestration: contracts, control plane, admission, verified repository truth, bounded planning, independent validation, human authorization, and bounded execution.
+Evidence-grounded, policy-governed orchestration: contracts, control plane, admission, verified repository truth, bounded planning, independent validation, human authorization, bounded execution, and independent outcome verification.
 
 **Package name:** `orchestrator-agent`  
 **Repository folder / remote:** `orchestration-repo`
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
-## Current milestone: Phase 7 — Bounded execution & safe actuation
+## Current milestone: Phase 8 — Independent outcome verification
 
-Phase 7 executes only an exact, human-authorized, still-fresh plan through a narrow capability surface.
+Phase 8 independently determines whether post-execution reality satisfies the authorized objective.
 
-- `APPROVED != EXECUTED`. Authorization alone does not actuate.
-- `EXECUTION_SUCCEEDED != VERIFIED_SUCCESS`. Actuator completion is not Phase 8 verification.
-- Only `APPROVED → EXECUTING` is owned here. The run stays `EXECUTING`; Phase 7 does not `COMPLETE`.
-- `VALIDATING` / `AWAITING_APPROVAL` cannot execute.
-- Allowed actions only: `CREATE_LOCAL_PATCH`, `RUN_TESTS`, `CREATE_TASK`, `PREPARE_PULL_REQUEST`.
-- No arbitrary shell, GitHub writes, Discord/Slack, or LLM calls in execution.
-- Default stack uses `FakeSafeActuator`. Use `createExecutionFriendlyPlanningModel()` in tests (default `FakePlanningModel` emits `READ_FILE`, which dry-run rejects).
+- `EXECUTION_SUCCEEDED != VERIFIED_SUCCESS`. Actuator completion is not verified objective success.
+- `VERIFIED_SUCCESS != "the model thinks it worked"`. Contextual model may only downgrade.
+- `COMPLETED` requires evidence-backed `VERIFIED_SUCCESS` plus a `CompletionRecord`.
+- Acceptance criteria use **explicit plan-bound verification bindings** (hashed into `planHash`). `HEURISTIC_RELEVANCE ≠ VERIFICATION_BINDING`.
+- Path: `EXECUTING → VERIFYING → COMPLETED` (or `ESCALATED` / preserve `CONTAINED`).
+- `EXECUTING → COMPLETED` is illegal. The executor cannot verify itself.
+- Default stack uses `FakeVerificationModel`. No live APIs in tests.
 
 See [docs/architecture.md](docs/architecture.md).
+
+## Phase 7 — Bounded execution & safe actuation
+
+Exact authorized plan through a narrow SafeActuator. Success leaves the run `EXECUTING`.
 
 ## Phase 6 — Human authorization & exception inbox
 
@@ -52,12 +56,13 @@ Domain contracts, run-state machine, plan hashing, evidence records.
 ## What remains unimplemented
 
 - Discord/Slack vendor delivery (port + fake only)
-- Phase 8 verification / learning
+- Phase 9 learning / memory promotion
 - GitHub writes, arbitrary shell, deployments
 - Embeddings / vector memory
 - Production databases
+- Optional OpenAI verification adapter (FakeVerificationModel is default)
 
-Default `npm start` / `npm test` use fake planning/validation models, fake approval delivery, and fake actuators (no paid API calls).
+Default `npm start` / `npm test` use fake planning/validation/verification models, fake approval delivery, and fake actuators (no paid API calls).
 
 ## Commands
 
@@ -89,6 +94,9 @@ POST /v1/approval-requests/expire
 POST /v1/runs/:runId/execute
 GET  /v1/runs/:runId/execution
 GET  /v1/runs/:runId/execution-artifacts
+POST /v1/runs/:runId/verify
+GET  /v1/runs/:runId/verification
+GET  /v1/runs/:runId/verification-evidence
 ```
 
 ## Auth / live model

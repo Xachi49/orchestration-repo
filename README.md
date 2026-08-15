@@ -1,20 +1,23 @@
 # Orchestrator Agent
 
-Evidence-grounded, policy-governed orchestration contracts, run-state architecture, deterministic control plane, and objective admission.
+Evidence-grounded, policy-governed orchestration contracts, run-state architecture, deterministic control plane, objective admission, and verified repository truth.
 
 **Package name:** `orchestrator-agent`  
 **Repository folder / remote:** `orchestration-repo`
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
-## Current milestone: Phase 2 — Objective admission
+## Current milestone: Phase 3 — Verified repository truth
 
-Phase 2 is the front door of the Orchestrator. It turns an incoming project objective into a validated, authorized, deduplicated, conflict-aware, durable run in `ADMITTED`.
+Phase 3 establishes an immutable, evidence-backed view of a registered GitHub repository for an admitted run. The exact commit SHA is the truth anchor. Repository files are evidence, not authority.
 
 See [docs/architecture.md](docs/architecture.md).
 
-Phase 2 establishes admission authority and durable run identity.
-It does not establish repository truth, planning intelligence, human approval, or execution authority.
+Phase 3 does not plan, approve, execute, write to GitHub, or connect an LLM.
+
+## Phase 2 — Objective admission
+
+Phase 2 is the front door of the Orchestrator. It turns an incoming project objective into a validated, authorized, deduplicated, conflict-aware, durable run in `ADMITTED`.
 
 ## Phase 1 — Deterministic Control Plane
 
@@ -37,24 +40,26 @@ The Control Plane defines what may eventually be permissible. It does **not** ex
 ## What is intentionally unimplemented
 
 - LLM / OpenAI / Anthropic connections
-- GitHub (or other SCM) API integrations
-- Real plan generation, ingestion, approval workflows
-- Execution, rollback, containment behavior
+- GitHub **writes** (push, PRs, issues, branch mutation, settings)
+- Real plan generation, approval workflows, execution
 - Discord / Slack / n8n / autonomous tool access
 - Distributed locks / production databases
 - Policy evaluation engine / OPA
 - Secret management or credential storage
-- Shell / command execution abstractions with active implementations
+- Generic shell / `runCommand` abstractions
+
+**Deferred:** private GitHub `git fetch` credential injection. Do not place
+`GITHUB_TOKEN` in remote URLs, git configuration, command arguments, or logs.
 
 ## Architecture
 
 ```text
 src/
-├── api/                 # Health + POST /v1/runs (no business logic)
+├── api/                 # Health + admission + ingest HTTP (no business logic)
 ├── domain/              # Typed contracts + deterministic helpers
 ├── control-plane/       # Configuration authority
 ├── admission/           # Admission service and ports
-├── ingestion/
+├── ingestion/           # Verified repository truth
 ├── planning/
 ├── validation/
 ├── approval/
@@ -62,7 +67,7 @@ src/
 ├── verification/
 ├── memory/
 ├── observability/
-└── infrastructure/      # In-memory adapters
+└── infrastructure/      # In-memory adapters, GitHub GET adapter, git workspace
 ```
 
 ## Commands
@@ -78,6 +83,8 @@ npm run build
 npm start
 # GET  http://127.0.0.1:3000/health
 # POST http://127.0.0.1:3000/v1/runs
+# POST http://127.0.0.1:3000/v1/runs/:runId/ingest
+# GET  http://127.0.0.1:3000/v1/runs/:runId/repository-context
 ```
 
 `POST /v1/runs` status mapping:
@@ -90,12 +97,21 @@ npm start
 - project not found → 404
 - conflict / ineligible → 409
 
+## Authentication
+
+`GITHUB_TOKEN` is required only when constructing `GitHubReadOnlyAdapter`.
+Use a read-only, minimum-privilege token. Never commit tokens. The local fake
+stack does not need a token. See `.env.example`.
+
 ## Security posture
 
 - No `eval`
-- No dynamic execution of retrieved or stored configuration
-- No hardcoded secrets
+- No dynamic execution of retrieved repository content or stored configuration
+- No hardcoded secrets; tokens are never logged
+- GitHub adapter is GET-only
+- Git hooks are disabled in the run workspace
 - Unknown requester and missing authority are denial
 - Duplicate idempotency keys do not create a second run
 - Failed lock lookup is never treated as an acquired lock
+- Missing repository truth fails closed
 - Dangerous operations remain behind disconnected / disabled ports

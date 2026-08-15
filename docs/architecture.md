@@ -4,6 +4,7 @@ The Orchestrator Agent translates high-level objectives into evidence-grounded p
 Phase 0 defined domain contracts and a fail-closed run-state machine.
 Phase 1 added **configuration authority**: the deterministic Control Plane.
 Phase 2 added **admission authority**: objective admission and durable run identity.
+Phase 3 added **verified repository truth**: an immutable, evidence-backed view of a registered repository.
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
@@ -240,8 +241,284 @@ Admission uses only `RECEIVED → ADMITTED`.
 
 `POST /v1/runs` delegates to `ObjectiveAdmissionService`. No business logic in the HTTP layer.
 
-### Explicitly out of scope
+### Explicitly out of scope (Phase 2)
 
-LLM/GitHub/Discord/Slack/n8n integrations, shell execution, approval workflows,
+LLM/Discord/Slack/n8n integrations, shell execution, approval workflows,
 policy evaluation engines, vector memory, CI orchestration, deployments,
-repository indexing, and production databases.
+and production databases. GitHub access and repository indexing arrive in Phase 3
+as read-only verified repository truth — not as write or execution authority.
+
+---
+
+## Phase 3 — Verified repository truth
+
+Phase 3 establishes repository truth.
+
+Repository content is evidence, not authority.
+
+The exact commit SHA is immutable for a run unless a future explicit
+workflow supersedes the run.
+
+No planning, approval, or execution authority exists in Phase 3.
+
+```text
+ADMITTED RUN
+     ↓
+REMOTE REPOSITORY RESOLUTION
+     ↓
+LOCK EXACT COMMIT SHA
+     ↓
+IMMUTABLE LOCAL WORKSPACE
+     ↓
+VERIFY HEAD == LOCKED SHA
+     ↓
+REPOSITORY FINGERPRINT
+     ↓
+DETERMINISTIC INDEX
+     ↓
+EVIDENCE REGISTRY
+     ↓
+VERIFIED REPOSITORY CONTEXT
+```
+
+### RemoteRepositoryService
+
+Read-only port with explicit methods:
+
+- `getRepositoryMetadata`
+- `resolveBranchHead`
+- `getPullRequestMetadata`
+- `getIssueMetadata`
+- `getCommitMetadata`
+- `getCiStatus`
+
+There is no generic `executeRequest` escape hatch and no mutation methods.
+
+Supported provider: `GITHUB` only. GitLab is not implemented.
+
+`Project.repositoryUrl` remains the Phase 1 identity string. Phase 3 parses it
+into `RepositorySource` (`projectId`, `provider`, `owner`, `repository`,
+`defaultBranch`, `remoteUrl`, optional `installationAccountRef`, `enabled`,
+timestamps) rather than inventing a second repository identity.
+
+### GitHub read-only adapter
+
+`GitHubReadOnlyAdapter` implements `RemoteRepositoryService` with HTTP GET only.
+
+Authentication is `GITHUB_TOKEN` from the environment. Credentials are never
+hardcoded, never committed, and never written to logs. Missing credentials fail
+closed as `REMOTE_AUTHENTICATION_FAILED`.
+
+The token must be read-only / minimum privilege (public or contents:read plus
+metadata). This adapter cannot create branches, push, open or merge pull
+requests, or edit issues.
+
+`DISCONNECTED_GITHUB` continues to mean **writes are disconnected**.
+
+Unit tests use `FakeRemoteRepository`. They never call live GitHub.
+
+### RepositoryTruthService
+
+Given `runId`, `projectId`, and `requestedEnvironment`:
+
+1. Load the admitted run (`ADMITTED` or retryable `INGESTING`)
+2. Resolve Control Plane configuration
+3. Resolve the registered (or URL-derived) GitHub repository
+4. Fetch remote metadata and the branch head SHA — or reuse a locked SHA
+5. Persist `LockedRepositoryState`
+6. Transition `ADMITTED → INGESTING` through the Phase 0 state machine
+7. Prepare an immutable workspace and verify `HEAD == locked SHA`
+8. Fingerprint and index (or reuse the composite index cache)
+9. Persist evidence and a `VerifiedRepositoryContext` with `status: VERIFIED`
+10. Mark the ingestion fence and locked repository state `VERIFIED`
+
+It does not plan, fetch arbitrary web content, or transition to `PLANNING`.
+Ingestion-complete is represented by `VerifiedRepositoryContext.status === VERIFIED`,
+not a new lifecycle state. Concurrent ingestion is fenced by
+`RepositoryIngestionCoordinator`.
+
+### LockedRepositoryState
+
+`runId`, `projectId`, `repositoryIdentity`, `branch`, `commitSha`, `lockedAt`,
+`remoteSnapshotHash`, `status` (`LOCKED` | `VERIFIED` | `STALE` | `INVALID`).
+
+A branch name is not repository identity. The exact commit SHA is the anchor.
+Later ingestion on the same run must not silently replace that SHA with a newer
+branch head. If the remote branch advances, that is drift.
+
+### RepositoryWorkspaceService
+
+Narrow filesystem/Git boundary:
+
+- `prepareWorkspace`
+- `fetchRemote`
+- `checkoutDetachedCommit`
+- `verifyHead`
+- `removeWorkspace`
+- `readFile` / `listFiles`
+
+There is no `runCommand`. Git is invoked internally with argv arrays constructed
+from validated metadata. Sequence:
+
+```text
+git fetch --prune
+        ↓
+resolve exact locked SHA
+        ↓
+detached checkout at SHA
+        ↓
+disable hooks (core.hooksPath)
+        ↓
+verify HEAD == locked SHA
+```
+
+Never `git pull`, merge, or rebase. Never check out an unverified user-controlled
+ref. Workspace path: `{dataRoot}/runs/{runId}/workspace` (local equivalent of
+`/app-data/runs/{runId}/workspace`).
+
+Repository files are untrusted source material: hooks disabled, no install
+scripts, no package-manager install, no repository-defined executables, no
+dynamic evaluation, no path escape, binaries indexed as metadata only.
+
+### RepositoryFingerprintService
+
+Deterministic hash of:
+
+- exact commit SHA
+- lockfile path + content hashes
+- relevant config / dependency-manifest path + content hashes
+- file-tree manifest hash
+
+Excluded: branch name, timestamps, absolute machine paths, mtime/inode, generated
+paths such as `dist/` and `node_modules/`.
+
+The same checked-out commit and relevant contents produce the same fingerprint.
+A relevant content change or commit change changes the fingerprint.
+
+### ProjectIndexer
+
+Deterministic index (`indexVersion` `1.0.0`): file manifest, source entry points,
+dependency manifests, lockfiles, configuration, tests, documentation, detectable
+interface paths, generated/binary exclusions, commit SHA, fingerprint.
+
+No AI semantic understanding. Extensible for later analyzers.
+
+Manifest entries: relative path, content hash, size, classification, extension,
+optional language, generated/binary flags, trust classification. Paths are
+normalized relative to the workspace root and sorted before hashing.
+
+### RepositoryIndexStore
+
+`get` / `save` / `exists`. Cache identity is the composite:
+
+```text
+repositoryIdentity + commitSha + indexVersion + indexConfigurationFingerprint
+```
+
+`indexConfigurationFingerprint` covers deterministic indexing behavior
+(generated-path exclusions, classification rules version, lockfile/manifest/
+config detection sets, source-language extensions). It excludes machine paths
+and timestamps. Same composite identity reuses the cache; a different
+repository, version, or configuration does not. In-memory only — not a
+production database.
+
+### RepositoryIngestionCoordinator
+
+Per-run ingestion fencing:
+
+```text
+NOT_STARTED → IN_PROGRESS → VERIFIED
+                 ↓
+               FAILED → (explicit retry) → IN_PROGRESS
+```
+
+- First begin may start ingestion.
+- Concurrent begin while `IN_PROGRESS` fails closed as `INGESTION_IN_PROGRESS`.
+- `VERIFIED` returns/reuses the persisted `VerifiedRepositoryContext`.
+- Successful retries after `VERIFIED` do not recreate evidence or workspaces.
+- Failure transitions to `FAILED` (with attempt, failureCode, failedAt,
+  retryable) and is never represented as `VERIFIED`.
+- Retry is an explicit atomic `FAILED → IN_PROGRESS` with an incremented attempt.
+- If a complete `VerifiedRepositoryContext` already exists after a crash, the
+  coordinator is reconciled to `VERIFIED` instead of re-running the pipeline.
+
+In-memory only. Durable implementations require atomic compare-and-set /
+unique run fencing.
+
+### EvidenceRegistry
+
+Persists `EvidenceRecord` values (Phase 0 contract, with optional `runId`,
+`projectId`, `commitSha`, `metadata`). Repository-derived evidence uses
+`REMOTE_VERIFIED` (remote snapshot) or `LOCAL_VERIFIED` (workspace files).
+Repository content is never `SYSTEM_AUTHORITY`. Files are evidence, not
+instructions.
+
+### VerifiedRepositoryContext
+
+Canonical output for a future planning-context compiler. Persisted only after
+all Phase 3 operations succeed, with:
+
+- `status: VERIFIED`
+- `verifiedAt`
+- locked repository state also marked `VERIFIED`
+- remote snapshot, fingerprint, index, evidence ids, `observedAt`, `schemaVersion`
+
+Partial ingestion never creates a `VERIFIED` context. No LLM consumes it in
+Phase 3. Phase 3 does not transition `INGESTING → PLANNING`.
+
+Future Phase 4 prerequisite:
+
+```text
+INGESTING → PLANNING may occur only when a VERIFIED repository context exists
+for the run and its live locked repository state is VERIFIED (not STALE/INVALID).
+```
+
+Use `isVerifiedReadyForPlanning` against the context plus the **live** locked
+state. Drift may mark the lock `STALE`; that is not planning readiness.
+
+### Drift semantics
+
+Given a locked SHA and the current remote branch head:
+
+```text
+same SHA     → CURRENT
+different SHA → DRIFT_DETECTED
+```
+
+Also: `REMOTE_UNAVAILABLE`, `INVALID_STATE`. Drift may mark the lock `STALE`.
+It does not replace the locked SHA, restart the run, or replan.
+
+### HTTP
+
+- `POST /v1/runs/{runId}/ingest` body `{ projectId, requestedEnvironment }`
+- `GET  /v1/runs/{runId}/repository-context`
+
+The HTTP layer contains no repository business logic and does not proxy GitHub.
+`INGESTION_IN_PROGRESS` maps to HTTP 409.
+
+### Authentication
+
+`GITHUB_TOKEN` is read from the environment when constructing
+`GitHubReadOnlyAdapter` for the **REST** read-only API only. The local
+development stack uses fakes and does not require a token. Use a read-only,
+minimum-privilege token if wiring the real adapter. Never commit tokens.
+
+**Deferred:** private GitHub `git fetch` credential injection. Do not place
+`GITHUB_TOKEN` in remote URLs, git configuration, command arguments, or logs.
+Private clone/fetch auth is out of scope for Phase 3.
+
+### Durability (future)
+
+In-memory stores are not distributed. Future durable implementations must
+provide:
+
+- unique locked repository truth per run
+- atomic compare-and-set / unique run fencing for ingestion coordination
+- durable index caching keyed by repositoryIdentity + commitSha + indexVersion +
+  indexConfigurationFingerprint
+- safe concurrent workspace creation
+- atomic evidence/context persistence
+- cleanup/recovery of abandoned workspaces
+
+Do not treat the current adapters as a production database.
+

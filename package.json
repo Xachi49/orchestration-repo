@@ -2,7 +2,7 @@
   "name": "orchestrator-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 2 admission",
+  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 3 verified repository truth",
   "type": "module",
   "engines": {
     "node": ">=22"

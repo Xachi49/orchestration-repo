@@ -23,6 +23,7 @@ import { SequenceAdmissionIdentityGenerator } from "./identity.js";
 
 export interface LocalAdmissionStack {
   service: ObjectiveAdmissionService;
+  controlPlane: ControlPlaneService;
   runs: InMemoryRunRepository;
   events: InMemoryEventStore;
   locks: InMemoryProjectLockService;
@@ -59,5 +60,5 @@ export function createLocalAdmissionStack(options?: {
     clock,
     observability: new NoopObservability(),
   });
-  return { service, runs, events, locks, idempotency, clock };
+  return { service, controlPlane, runs, events, locks, idempotency, clock };
 }

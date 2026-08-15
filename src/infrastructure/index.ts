@@ -1,7 +1,7 @@
 /**
  * Infrastructure ports — replaceable adapters.
- * No GitHub, LLM, shell, or secret-bearing implementations.
- * Phase 2 ships in-memory control-plane and admission adapters.
+ * LLM, shell execution, and GitHub writes remain disconnected.
+ * Phase 3 adds a read-only GitHub adapter and in-memory ingestion stores.
  */
 
 export {
@@ -26,12 +26,15 @@ export interface LlmPort {
 
 export const DISCONNECTED_LLM: LlmPort = { connected: false };
 
-/** Marker: GitHub APIs are not connected. */
-export interface GitHubPort {
+/**
+ * Marker: GitHub writes are not connected.
+ * Read-only GitHub access is a separate adapter (`GitHubReadOnlyAdapter`).
+ */
+export interface GitHubWritePort {
   readonly connected: false;
 }
 
-export const DISCONNECTED_GITHUB: GitHubPort = { connected: false };
+export const DISCONNECTED_GITHUB: GitHubWritePort = { connected: false };
 
 export {
   InMemoryProjectRegistry,
@@ -50,3 +53,17 @@ export {
   SequenceAdmissionIdentityGenerator,
   createLocalAdmissionStack,
 } from "./admission/index.js";
+
+export {
+  InMemoryRepositorySourceRegistry,
+  InMemoryLockedRepositoryStore,
+  InMemoryRepositoryIndexStore,
+  InMemoryEvidenceRegistry,
+  InMemoryVerifiedRepositoryContextStore,
+  InMemoryRepositoryIngestionCoordinator,
+  FakeRemoteRepository,
+  FakeRepositoryWorkspace,
+  GitHubReadOnlyAdapter,
+  LocalGitWorkspaceService,
+  createLocalIngestionStack,
+} from "./ingestion/index.js";

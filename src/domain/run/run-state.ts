@@ -81,9 +81,11 @@ export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> =
       "CANCELLED",
       "SUPERSEDED",
     ],
+    // Phase 5 has no approval authority: VALIDATING → APPROVED is illegal.
+    // A terminal ValidationDecision is data for Phase 6. Phase 6 may later
+    // route VALIDATING → AWAITING_APPROVAL (or other Phase-6-owned edges).
     VALIDATING: [
       "AWAITING_APPROVAL",
-      "APPROVED",
       "BLOCKED",
       "REVISING",
       "REJECTED",

@@ -605,9 +605,9 @@ hard / non-overrideable.
 ### Plan version
 
 `planVersion` is a positive integer (`number`, int, `> 0`). Initial revision is
-`1`, assigned by `PlanCompiler` (not the model). Future Phase 5 revisions
-increment numerically. String `"1"`, semver, decimals, zero, and negatives are
-rejected.
+`1`, assigned by `PlanCompiler` (not the model). Phase 5 revisions increment
+numerically and are capped at `3`. String `"1"`, semver, decimals, zero, and
+negatives are rejected.
 
 ### Model boundary
 
@@ -635,4 +635,173 @@ timestamps and absolute machine paths.
 - `POST /v1/runs/{runId}/plan`
 - `GET  /v1/runs/{runId}/plan`
 - `GET  /v1/runs/{runId}/planning-context` (metadata; no secrets)
+
+---
+
+## Phase 5 — Independent validation
+
+Phase 5 adjudicates a candidate plan. It is an evaluator, not an approver.
+
+```text
+The validator evaluates.
+
+It does not plan.
+It does not approve.
+It does not execute.
+It does not grant capabilities.
+It does not establish repository truth.
+```
+
+`ValidatorPort.authority` is `VALIDATE_ONLY`. `PASS` is **not** `APPROVED`.
+
+The run-state machine structurally forbids `VALIDATING → APPROVED`. A terminal
+Phase 5 `ValidationDecision` is data consumed by Phase 6; Phase 5 cannot
+transition a run into `APPROVED`. The run remains in `VALIDATING` for every
+Phase 5 outcome (`PASS`, `BLOCK`, `HUMAN_APPROVAL_REQUIRED`). Phase 6 may later
+route `VALIDATING → AWAITING_APPROVAL` (or other Phase-6-owned edges).
+
+### Flow
+
+```text
+VALIDATING + READY_FOR_VALIDATION plan
+  → ValidationReadinessService
+  → ValidationCoordinator fence (runId + planId + planVersion + planHash)
+  → plan → UNDER_VALIDATION
+  → DeterministicValidationService ladder
+  → ValidationModel contextual assessment (advisory; skipped on hard violation)
+  → ValidationDecisionEngine
+  → PASS | BLOCK | HUMAN_APPROVAL_REQUIRED | REVISE
+  → ValidationDecision persisted, fence DECIDED, plan status updated
+  → run stays VALIDATING
+```
+
+### Deterministic ladder
+
+Fixed order, structural gates first:
+
+```text
+SCHEMA → STATE → FRESHNESS → POLICY → CAPABILITY → DEPENDENCY → RESOURCE → SECURITY
+```
+
+`SCHEMA` re-parses the stored plan and recomputes the hash with
+`Sha256PlanHasher`. `FRESHNESS` re-checks the live lock status, commit SHA,
+repository fingerprint, and policy bundle id/hash. If a structural gate produces
+an unrepairable blocking finding the ladder halts: the remaining validators
+would be adjudicating a plan that is not grounded in current truth.
+
+Validators return `ValidationFinding` records; they do not throw. Every finding
+carries `blocking`, `repairable`, `approvalEligible`, and a deterministic
+`semanticFingerprint`.
+
+### Decision precedence
+
+```text
+1. blocking + !repairable + !approvalEligible        → BLOCK
+2. blocking + !repairable + approvalEligible         → HUMAN_APPROVAL_REQUIRED
+3. blocking + repairable
+     a. fingerprint seen in an earlier attempt       → HUMAN_APPROVAL_REQUIRED
+                                                       (REPEATED_SEMANTIC_VIOLATION)
+     b. no revision attempts remaining               → HUMAN_APPROVAL_REQUIRED
+                                                       (REVISION_ATTEMPTS_EXHAUSTED)
+     c. otherwise                                    → REVISE
+4. !blocking + approvalEligible                      → HUMAN_APPROVAL_REQUIRED
+5. otherwise                                         → PASS
+```
+
+Policy `DENY`, hash mismatch, stale/invalid lock, rotated policy bundle, and a
+hard budget exceed all land in case 1. They are never revised and never routed
+to an approver. Only budget dimensions that are explicitly overrideable may
+become `HUMAN_APPROVAL_REQUIRED`.
+
+### Contextual assessment boundary
+
+`ValidationModel` is separate from `PlanningModel` and has `toolsEnabled: false`.
+It returns a `ContextualValidationAssessment`: a recommendation, confidence, and
+observations. Its authority is bounded deterministically:
+
+- A model `recommendation` field is never the authoritative `ValidationDecision`.
+  `model says BLOCK` ≠ authoritative `BLOCK`.
+- Structured observations become `ValidationFinding` records. Deterministic
+  classification (severity → blocking; observation.repairable) feeds
+  `ValidationDecisionEngine`. An unrepairable blocking contextual finding
+  **may** therefore produce authoritative `BLOCK` via DecisionEngine precedence —
+  that BLOCK comes from the engine, not from the recommendation field.
+- A `BLOCK` recommendation with no supporting observation is recorded only as a
+  non-blocking advisory `CONTEXTUAL_RECOMMENDATION` finding and changes nothing.
+- Contextual assessment is skipped entirely when an unrepairable deterministic
+  blocking violation already exists.
+
+`FakeValidationModel` is the default local/test adapter.
+`OpenAIValidationModel` (Responses API + `zodTextFormat`, no tools) is opt-in and
+lives only under `src/infrastructure/validation/`.
+
+### Inference categories and revision accounting
+
+Phase 4–5 model consumption is categorized explicitly:
+
+```text
+INITIAL_PLANNING        → PlanningUsageLedger
+CONTEXTUAL_VALIDATION   → ValidationUsageLedger (operation CONTEXTUAL_ASSESSMENT)
+SEMANTIC_REVISION       → ValidationUsageLedger (operation PLAN_REVISION)
+```
+
+There is no dedicated Control Plane revision-token field. Revision inference
+draws against the same hard `ResourceBudgetProfile` ceilings
+(`maximumLlmCalls`, `maximumTotalTokens`) on `ValidationUsageLedger`, exposed as
+the distinct `SEMANTIC_REVISION` sub-category. It cannot borrow unlimited
+capacity from the planning ledger. Each revision record stores
+`sourcePlanVersion`, `targetPlanVersion`, and `revisionAttempt`. Reservation
+doctrine matches Phase 4 (reserve → call → settle actual / charge reservation
+on ambiguous dispatch / release only on pre-dispatch failure). Insufficient
+revision budget escalates to `HUMAN_APPROVAL_REQUIRED` with
+`PlanningException` type `REVISION_BUDGET_EXCEEDED` rather than exceeding the
+hard ceiling.
+
+### Bounded semantic revision
+
+```text
+v1 → (REVISE) → v2 → (REVISE) → v3 → no v4
+```
+
+`MAX_SEMANTIC_REVISION_ATTEMPTS = 2`. A `REVISE` decision builds a
+`RevisionEnvelope` that separates locked constraints (objective, success
+definition, commit SHA, policy bundle, allowed action types, budget) from the
+repairable findings to be addressed. `PlanRevisionModel` returns a
+`PlanProposal`, never an `ExecutionPlan`: the revised proposal is re-validated
+through the Phase 4 pipeline (`EvidenceReferenceValidator`,
+`CapabilityReferenceValidator`, `DependencyGraphService`, `PlanResourceAnalyzer`,
+`PlanQualityScorer`, `PlanCompiler`), so only `PlanCompiler` assigns a plan id,
+version, and hash.
+
+Each version gets its own fence and its own `ValidationDecision`; the superseded
+version becomes `SUPERSEDED`. `ViolationFingerprintService` normalizes violations
+deterministically (no embeddings, no similarity search), so a violation that
+survives a revision is detected exactly and escalated instead of looping.
+`REPEATED_SEMANTIC_VIOLATION` and `REVISION_ATTEMPTS_EXHAUSTED` both raise a
+`PlanningException` recording where automated adjudication stopped.
+
+### Plan status transitions
+
+```text
+READY_FOR_VALIDATION → UNDER_VALIDATION → VALIDATED_PASS
+                                        → VALIDATED_BLOCK
+                                        → VALIDATED_APPROVAL_REQUIRED
+                                        → SUPERSEDED (revised)
+```
+
+### Fencing
+
+`ValidationCoordinator` is keyed by `runId + planId + planVersion + planHash`
+with `NOT_STARTED → IN_PROGRESS → DECIDED` and `FAILED` on error. A concurrent
+call fails closed as `VALIDATION_IN_PROGRESS`. A `DECIDED` fence replays the
+recorded decision, so validation is idempotent and cannot produce a second,
+divergent verdict for the same artifact. In-memory adapters are process-local;
+durable implementations must use atomic compare-and-set per plan identity.
+
+### HTTP
+
+- `POST /v1/runs/{runId}/validate`
+- `GET  /v1/runs/{runId}/validation` (latest decision)
+- `GET  /v1/runs/{runId}/validations` (decision history)
+- `GET  /v1/runs/{runId}/validation-readiness`
 

@@ -8,6 +8,10 @@ import {
 export const StoredPlanStatusSchema = z.enum([
   "CANDIDATE",
   "READY_FOR_VALIDATION",
+  "UNDER_VALIDATION",
+  "VALIDATED_PASS",
+  "VALIDATED_BLOCK",
+  "VALIDATED_APPROVAL_REQUIRED",
   "SUPERSEDED",
 ]);
 export type StoredPlanStatus = z.infer<typeof StoredPlanStatusSchema>;
@@ -25,6 +29,8 @@ export const StoredPlanRecordSchema = z
     modelProvider: z.string().min(1),
     modelId: z.string().min(1),
     createdAt: z.string().datetime(),
+    supersedesPlanId: z.string().min(1).optional(),
+    lineageRootPlanId: z.string().min(1).optional(),
   })
   .strict();
 export type StoredPlanRecord = z.infer<typeof StoredPlanRecordSchema>;
@@ -37,27 +43,34 @@ export interface PlanRepository {
     runId: string,
     planVersion: PlanVersion,
   ): Promise<StoredPlanRecord | null>;
+  listByRunId(runId: string): Promise<readonly StoredPlanRecord[]>;
   exists(planId: string): Promise<boolean>;
+  markSuperseded(planId: string): Promise<StoredPlanRecord>;
 }
 
+/**
+ * In-memory multi-version plan store.
+ * Latest plan per run is tracked separately; prior versions remain addressable.
+ */
 export class InMemoryPlanRepository implements PlanRepository {
   private readonly byId = new Map<string, StoredPlanRecord>();
-  private readonly byRun = new Map<string, string>();
+  private readonly latestByRun = new Map<string, string>();
+  private readonly versionsByRun = new Map<string, Map<number, string>>();
 
   async save(record: StoredPlanRecord): Promise<StoredPlanRecord> {
     const parsed = StoredPlanRecordSchema.parse(record);
-    const existingRunPlan = this.byRun.get(parsed.runId);
-    if (
-      existingRunPlan &&
-      existingRunPlan !== parsed.planId &&
-      parsed.planVersion === 1
-    ) {
+    const versionMap =
+      this.versionsByRun.get(parsed.runId) ?? new Map<number, string>();
+    const existingForVersion = versionMap.get(parsed.planVersion);
+    if (existingForVersion && existingForVersion !== parsed.planId) {
       throw new Error(
-        `Run ${parsed.runId} already has planVersion 1 (${existingRunPlan})`,
+        `Run ${parsed.runId} already has planVersion ${parsed.planVersion} (${existingForVersion})`,
       );
     }
     this.byId.set(parsed.planId, parsed);
-    this.byRun.set(parsed.runId, parsed.planId);
+    versionMap.set(parsed.planVersion, parsed.planId);
+    this.versionsByRun.set(parsed.runId, versionMap);
+    this.latestByRun.set(parsed.runId, parsed.planId);
     return parsed;
   }
 
@@ -66,7 +79,7 @@ export class InMemoryPlanRepository implements PlanRepository {
   }
 
   async getByRunId(runId: string): Promise<StoredPlanRecord | null> {
-    const planId = this.byRun.get(runId);
+    const planId = this.latestByRun.get(runId);
     if (!planId) {
       return null;
     }
@@ -77,14 +90,38 @@ export class InMemoryPlanRepository implements PlanRepository {
     runId: string,
     planVersion: PlanVersion,
   ): Promise<StoredPlanRecord | null> {
-    const record = await this.getByRunId(runId);
-    if (!record || record.planVersion !== planVersion) {
+    const planId = this.versionsByRun.get(runId)?.get(planVersion);
+    if (!planId) {
       return null;
     }
-    return record;
+    return this.byId.get(planId) ?? null;
+  }
+
+  async listByRunId(runId: string): Promise<readonly StoredPlanRecord[]> {
+    const versionMap = this.versionsByRun.get(runId);
+    if (!versionMap) {
+      return [];
+    }
+    return [...versionMap.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, planId]) => this.byId.get(planId)!)
+      .filter(Boolean);
   }
 
   async exists(planId: string): Promise<boolean> {
     return this.byId.has(planId);
+  }
+
+  async markSuperseded(planId: string): Promise<StoredPlanRecord> {
+    const existing = this.byId.get(planId);
+    if (!existing) {
+      throw new Error(`Unknown planId: ${planId}`);
+    }
+    const next = StoredPlanRecordSchema.parse({
+      ...existing,
+      status: "SUPERSEDED",
+    });
+    this.byId.set(planId, next);
+    return next;
   }
 }

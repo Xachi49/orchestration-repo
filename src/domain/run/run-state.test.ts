@@ -43,6 +43,24 @@ describe("Run state machine", () => {
     }
   });
 
+  it("rejects VALIDATING → APPROVED (Phase 5 has no approval authority)", () => {
+    const result = transitionRunState("VALIDATING", "APPROVED");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("ILLEGAL_RUN_TRANSITION");
+      expect(result.error.from).toBe("VALIDATING");
+      expect(result.error.to).toBe("APPROVED");
+    }
+    expect(() => assertTransition("VALIDATING", "APPROVED")).toThrow(
+      /Illegal run-state transition/,
+    );
+  });
+
+  it("still permits VALIDATING → AWAITING_APPROVAL for Phase 6 routing", () => {
+    const result = transitionRunState("VALIDATING", "AWAITING_APPROVAL");
+    expect(result.ok).toBe(true);
+  });
+
   it("does not allow terminal states to silently restart", () => {
     for (const terminal of [
       "COMPLETED",

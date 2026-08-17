@@ -18,3 +18,7 @@ export {
   httpStatusForVerification,
   registerVerificationRoutes,
 } from "./verify.js";
+export {
+  httpStatusForMemory,
+  registerLearningRoutes,
+} from "./learn.js";

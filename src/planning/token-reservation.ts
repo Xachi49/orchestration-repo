@@ -37,6 +37,7 @@ export class ByteLengthPlanningTokenEstimator
       assembled.controlPlaneSection,
       assembled.objectiveSection,
       assembled.repositorySection,
+      assembled.precedentsSection,
       assembled.evidenceSection,
       assembled.taskSection,
     ].join("\n\n");

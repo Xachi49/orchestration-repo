@@ -104,3 +104,8 @@ export {
   createLocalVerificationStack,
   type LocalVerificationStack,
 } from "./verification/index.js";
+
+export {
+  createLocalMemoryStack,
+  type LocalMemoryStack,
+} from "./memory/index.js";

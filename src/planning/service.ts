@@ -88,6 +88,20 @@ export interface PlanningServiceDeps {
   inferenceBudget?: PlanningInferenceBudget;
   tokenEstimator?: PlanningTokenReservationEstimator;
   maxOutputTokensByOperation?: PlanningMaxOutputTokensByOperation;
+  /** Optional Phase 9 advisory precedent retrieval. Missing → empty precedents. */
+  precedentRetriever?: {
+    retrieve(query: {
+      projectId: string;
+      environment?: string;
+      actionTypes?: readonly string[];
+      capabilityIds?: readonly string[];
+      objectiveText?: string;
+      currentRepositoryFingerprint?: string;
+    }): Promise<{
+      precedents: import("../domain/memory/result.js").RetrievedPrecedentContext[];
+      retrievalContextFingerprint: string;
+    }>;
+  };
 }
 
 /**
@@ -119,6 +133,7 @@ export class PlanningService {
   private readonly prompts: PlanningPromptAssembler;
   private readonly tokenEstimator: PlanningTokenReservationEstimator;
   private readonly maxOutputTokensByOperation: PlanningMaxOutputTokensByOperation;
+  private precedentRetriever: PlanningServiceDeps["precedentRetriever"];
 
   constructor(deps: PlanningServiceDeps) {
     this.readiness = deps.readiness;
@@ -153,6 +168,14 @@ export class PlanningService {
       ...DEFAULT_PLANNING_MAX_OUTPUT_TOKENS,
       ...deps.maxOutputTokensByOperation,
     };
+    this.precedentRetriever = deps.precedentRetriever;
+  }
+
+  /** Bind Phase 9 retriever after stack construction (optional). */
+  bindPrecedentRetriever(
+    retriever: NonNullable<PlanningServiceDeps["precedentRetriever"]>,
+  ): void {
+    this.precedentRetriever = retriever;
   }
 
   async plan(runId: string): Promise<PlanningResult> {
@@ -455,6 +478,22 @@ export class PlanningService {
       remoteUrl,
       evidenceList,
     );
+
+    let precedents:
+      | import("../domain/memory/result.js").RetrievedPrecedentContext[]
+      | undefined;
+    let retrievalContextFingerprint: string | undefined;
+    if (this.precedentRetriever) {
+      const retrieved = await this.precedentRetriever.retrieve({
+        projectId: run.projectId,
+        environment: run.requestedEnvironment,
+        objectiveText: objective.requestedOutcome,
+        currentRepositoryFingerprint: repositoryContext.repositoryFingerprint,
+      });
+      precedents = [...retrieved.precedents];
+      retrievalContextFingerprint = retrieved.retrievalContextFingerprint;
+    }
+
     return this.contextCompiler.compile({
       run,
       objective,
@@ -463,6 +502,10 @@ export class PlanningService {
       liveLock,
       evidence: evidenceList,
       contentByEvidenceId,
+      ...(precedents !== undefined ? { precedents } : {}),
+      ...(retrievalContextFingerprint !== undefined
+        ? { retrievalContextFingerprint }
+        : {}),
     });
   }
 

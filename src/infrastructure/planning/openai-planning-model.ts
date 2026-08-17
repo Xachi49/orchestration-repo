@@ -169,6 +169,7 @@ export class OpenAIPlanningModel implements PlanningModel {
       input.assembled.controlPlaneSection,
       input.assembled.objectiveSection,
       input.assembled.repositorySection,
+      input.assembled.precedentsSection,
       input.assembled.evidenceSection,
       input.assembled.taskSection,
     ].join("\n\n");

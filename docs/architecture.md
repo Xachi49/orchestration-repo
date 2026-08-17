@@ -9,6 +9,8 @@ Phase 4–5 added bounded planning and independent validation.
 Phase 6 added **human authorization**: exact-plan approval binding and the exception inbox.
 Phase 7 added **bounded execution**: SafeActuator side effects under readiness, preflight, and fencing.
 Phase 8 added **independent outcome verification**: evidence-backed completion.
+Phase 9 added **governed memory**: historical run learning, provenance-preserving
+precedent promotion, and advisory retrieval for planning.
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
@@ -1272,4 +1274,172 @@ No `/mark-success`, `/complete`, or `/override-verification`.
 verification readiness/coordinator. Tests that need executable plans should
 continue to use `createExecutionFriendlyPlanningModel()` with acceptance
 criteria aligned to plan postconditions.
+
+---
+
+## Phase 9 — Governed memory, learning ledger & precedent promotion
+
+Phase 9 creates a governed learning system from terminal historical runs.
+
+```text
+HISTORICAL RUN
+      ↓
+immutable run provenance
+      ↓
+LEARNING EXTRACTION
+      ↓
+Candidate Learning
+      ↓
+evidence/provenance validation
+      ↓
+PROMOTION GATE
+      ↓
+Governed Precedent
+      ↓
+bounded retrieval
+      ↓
+future planner advisory context
+```
+
+### Authority separations (mandatory)
+
+```text
+HISTORICAL DATA      ≠  TRUSTED PRECEDENT
+TRUSTED PRECEDENT    ≠  POLICY
+PRECEDENT            ≠  CURRENT TRUTH
+PRECEDENT            ≠  AUTHORIZATION
+PRECEDENT            ≠  EVIDENCE OF CURRENT STATE
+```
+
+> Memory may inform judgment. Memory does not become authority merely because it was remembered.
+
+**PROVENANCE != CLAIM GROUNDING.** A historical run proves that an event occurred. It does not automatically prove every lesson written about that event. Valid provenance is necessary and not sufficient for auto-promotion.
+
+**MODEL_SUGGESTION != AUTO-PROMOTABLE PRECEDENT.** `LearningModel` suggestions may become `LearningCandidate`s with immutable origin `MODEL_SUGGESTION`. They never auto-promote merely because provenance is valid or the source outcome is `VERIFIED_SUCCESS`. Conservative rule: `MODEL_SUGGESTION` → `READY_FOR_HUMAN_REVIEW`.
+
+**PRECEDENT TEXT IS ADVISORY DATA, NOT AN INSTRUCTION CHANNEL.** Retrieved precedents are wrapped as `ADVISORY_PRECEDENT` data. Text inside a precedent cannot issue instructions, change system rules, grant permission, modify policy, expand capabilities, change budget, or authorize execution. Imperative or authority-like phrasing remains data.
+
+**CURRENT VERIFIED TRUTH ALWAYS OUTRANKS HISTORICAL ADVICE.**
+
+```text
+CURRENT OBJECTIVE
+CURRENT VERIFIED TRUTH
+CURRENT POLICY
+CURRENT CAPABILITIES
+CURRENT BUDGET
+        >
+PROMOTED HISTORICAL PRECEDENT
+```
+
+Policies are exact authority. Precedents are advisory historical patterns.
+
+A precedent may influence planning. A precedent may NEVER:
+
+- override policy / grant capabilities / change budgets
+- authorize execution / approve a run
+- become evidence of current repository truth
+- mutate objective requirements / bypass validation
+
+Auto-promotion is allowed only when all of the following hold:
+
+- `candidate.origin == DETERMINISTIC_EXTRACTION`
+- `claimGrounding == DETERMINISTICALLY_GROUNDED`
+- existing low-risk / `PROJECT_LOCAL` / provenance / contradiction / promotion-policy gates pass
+
+Human promotion of a `MODEL_SUGGESTION` preserves origin and grounding, records `promotionMethod = HUMAN_REVIEW`, and uses trust class `HUMAN_REVIEWED`. The source is never relabeled as deterministic extraction.
+
+**HUMAN REVIEW != FACTUAL EVIDENCE.** A reviewer may govern whether a supported historical lesson should influence future planning. A reviewer may not transform an unsupported factual claim into precedent. Reviewer notes are audit/display metadata only: they do not alter `LearningClaim`, evidence, origin, outcome, or grounding.
+
+**UNGROUNDED → NEVER PROMOTABLE.** `PROMOTION_GROUNDING_INSUFFICIENT` is returned when a claim is not entailed by immutable records. A reviewer may `REJECT` an ungrounded candidate; they may not `PROMOTE` it.
+
+| Grounding verdict | Auto-promote | Human `PROMOTE` |
+| --- | --- | --- |
+| `DETERMINISTICALLY_GROUNDED` | If existing gates pass | Allowed |
+| `PARTIALLY_GROUNDED` | Never | Never (narrowing cannot be proven to repair the unsupported portion; `REQUEST_NARROWER_SCOPE` / `REJECT` only) |
+| `REQUIRES_HUMAN_REVIEW` | Never | Allowed when structured facts and provenance exist |
+| `UNGROUNDED` | Never | Never |
+
+`HUMAN_REVIEWED` describes governance of a supported claim, not a bypass around claim grounding. `PrecedentIntegrityService` fail-closes on `HUMAN_REVIEW` + `UNGROUNDED` even if hashes were recomputed. Ungrounded candidates remain in the historical candidate repository for audit and do not count toward corroboration, trust upgrades, contradiction resolution, or supersession authority.
+
+### Key components
+
+| Component | Role |
+| --- | --- |
+| `HistoricalRunRecord` | Immutable provenance anchor over Phase 0–8 outputs |
+| `HistoricalRunRecordHasher` | Canonical hash of authority identities (no display/timestamps) |
+| `LearningCandidate` | Descriptive advisory lesson with immutable `origin` and structured `LearningClaim`; never `POLICY_RULE` |
+| `LearningClaim` / `LearningClaimGroundingService` | Bounded semantic facts; promotion evaluates the claim, not prose. Verdicts: `DETERMINISTICALLY_GROUNDED` / `PARTIALLY_GROUNDED` / `UNGROUNDED` / `REQUIRES_HUMAN_REVIEW` |
+| `LearningExtractionService` | Deterministic candidate extraction; constructs the structured claim first, then renders `statement` |
+| `LearningModel` / `FakeLearningModel` | Optional contextual suggestions persisted as `MODEL_SUGGESTION`; never promotes |
+| `PrecedentProvenance` | Exact source identities + `provenanceHash` |
+| `PrecedentApplicability` | Scope envelope; default `PROJECT_LOCAL` |
+| `PrecedentPromotionPolicy` | Conservative memory promotion metadata (not Control Plane policy) |
+| `PrecedentPromotionReadinessService` | Deterministic eligibility gate |
+| `PrecedentPromotionDecision` | Human review contract (separate from Phase 6 auth) |
+| `PromotedPrecedent` | Versioned advisory precedent; trust never `AUTHORITATIVE` |
+| `LearningLedger` | Append-only audit events |
+| `PrecedentContradictionService` | OPEN contradictions; no silent delete |
+| `PrecedentSupersession` | ACTIVE→SUPERSEDED with new version referencing old |
+| `PrecedentRetriever` | Exact filters then deterministic top-K ranking |
+| `PrecedentIntegrityService` | Tamper / poison defense (`PRECEDENT_INTEGRITY_FAILED`) |
+| `PrecedentCorroborationService` | Independent-run corroboration; same run not double-counted |
+| `GovernedMemoryService` | Orchestrates learn → extract → promote → ledger |
+| `LearningCoordinator` | Fence `NOT_STARTED→IN_PROGRESS→PROCESSED\|FAILED` |
+
+### Promotion authority
+
+- Deterministic auto-promote ONLY: `DETERMINISTIC_EXTRACTION` + `DETERMINISTICALLY_GROUNDED` + `PROJECT_LOCAL` + low-risk + eligible outcome + complete provenance + no hard contradiction
+- `MODEL_SUGGESTION` never auto-promotes; valid provenance is not claim grounding
+- `GLOBAL` / high-risk / security / policy-like → human `PrecedentPromotionDecision` only
+- Human review does not erase origin. Audit payload records origin, grounding verdict, and promotion method.
+- Human review does not create facts. `HUMAN_REVIEWED` is not a grounding bypass.
+- `UNGROUNDED` is never promotable (`PROMOTION_GROUNDING_INSUFFICIENT`)
+- `LearningModel` NEVER promotes
+- Callers cannot POST a `PromotedPrecedent` directly
+- `PrecedentIntegrityService` fail-closes on `promotionMethod = AUTO_PROMOTE` sourced from `MODEL_SUGGESTION`
+- Contradiction comparison uses structured claim identity/polarity, not prose wording
+
+### Outcome quality gating
+
+| Outcome | Eligible learning |
+| --- | --- |
+| `VERIFIED_SUCCESS` | `SUCCESS_PATTERN` and related positive patterns |
+| `PARTIAL_SUCCESS` | Bounded failure/verification; never full success claim |
+| `INCONCLUSIVE` | Evidence-gap only; never success |
+| `CONTAINED` | Containment / safety patterns |
+| `BLOCKED` / `REJECTED` / `EXPIRED` / `ESCALATED` | Process / governance patterns |
+
+Terminal learnable run states: `COMPLETED`, `BLOCKED`, `REJECTED`, `EXPIRED`, `ESCALATED`, `CONTAINED`.
+
+### Planning integration
+
+Retrieval order in planning prompts:
+
+1. Immutable system contract
+2. Control plane / policies / capabilities / budgets
+3. Objective
+4. Verified current repository truth
+5. **Advisory promoted precedents** (`ADVISORY_PRECEDENT`)
+6. Other untrusted project data
+
+`planningContextFingerprint` includes retrieved precedent IDs, versions, and hashes (sorted). Precedent drift alone does not invalidate authorization — precedents are advisory, not authority.
+
+### HTTP
+
+- `POST /v1/runs/{runId}/learn`
+- `GET  /v1/runs/{runId}/learnings`
+- `GET  /v1/projects/{projectId}/precedents`
+- `GET  /v1/precedents/{precedentId}`
+- `POST /v1/precedent-candidates/{candidateId}/review`
+
+No `POST /v1/memory` with arbitrary trusted text.
+No direct `PromotedPrecedent` creation.
+
+### Local stack
+
+`createLocalMemoryStack` extends `createLocalVerificationStack` with
+`FakeLearningModel`, append-only in-memory memory repositories, learning
+coordinator, and `GovernedMemoryService`. Planning is bound to
+`PrecedentRetriever` for advisory context.
+
 

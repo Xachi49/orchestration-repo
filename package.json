@@ -2,7 +2,7 @@
   "name": "orchestrator-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 8 independent outcome verification",
+  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 9 governed memory & precedent promotion",
   "type": "module",
   "engines": {
     "node": ">=22"

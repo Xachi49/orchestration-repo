@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { TrustLevelSchema } from "../domain/evidence/evidence.js";
+import { RetrievedPrecedentContextSchema } from "../domain/memory/result.js";
 
 export const PlanningEvidenceExcerptSchema = z
   .object({
@@ -110,6 +111,11 @@ export const PlanningContextSchema = z
       })
       .strict(),
     evidence: z.array(PlanningEvidenceExcerptSchema),
+    /**
+     * Advisory historical precedents. Always below control plane / repo truth.
+     * Never SYSTEM_AUTHORITY. Label is always ADVISORY_PRECEDENT.
+     */
+    advisoryPrecedents: z.array(RetrievedPrecedentContextSchema).default([]),
     knownUnknowns: z.array(z.string()),
     planningConstraints: z.array(z.string()),
     contextMetadata: z
@@ -118,6 +124,7 @@ export const PlanningContextSchema = z
         promptVersion: z.literal(PLANNING_PROMPT_VERSION),
         selectedEvidenceIds: z.array(z.string()),
         excludedEvidenceIds: z.array(z.string()),
+        selectedPrecedentIds: z.array(z.string()).default([]),
         budgetEstimate: z
           .object({
             selectedExcerptChars: z.number().int().nonnegative(),
@@ -127,6 +134,7 @@ export const PlanningContextSchema = z
           })
           .strict(),
         planningContextFingerprint: z.string().min(1),
+        retrievalContextFingerprint: z.string().min(1).optional(),
       })
       .strict(),
   })

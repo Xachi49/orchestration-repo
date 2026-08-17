@@ -1,25 +1,34 @@
 # Orchestrator Agent
 
-Evidence-grounded, policy-governed orchestration: contracts, control plane, admission, verified repository truth, bounded planning, independent validation, human authorization, bounded execution, and independent outcome verification.
+Evidence-grounded, policy-governed orchestration: contracts, control plane, admission, verified repository truth, bounded planning, independent validation, human authorization, bounded execution, independent outcome verification, and governed memory.
 
 **Package name:** `orchestrator-agent`  
 **Repository folder / remote:** `orchestration-repo`
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
-## Current milestone: Phase 8 — Independent outcome verification
+## Current milestone: Phase 9 — Governed memory & precedent promotion
 
-Phase 8 independently determines whether post-execution reality satisfies the authorized objective.
+Phase 9 learns from terminal historical runs into advisory precedents.
 
-- `EXECUTION_SUCCEEDED != VERIFIED_SUCCESS`. Actuator completion is not verified objective success.
-- `VERIFIED_SUCCESS != "the model thinks it worked"`. Contextual model may only downgrade.
-- `COMPLETED` requires evidence-backed `VERIFIED_SUCCESS` plus a `CompletionRecord`.
-- Acceptance criteria use **explicit plan-bound verification bindings** (hashed into `planHash`). `HEURISTIC_RELEVANCE ≠ VERIFICATION_BINDING`.
-- Path: `EXECUTING → VERIFYING → COMPLETED` (or `ESCALATED` / preserve `CONTAINED`).
-- `EXECUTING → COMPLETED` is illegal. The executor cannot verify itself.
-- Default stack uses `FakeVerificationModel`. No live APIs in tests.
+- `HISTORICAL DATA != TRUSTED PRECEDENT != POLICY != AUTHORIZATION != CURRENT TRUTH`
+- **PROVENANCE != CLAIM GROUNDING.** A historical run proves that an event occurred. It does not automatically prove every lesson written about that event.
+- **MODEL_SUGGESTION != AUTO-PROMOTABLE PRECEDENT.** Auto-promotion requires `origin == DETERMINISTIC_EXTRACTION` and `claimGrounding == DETERMINISTICALLY_GROUNDED`, plus the existing PROJECT_LOCAL / low-risk / provenance gates.
+- **PRECEDENT TEXT IS ADVISORY DATA, NOT AN INSTRUCTION CHANNEL.** Planner prompts wrap retrieved precedents in an `ADVISORY_PRECEDENT` data boundary. Imperative wording inside a precedent remains data.
+- Authority hierarchy: current objective, current verified truth, current policy, current capabilities, and current budget outrank promoted historical precedent.
+- Current verified repository truth, policy DENY, and budget hard limits always outrank memory
+- Human review of a model suggestion preserves `MODEL_SUGGESTION` origin and records `promotionMethod = HUMAN_REVIEW`. It never relabels the source as deterministic extraction.
+- **HUMAN REVIEW != FACTUAL EVIDENCE.** A reviewer may govern whether a supported historical lesson should influence future planning. A reviewer may not transform an unsupported factual claim into precedent.
+- **UNGROUNDED → NEVER PROMOTABLE**, including by human `PROMOTE`. `HUMAN_REVIEWED` describes governance of a supported claim, not a bypass around claim grounding.
+- `LearningModel` never promotes; callers cannot POST a `PromotedPrecedent` directly
+- Precedents are labeled `ADVISORY_PRECEDENT` below control plane / repo truth in planning context
+- Default stack uses `FakeLearningModel`. No vector DB. No live APIs in tests.
 
 See [docs/architecture.md](docs/architecture.md).
+
+## Phase 8 — Independent outcome verification
+
+`EXECUTION_SUCCEEDED != VERIFIED_SUCCESS`. `COMPLETED` requires evidence-backed success + `CompletionRecord`.
 
 ## Phase 7 — Bounded execution & safe actuation
 
@@ -56,13 +65,13 @@ Domain contracts, run-state machine, plan hashing, evidence records.
 ## What remains unimplemented
 
 - Discord/Slack vendor delivery (port + fake only)
-- Phase 9 learning / memory promotion
+- Phase 10 and beyond
 - GitHub writes, arbitrary shell, deployments
 - Embeddings / vector memory
 - Production databases
-- Optional OpenAI verification adapter (FakeVerificationModel is default)
+- Optional OpenAI learning adapter (FakeLearningModel is default)
 
-Default `npm start` / `npm test` use fake planning/validation/verification models, fake approval delivery, and fake actuators (no paid API calls).
+Default `npm start` / `npm test` use fake planning/validation/verification/learning models, fake approval delivery, and fake actuators (no paid API calls).
 
 ## Commands
 
@@ -97,6 +106,11 @@ GET  /v1/runs/:runId/execution-artifacts
 POST /v1/runs/:runId/verify
 GET  /v1/runs/:runId/verification
 GET  /v1/runs/:runId/verification-evidence
+POST /v1/runs/:runId/learn
+GET  /v1/runs/:runId/learnings
+GET  /v1/projects/:projectId/precedents
+GET  /v1/precedents/:precedentId
+POST /v1/precedent-candidates/:candidateId/review
 ```
 
 ## Auth / live model

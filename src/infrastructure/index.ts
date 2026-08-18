@@ -109,3 +109,8 @@ export {
   createLocalMemoryStack,
   type LocalMemoryStack,
 } from "./memory/index.js";
+
+export {
+  createLocalObservabilityStack,
+  type LocalObservabilityStack,
+} from "./observability/index.js";

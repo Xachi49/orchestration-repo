@@ -7,9 +7,28 @@ Evidence-grounded, policy-governed orchestration: contracts, control plane, admi
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
-## Current milestone: Phase 9 — Governed memory & precedent promotion
+## Current milestone: Phase 10 — Observability & system intelligence
 
-Phase 9 learns from terminal historical runs into advisory precedents.
+Phase 10 observes the full orchestration chain without becoming an authority plane.
+
+- **OBSERVATION != OPTIMIZATION != AUTHORITY CHANGE**
+- **SLO != POLICY** — `SLORegistry` is separate from `PolicyRegistry`
+- **ANOMALY != EXECUTION BLOCK**
+- **OPTIMIZATION CANDIDATE != CHANGE** — every suggested change class begins with `REVIEW_`
+- **CORRELATION != CAUSATION** for precedent effectiveness
+- **DETERMINISTICALLY DERIVED != NECESSARILY COMPLETE**
+- **MEASUREMENT EXISTS != MEASUREMENT IS SLO-ELIGIBLE**
+- **MISSING DATA != HEALTHY**
+- **PROXY TIMESTAMP != EXACT LATENCY**
+- Telemetry is **derived** from Phase 0–9 authoritative records; it is not a new source of operational authority
+- Only `AUTHORITATIVE_DERIVED` telemetry (`EXACT` or permitted `RECONSTRUCTED` quality) may drive SLO evaluation and hard anomaly rules
+- `PARTIAL` / `UNKNOWN` measurements yield `INSUFFICIENT_DATA`, never PASS/FAIL
+- No monetary cost is invented; token/resource usage only until pricing authority exists
+- Default stack uses deterministic in-memory stores. No external observability vendors. No auto-remediation.
+
+See [docs/architecture.md](docs/architecture.md).
+
+## Phase 9 — Governed memory & precedent promotion
 
 - `HISTORICAL DATA != TRUSTED PRECEDENT != POLICY != AUTHORIZATION != CURRENT TRUTH`
 - **PROVENANCE != CLAIM GROUNDING.** A historical run proves that an event occurred. It does not automatically prove every lesson written about that event.
@@ -65,7 +84,7 @@ Domain contracts, run-state machine, plan hashing, evidence records.
 ## What remains unimplemented
 
 - Discord/Slack vendor delivery (port + fake only)
-- Phase 10 and beyond
+- Phase 11 and beyond
 - GitHub writes, arbitrary shell, deployments
 - Embeddings / vector memory
 - Production databases
@@ -111,6 +130,15 @@ GET  /v1/runs/:runId/learnings
 GET  /v1/projects/:projectId/precedents
 GET  /v1/precedents/:precedentId
 POST /v1/precedent-candidates/:candidateId/review
+POST /v1/projects/:projectId/observability/rebuild
+GET  /v1/projects/:projectId/health
+GET  /v1/projects/:projectId/metrics
+GET  /v1/projects/:projectId/slo-evaluations
+GET  /v1/projects/:projectId/anomalies
+GET  /v1/projects/:projectId/optimization-candidates
+GET  /v1/runs/:runId/trace
+GET  /v1/projects/:projectId/funnel
+POST /v1/optimization-candidates/:candidateId/review
 ```
 
 ## Auth / live model

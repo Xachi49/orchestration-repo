@@ -11,6 +11,7 @@ import type { ExecutionReadinessService } from "../execution/readiness.js";
 import type { OutcomeVerificationService } from "../verification/service.js";
 import type { VerificationReadinessService } from "../verification/readiness.js";
 import type { GovernedMemoryService } from "../memory/service.js";
+import type { ObservabilityService } from "../observability/service.js";
 import Fastify from "fastify";
 import { registerRunRoutes } from "./runs.js";
 import { registerIngestRoutes } from "./ingest.js";
@@ -20,7 +21,8 @@ import { registerAuthorizationRoutes } from "./authorize.js";
 import { registerExecutionRoutes } from "./execute.js";
 import { registerVerificationRoutes } from "./verify.js";
 import { registerLearningRoutes } from "./learn.js";
-import { createLocalMemoryStack } from "../infrastructure/memory/local-stack.js";
+import { registerObservabilityRoutes } from "./observability.js";
+import { createLocalObservabilityStack } from "../infrastructure/observability/local-stack.js";
 
 export interface ApiDeps {
   admission?: ObjectiveAdmissionService;
@@ -36,6 +38,7 @@ export interface ApiDeps {
   verification?: OutcomeVerificationService;
   verificationReadiness?: VerificationReadinessService;
   memory?: GovernedMemoryService;
+  observability?: ObservabilityService;
 }
 
 /**
@@ -50,33 +53,39 @@ export async function buildServer(deps: ApiDeps = {}) {
   const executionEnabled = Boolean(deps.execution);
   const verificationEnabled = Boolean(deps.verification);
   const memoryEnabled = Boolean(deps.memory);
+  const observabilityEnabled = Boolean(deps.observability);
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: memoryEnabled
-      ? 9
-      : verificationEnabled
-        ? 8
-        : executionEnabled
-          ? 7
-          : 6,
-    orchestrator: memoryEnabled
-      ? "memory"
-      : verificationEnabled
-        ? "verification"
-        : executionEnabled
-          ? "execution"
-          : approvalEnabled
-            ? "authorization"
-            : deps.validation
-              ? "validation"
-              : "planning",
+    phase: observabilityEnabled
+      ? 10
+      : memoryEnabled
+        ? 9
+        : verificationEnabled
+          ? 8
+          : executionEnabled
+            ? 7
+            : 6,
+    orchestrator: observabilityEnabled
+      ? "observability"
+      : memoryEnabled
+        ? "memory"
+        : verificationEnabled
+          ? "verification"
+          : executionEnabled
+            ? "execution"
+            : approvalEnabled
+              ? "authorization"
+              : deps.validation
+                ? "validation"
+                : "planning",
     llmConnected: false,
     githubConnected: false,
     githubWritesEnabled: false,
     executionEnabled,
     verificationEnabled,
     memoryEnabled,
+    observabilityEnabled,
     approvalEnabled,
     planningModelToolsEnabled: false,
     validationModelToolsEnabled: false,
@@ -124,12 +133,15 @@ export async function buildServer(deps: ApiDeps = {}) {
   if (deps.memory) {
     registerLearningRoutes(app, { memory: deps.memory });
   }
+  if (deps.observability) {
+    registerObservabilityRoutes(app, { observability: deps.observability });
+  }
 
   return app;
 }
 
 async function main(): Promise<void> {
-  const stack = createLocalMemoryStack();
+  const stack = createLocalObservabilityStack();
   const app = await buildServer({
     admission: stack.admission,
     ingestion: stack.ingestion,
@@ -144,6 +156,7 @@ async function main(): Promise<void> {
     verification: stack.verification,
     verificationReadiness: stack.verificationReadiness,
     memory: stack.memory,
+    observability: stack.observability,
   });
   const port = Number(process.env["PORT"] ?? 3000);
   await app.listen({ port, host: "127.0.0.1" });

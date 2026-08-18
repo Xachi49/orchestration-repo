@@ -1442,4 +1442,121 @@ No direct `PromotedPrecedent` creation.
 coordinator, and `GovernedMemoryService`. Planning is bound to
 `PrecedentRetriever` for advisory context.
 
+---
+
+## Phase 10 — Observability, system intelligence & governed optimization
+
+Phase 10 observes the entire machine without becoming an authority plane.
+
+```text
+OBJECTIVE → … → GOVERNED LEARNING → ADVISORY PRECEDENT
+                    ↑
+            (read-only telemetry sources)
+                    ↓
+         TELEMETRY NORMALIZATION
+                    ↓
+         METRICS / SLO / ANOMALY / HEALTH
+                    ↓
+         OPTIMIZATION CANDIDATES (REVIEW_* only)
+```
+
+### Governing principle
+
+```text
+OBSERVATION  !=  OPTIMIZATION RECOMMENDATION  !=  AUTHORITY CHANGE
+```
+
+Phase 10 may identify patterns, compute metrics, evaluate SLOs, detect anomalies,
+and create optimization candidates. It may **not** automatically change policy,
+capabilities, budgets, models, prompts, approval rules, execution mode, or
+precedent trust.
+
+Phase 10 prefers explicit uncertainty over false precision.
+
+```text
+DETERMINISTICALLY DERIVED  !=  NECESSARILY COMPLETE
+MEASUREMENT EXISTS         !=  MEASUREMENT IS SLO-ELIGIBLE
+MISSING DATA               !=  HEALTHY
+PROXY TIMESTAMP            !=  EXACT LATENCY
+```
+
+### Measurement quality
+
+`MeasurementQuality`:
+
+- `EXACT` — directly derived from authoritative records whose semantics match the quantity
+- `RECONSTRUCTED` — deterministically derived from multiple authoritative records, not directly recorded
+- `PARTIAL` — relevant source data is missing; the value is known incomplete
+- `UNKNOWN` — cannot be calculated safely
+
+Trust alignment:
+
+- `EXACT` / complete `RECONSTRUCTED` → `AUTHORITATIVE_DERIVED`
+- `PARTIAL` / `UNKNOWN` → `BEST_EFFORT_DERIVED`
+
+Deterministic calculation over incomplete inputs is still best-effort. Proxy timestamps such as coordinator `lastUpdatedAt` are never treated as exact phase starts; they do not manufacture phase duration. Latency sample count decreases when bounds are missing.
+
+Execution resources reconstructed without a durable `ExecutionResourceLedger` are `PARTIAL` observed usage, not complete totals.
+
+SLO / anomaly / optimization / health decisions require eligible quality. `PARTIAL` and `UNKNOWN` never PASS or FAIL an SLO; they produce `INSUFFICIENT_DATA` (`INCOMPLETE_SOURCE_COVERAGE` or `INSUFFICIENT_MEASUREMENT_QUALITY`). A project whose enabled critical SLOs cannot be measured is `INSUFFICIENT_DATA`, not `HEALTHY`.
+
+Aggregate metrics expose coverage (`eligibleCount` / `candidateCount`). Metric and snapshot hashes include measurement quality and coverage.
+
+### Core contracts (`src/domain/observability/`)
+
+- `RunTelemetryRecord`, `PhaseTelemetryRecord` — derived run/phase telemetry with explicit gaps
+- `MetricWindow`, `TelemetryFingerprint` — deterministic window semantics
+- `ReliabilityMetric`, `LatencyMetric`, `ResourceAttributionRecord` — metric provenance required
+- `SLODefinition`, `SLOEvaluation` — observability configuration, not policy
+- `AnomalyFinding`, `BottleneckFinding`, `OptimizationCandidate`
+- `SystemHealthSnapshot`, `ObservabilityResult`, `RunTrace`, `RunFunnelReport`
+- `TelemetryTrustClass`: `AUTHORITATIVE_DERIVED` | `BEST_EFFORT_DERIVED` | `MODEL_INTERPRETED`
+
+### Services (`src/observability/`)
+
+- `TelemetryNormalizationService` — deterministic, idempotent reconstruction from Phase 0–9 records
+- `TelemetryIntegrityService` — fail closed on tampered/mismatched telemetry
+- `ResourceAttributionService` — planning / validation / execution resources kept separate
+- `FailureClassificationService`, `FailureAttributionService`
+- `SLORegistry`, `SLOEvaluationService`
+- `AnomalyDetectionService`, `BottleneckDetectionService`, `OptimizationCandidateService`
+- Intelligence (observational only): capability, validation, verification, authorization, planning, precedent effectiveness
+- `RunTraceService`, `RunFunnelService`
+- `ObservabilityService` — orchestrates rebuild → metrics → SLO → anomalies → health snapshot
+- `ObservabilityLedger` — append-only audit events
+
+### Authority invariants
+
+- No imports of policy/capability/budget mutation APIs, `SafeActuator`, or execution paths
+- Optimization candidates use bounded `REVIEW_*` suggested change classes only
+- Precedent effectiveness is correlation observation; no trust upgrade or retirement from Phase 10
+- Project-scoped metrics by default; no cross-project leakage
+- Data minimization: IDs, classifications, hashes, bounded summaries — no nonces, full prompts, or secrets
+
+### HTTP
+
+- `POST /v1/projects/{projectId}/observability/rebuild`
+- `GET  /v1/projects/{projectId}/health`
+- `GET  /v1/projects/{projectId}/metrics`
+- `GET  /v1/projects/{projectId}/slo-evaluations`
+- `GET  /v1/projects/{projectId}/anomalies`
+- `GET  /v1/projects/{projectId}/optimization-candidates`
+- `GET  /v1/runs/{runId}/trace`
+- `GET  /v1/projects/{projectId}/funnel`
+- `POST /v1/optimization-candidates/{candidateId}/review` (status only)
+
+No `POST /apply-optimization`, no budget/policy/capability mutation routes.
+
+### Local stack
+
+`createLocalObservabilityStack` extends `createLocalMemoryStack` with
+`ObservabilityService`, in-memory telemetry/metric/snapshot repositories, and
+read-only `TelemetrySources` wired to existing Phase 0–9 stores.
+
+### Deferred
+
+- `SystemIntelligenceModel` / `ObservabilityInferenceLedger` (optional advisory model)
+- Monetary `CostAttribution` until pricing authority exists
+- External OpenTelemetry / vendor exporters
+
 

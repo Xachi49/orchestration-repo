@@ -1,0 +1,54 @@
+import type { RunRepository } from "../admission/run-repository.js";
+import type { ObjectiveRepository } from "../admission/objective-repository.js";
+import type { EventStore } from "../admission/event-store.js";
+import type { PlanRepository } from "../planning/plan-repository.js";
+import type { PlanningUsageLedger } from "../planning/model.js";
+import type { PlanningCoordinator } from "../planning/coordinator.js";
+import type { ValidationDecisionRepository } from "../validation/decision-repository.js";
+import type { ValidationUsageLedger } from "../validation/model.js";
+import type { ValidationCoordinator } from "../validation/coordinator.js";
+import type { ApprovalRequestRepository } from "../authorization/approval-request-repository.js";
+import type { AuthorizationRecordRepository } from "../authorization/authorization-record-repository.js";
+import type { ExecutionAttemptRepository } from "../execution/attempt-repository.js";
+import type { StepExecutionRepository } from "../execution/step-repository.js";
+import type { ExecutionCoordinator } from "../execution/coordinator.js";
+import type { OutcomeVerificationRepository } from "../verification/outcome-repository.js";
+import type { CompletionRecordRepository } from "../verification/completion-repository.js";
+import type { VerificationCoordinator } from "../verification/coordinator.js";
+import type { VerificationInferenceLedger } from "../verification/inference-ledger.js";
+import type { HistoricalRunRepository } from "../memory/historical-run-repository.js";
+import type { LearningLedgerRepository } from "../memory/ledger-repository.js";
+import type { PromotedPrecedentRepository } from "../memory/promoted-precedent-repository.js";
+import type { PrecedentContradictionRepository } from "../memory/contradiction-repository.js";
+import type { LearningCandidateRepository } from "../memory/candidate-repository.js";
+import type { LearningInferenceLedger } from "../memory/inference-ledger.js";
+import type { RepositoryIngestionCoordinator } from "../ingestion/coordinator.js";
+
+/** Read-only authoritative sources for derived telemetry. */
+export interface TelemetrySources {
+  runs: RunRepository;
+  objectives: ObjectiveRepository;
+  events?: EventStore;
+  plans: PlanRepository;
+  planningUsage: PlanningUsageLedger;
+  planningCoordinator: PlanningCoordinator;
+  validationDecisions: ValidationDecisionRepository;
+  validationUsage: ValidationUsageLedger;
+  validationCoordinator: ValidationCoordinator;
+  approvalRequests: ApprovalRequestRepository;
+  authorizationRecords: AuthorizationRecordRepository;
+  executionAttempts: ExecutionAttemptRepository;
+  stepExecutions: StepExecutionRepository;
+  executionCoordinator: ExecutionCoordinator;
+  outcomeVerifications: OutcomeVerificationRepository;
+  completionRecords: CompletionRecordRepository;
+  verificationCoordinator: VerificationCoordinator;
+  verificationInference: VerificationInferenceLedger;
+  ingestionCoordinator: RepositoryIngestionCoordinator;
+  historicalRuns: HistoricalRunRepository;
+  learningLedger: LearningLedgerRepository;
+  promotedPrecedents: PromotedPrecedentRepository;
+  precedentContradictions: PrecedentContradictionRepository;
+  learningCandidates: LearningCandidateRepository;
+  learningInference: LearningInferenceLedger;
+}

@@ -114,3 +114,24 @@ export {
   createLocalObservabilityStack,
   type LocalObservabilityStack,
 } from "./observability/index.js";
+
+export {
+  loadStorageConfig,
+  parseStorageMode,
+} from "./postgres/config.js";
+export { PostgresDatabase } from "./postgres/database.js";
+export { PostgresTransactionManager } from "./postgres/transaction.js";
+export {
+  PostgresMigrationRunner,
+} from "./postgres/migrate.js";
+export { SUPPORTED_SCHEMA_VERSION } from "../domain/durability/index.js";
+export { PostgresHealthService } from "./postgres/health.js";
+export {
+  createPostgresOrchestratorStack,
+  type PostgresOrchestratorStack,
+} from "./postgres/stack.js";
+export {
+  bootstrapOrchestratorStack,
+  type OrchestratorStack,
+  type BootstrapResult,
+} from "./bootstrap.js";

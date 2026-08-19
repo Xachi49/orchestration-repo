@@ -47,3 +47,26 @@ export type ActionAllowance =
       allowed: false;
       reason: Exclude<ActionAllowanceReason, "ALLOWED">;
     };
+
+export function evaluateActionAllowance(
+  capability: Capability | null,
+  action: string,
+  environment: string,
+): ActionAllowance {
+  if (!capability) {
+    return { allowed: false, reason: "CAPABILITY_NOT_FOUND" };
+  }
+  if (!capability.enabled) {
+    return { allowed: false, reason: "CAPABILITY_DISABLED" };
+  }
+  if (!capability.allowedEnvironments.includes(environment)) {
+    return { allowed: false, reason: "ENVIRONMENT_NOT_ALLOWED" };
+  }
+  if (capability.forbiddenActions.includes(action)) {
+    return { allowed: false, reason: "ACTION_FORBIDDEN" };
+  }
+  if (!capability.allowedActions.includes(action)) {
+    return { allowed: false, reason: "ACTION_NOT_PERMITTED" };
+  }
+  return { allowed: true, reason: "ALLOWED" };
+}

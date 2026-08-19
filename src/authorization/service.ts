@@ -1,6 +1,6 @@
 import type { ClockPort } from "../infrastructure/clock.js";
+import { commitRunTransition } from "../admission/run-transition.js";
 import type { RunRepository } from "../admission/run-repository.js";
-import { withRunState } from "../admission/run-repository.js";
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
 import type { ControlPlaneService } from "../control-plane/service.js";
 import type { PlanRepository } from "../planning/plan-repository.js";
@@ -36,6 +36,10 @@ import {
   capabilitySetFingerprint,
   uniqueCapabilitiesForPlanActions,
 } from "../execution/capability-fingerprint.js";
+import {
+  withOptionalTransaction,
+  type TransactionManager,
+} from "../durability/transaction.js";
 
 export interface HumanAuthorizationServiceDeps {
   runs: RunRepository;
@@ -54,6 +58,7 @@ export interface HumanAuthorizationServiceDeps {
   identities?: AuthorizationIdentityGenerator;
   cardHasher?: DecisionCardHasher;
   planHasher?: Sha256PlanHasher;
+  transactions?: TransactionManager;
 }
 
 /**
@@ -138,7 +143,7 @@ export class HumanAuthorizationService {
       const run = await this.deps.runs.getById(request.runId);
       if (run && run.state === "AWAITING_APPROVAL") {
         const next = assertTransition(run.state, "EXPIRED");
-        await this.deps.runs.save(withRunState(run, next, now));
+        await commitRunTransition(this.deps.runs, run, next, now);
       }
       throw new AuthorizationError(
         "APPROVAL_REQUEST_EXPIRED",
@@ -216,15 +221,74 @@ export class HumanAuthorizationService {
         createdAt: now,
         ...(decision.note !== undefined ? { note: decision.note } : {}),
       });
-      await this.deps.records.append(record);
+      return await withOptionalTransaction(this.deps.transactions, async () => {
+        await this.deps.records.append(record);
 
-      if (decision.decision === "APPROVE") {
+        if (decision.decision === "APPROVE") {
+          await this.deps.requests.updateStatus(
+            request.approvalRequestId,
+            "APPROVED",
+          );
+          const next = assertTransition(run.state, "APPROVED");
+          await commitRunTransition(this.deps.runs, run, next, now);
+          await this.deps.coordinator.completeDecision(request.approvalRequestId);
+          return {
+            runId: request.runId,
+            approvalRequestId: request.approvalRequestId,
+            planId: request.planId,
+            planVersion: request.planVersion,
+            planHash: request.planHash,
+            result: "APPROVED" as const,
+            authorizationRecordId: record.authorizationRecordId,
+            requiresFurtherAction: false,
+            runState: "APPROVED" as const,
+          };
+        }
+
+        if (decision.decision === "REJECT") {
+          await this.deps.requests.updateStatus(
+            request.approvalRequestId,
+            "REJECTED",
+          );
+          const next = assertTransition(run.state, "REJECTED");
+          await commitRunTransition(this.deps.runs, run, next, now);
+          await this.deps.coordinator.completeDecision(request.approvalRequestId);
+          return {
+            runId: request.runId,
+            approvalRequestId: request.approvalRequestId,
+            planId: request.planId,
+            planVersion: request.planVersion,
+            planHash: request.planHash,
+            result: "REJECTED" as const,
+            authorizationRecordId: record.authorizationRecordId,
+            requiresFurtherAction: true,
+            runState: "REJECTED" as const,
+          };
+        }
+
+        const modification = parseModificationRequest({
+          modificationRequestId: this.identities.nextModificationRequestId(),
+          runId: request.runId,
+          approvalRequestId: request.approvalRequestId,
+          sourcePlanId: request.planId,
+          sourcePlanVersion: request.planVersion,
+          requestedBy: decision.approverId,
+          requestedAt: decision.submittedAt,
+          modificationNote: decision.note!.trim(),
+        });
+        await this.deps.modifications.save(modification);
         await this.deps.requests.updateStatus(
           request.approvalRequestId,
-          "APPROVED",
+          "MODIFICATION_REQUESTED",
         );
-        const next = assertTransition(run.state, "APPROVED");
-        await this.deps.runs.save(withRunState(run, next, now));
+        const next = assertTransition(run.state, "ESCALATED");
+        await commitRunTransition(
+          this.deps.runs,
+          run,
+          next,
+          now,
+          { failureReasonCode: "MODIFICATION_REQUESTED" },
+        );
         await this.deps.coordinator.completeDecision(request.approvalRequestId);
         return {
           runId: request.runId,
@@ -232,68 +296,13 @@ export class HumanAuthorizationService {
           planId: request.planId,
           planVersion: request.planVersion,
           planHash: request.planHash,
-          result: "APPROVED",
-          authorizationRecordId: record.authorizationRecordId,
-          requiresFurtherAction: false,
-          runState: "APPROVED",
-        };
-      }
-
-      if (decision.decision === "REJECT") {
-        await this.deps.requests.updateStatus(
-          request.approvalRequestId,
-          "REJECTED",
-        );
-        const next = assertTransition(run.state, "REJECTED");
-        await this.deps.runs.save(withRunState(run, next, now));
-        await this.deps.coordinator.completeDecision(request.approvalRequestId);
-        return {
-          runId: request.runId,
-          approvalRequestId: request.approvalRequestId,
-          planId: request.planId,
-          planVersion: request.planVersion,
-          planHash: request.planHash,
-          result: "REJECTED",
+          result: "MODIFICATION_REQUESTED" as const,
           authorizationRecordId: record.authorizationRecordId,
           requiresFurtherAction: true,
-          runState: "REJECTED",
+          runState: "ESCALATED" as const,
+          modificationRequestId: modification.modificationRequestId,
         };
-      }
-
-      const modification = parseModificationRequest({
-        modificationRequestId: this.identities.nextModificationRequestId(),
-        runId: request.runId,
-        approvalRequestId: request.approvalRequestId,
-        sourcePlanId: request.planId,
-        sourcePlanVersion: request.planVersion,
-        requestedBy: decision.approverId,
-        requestedAt: decision.submittedAt,
-        modificationNote: decision.note!.trim(),
       });
-      await this.deps.modifications.save(modification);
-      await this.deps.requests.updateStatus(
-        request.approvalRequestId,
-        "MODIFICATION_REQUESTED",
-      );
-      const next = assertTransition(run.state, "ESCALATED");
-      await this.deps.runs.save(
-        withRunState(run, next, now, {
-          failureReasonCode: "MODIFICATION_REQUESTED",
-        }),
-      );
-      await this.deps.coordinator.completeDecision(request.approvalRequestId);
-      return {
-        runId: request.runId,
-        approvalRequestId: request.approvalRequestId,
-        planId: request.planId,
-        planVersion: request.planVersion,
-        planHash: request.planHash,
-        result: "MODIFICATION_REQUESTED",
-        authorizationRecordId: record.authorizationRecordId,
-        requiresFurtherAction: true,
-        runState: "ESCALATED",
-        modificationRequestId: modification.modificationRequestId,
-      };
     } catch (error) {
       await this.deps.coordinator.failDecision(request.approvalRequestId);
       throw error;

@@ -12,3 +12,4 @@ export * from "./execution/index.js";
 export * from "./verification/index.js";
 export * from "./memory/index.js";
 export * from "./observability/index.js";
+export * from "./durability/index.js";

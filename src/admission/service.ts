@@ -36,8 +36,13 @@ import {
   type RunRecord,
   type RunRepository,
 } from "./run-repository.js";
+import { commitRunTransition } from "./run-transition.js";
 import type { ObjectiveRepository } from "./objective-repository.js";
 import { parseObjective } from "../domain/objective/objective.js";
+import {
+  withOptionalTransaction,
+  type TransactionManager,
+} from "../durability/transaction.js";
 
 export interface ObjectiveAdmissionServiceDeps {
   controlPlane: ControlPlaneService;
@@ -51,6 +56,7 @@ export interface ObjectiveAdmissionServiceDeps {
   observability: ObservabilityPort;
   /** Optional for Phase 2 compatibility; required for Phase 4 planning. */
   objectives?: ObjectiveRepository;
+  transactions?: TransactionManager;
 }
 
 const EVENT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -105,6 +111,7 @@ export class ObjectiveAdmissionService {
   private readonly clock: ControlPlaneClock;
   private readonly observability: ObservabilityPort;
   private readonly objectives: ObjectiveRepository | undefined;
+  private readonly transactions: TransactionManager | undefined;
 
   constructor(deps: ObjectiveAdmissionServiceDeps) {
     this.controlPlane = deps.controlPlane;
@@ -117,6 +124,7 @@ export class ObjectiveAdmissionService {
     this.identities = deps.identities;
     this.clock = deps.clock;
     this.observability = deps.observability;
+    this.transactions = deps.transactions;
   }
 
   async admit(input: unknown): Promise<AdmissionResult> {
@@ -292,121 +300,135 @@ export class ObjectiveAdmissionService {
         requesterId: request.requesterId,
         requestedEnvironment: request.requestedEnvironment,
         state: "RECEIVED",
+        recordRevision: 1,
         createdAt: now,
         updatedAt: now,
         correlationId: identity.correlationId,
         traceId: identity.traceId,
       };
 
-      try {
-        created = await this.runs.create(received);
-      } catch (error) {
-        throw new AdmissionError(
-          "RUN_CREATION_FAILED",
-          "Failed to persist RECEIVED run",
-          { runId: identity.runId, cause: String(error) },
-        );
-      }
+      const admissionResult = await withOptionalTransaction(
+        this.transactions,
+        async () => {
+          try {
+            created = await this.runs.create(received);
+          } catch (error) {
+            throw new AdmissionError(
+              "RUN_CREATION_FAILED",
+              "Failed to persist RECEIVED run",
+              { runId: identity.runId, cause: String(error) },
+            );
+          }
 
-      let admittedState: "ADMITTED";
-      try {
-        admittedState = assertTransition(created.state, "ADMITTED") as "ADMITTED";
-      } catch (error) {
-        const code =
-          error instanceof IllegalRunTransitionError
-            ? "INVALID_RUN_TRANSITION"
-            : "INVALID_RUN_TRANSITION";
-        throw new AdmissionError(
-          code,
-          error instanceof Error ? error.message : "Illegal run transition",
-          { runId: created.runId, from: created.state, to: "ADMITTED" },
-        );
-      }
+          let admittedState: "ADMITTED";
+          try {
+            admittedState = assertTransition(
+              created.state,
+              "ADMITTED",
+            ) as "ADMITTED";
+          } catch (error) {
+            const code =
+              error instanceof IllegalRunTransitionError
+                ? "INVALID_RUN_TRANSITION"
+                : "INVALID_RUN_TRANSITION";
+            throw new AdmissionError(
+              code,
+              error instanceof Error ? error.message : "Illegal run transition",
+              { runId: created.runId, from: created.state, to: "ADMITTED" },
+            );
+          }
 
-      const admitted = withRunState(created, admittedState, now, {
-        admittedAt: now,
-      });
-      created = await this.runs.save(admitted);
+          created = await commitRunTransition(
+            this.runs,
+            created,
+            admittedState,
+            now,
+            { admittedAt: now },
+          );
 
-      let eventEnvelope: EventEnvelope;
-      try {
-        eventEnvelope = await this.events.append(
-          this.buildEvent(request, created, identity, now, idempotencyKey),
-        );
-      } catch (error) {
-        throw new AdmissionError(
-          "EVENT_CREATION_FAILED",
-          "Failed to persist admission event envelope",
-          { runId: created.runId, cause: String(error) },
-        );
-      }
+          let eventEnvelope: EventEnvelope;
+          try {
+            eventEnvelope = await this.events.append(
+              this.buildEvent(request, created, identity, now, idempotencyKey),
+            );
+          } catch (error) {
+            throw new AdmissionError(
+              "EVENT_CREATION_FAILED",
+              "Failed to persist admission event envelope",
+              { runId: created.runId, cause: String(error) },
+            );
+          }
+
+          try {
+            await this.idempotency.complete(idempotencyKey, created.runId, now);
+            bound = true;
+          } catch (error) {
+            throw new AdmissionError(
+              "IDEMPOTENCY_RESERVATION_FAILED",
+              "Failed to bind idempotency key to run",
+              { runId: created.runId, cause: String(error) },
+            );
+          }
+
+          if (this.objectives) {
+            const objective = parseObjective({
+              objectiveId: request.objectiveId,
+              objectiveVersion: request.objectiveVersion,
+              projectId: request.projectId,
+              requestedOutcome: request.requestedOutcome,
+              acceptanceCriteria: request.acceptanceCriteria,
+              nonGoals: request.nonGoals,
+              constraints: request.constraints,
+              priority: request.priority,
+              requesterId: request.requesterId,
+              createdAt: request.submittedAt,
+              ...(request.deadline !== undefined
+                ? { deadline: request.deadline }
+                : {}),
+            });
+            await this.objectives.save(objective);
+            await this.objectives.bindRun(
+              created.runId,
+              objective.objectiveId,
+              objective.objectiveVersion,
+            );
+          }
+
+          return eventEnvelope;
+        },
+      );
 
       try {
-        await this.idempotency.complete(idempotencyKey, created.runId, now);
-        bound = true;
-      } catch (error) {
-        throw new AdmissionError(
-          "IDEMPOTENCY_RESERVATION_FAILED",
-          "Failed to bind idempotency key to run",
-          { runId: created.runId, cause: String(error) },
-        );
-      }
-
-      try {
-        await this.locks.release(request.projectId, created.runId);
+        await this.locks.release(request.projectId, created!.runId);
         locked = false;
       } catch (error) {
         throw new AdmissionError(
           "ADMISSION_COMPENSATION_FAILED",
           "Failed to release admission-scoped project lock",
-          { runId: created.runId, cause: String(error) },
-        );
-      }
-
-      if (this.objectives) {
-        const objective = parseObjective({
-          objectiveId: request.objectiveId,
-          objectiveVersion: request.objectiveVersion,
-          projectId: request.projectId,
-          requestedOutcome: request.requestedOutcome,
-          acceptanceCriteria: request.acceptanceCriteria,
-          nonGoals: request.nonGoals,
-          constraints: request.constraints,
-          priority: request.priority,
-          requesterId: request.requesterId,
-          createdAt: request.submittedAt,
-          ...(request.deadline !== undefined
-            ? { deadline: request.deadline }
-            : {}),
-        });
-        await this.objectives.save(objective);
-        await this.objectives.bindRun(
-          created.runId,
-          objective.objectiveId,
-          objective.objectiveVersion,
+          { runId: created!.runId, cause: String(error) },
         );
       }
 
       this.observability.recordEvent(
         "admission.admitted",
         traceAttributes({
-          runId: created.runId,
-          correlationId: created.correlationId,
-          traceId: created.traceId,
-          objectiveId: created.objectiveId,
-          projectId: created.projectId,
+          runId: created!.runId,
+          correlationId: created!.correlationId,
+          traceId: created!.traceId,
+          objectiveId: created!.objectiveId,
+          projectId: created!.projectId,
         }),
       );
 
       return {
         outcome: "ADMITTED",
-        runId: created.runId,
+        runId: created!.runId,
         state: "ADMITTED",
-        eventEnvelope,
+        eventEnvelope: admissionResult,
         controlContextReference,
         idempotencyKey,
-        correlationId: created.correlationId,
-        traceId: created.traceId,
+        correlationId: created!.correlationId,
+        traceId: created!.traceId,
       };
     } catch (error) {
       await this.compensate({
@@ -530,10 +552,12 @@ export class ObjectiveAdmissionService {
             input.created.state,
             nextState,
           );
-          await this.runs.save(
-            withRunState(input.created, rejectedState, input.now, {
-              failureReasonCode: "ADMISSION_COMPENSATED",
-            }),
+          await commitRunTransition(
+            this.runs,
+            input.created,
+            rejectedState,
+            input.now,
+            { failureReasonCode: "ADMISSION_COMPENSATED" },
           );
         }
       }

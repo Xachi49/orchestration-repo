@@ -12,6 +12,8 @@ export const RunRecordSchema = z
     requesterId: z.string().min(1),
     requestedEnvironment: z.string().min(1),
     state: RunStateSchema,
+    /** Persistence concurrency metadata only — not objective/plan/precedent version. */
+    recordRevision: z.number().int().min(1).default(1),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     correlationId: z.string().min(1),
@@ -35,6 +37,18 @@ export interface RunRepository {
   exists(runId: string): Promise<boolean>;
   save(record: RunRecord): Promise<RunRecord>;
   listByProject(projectId: string): Promise<readonly RunRecord[]>;
+  /**
+   * Compare-and-set run state. Succeeds only when the stored state equals
+   * `expected`. Durable adapters must use UPDATE ... WHERE state = expected.
+   */
+  transition(
+    runId: string,
+    expected: RunState,
+    expectedRecordRevision: number,
+    next: RunState,
+    updatedAt: string,
+    extras?: { admittedAt?: string; failureReasonCode?: string },
+  ): Promise<RunRecord>;
 }
 
 export function withRunState(

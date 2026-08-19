@@ -1,6 +1,5 @@
 import type { ClockPort } from "../infrastructure/clock.js";
 import type { RunRepository } from "../admission/run-repository.js";
-import { withRunState } from "../admission/run-repository.js";
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
 import type { ControlPlaneService } from "../control-plane/service.js";
 import type { PlanRepository, StoredPlanRecord } from "../planning/plan-repository.js";
@@ -41,6 +40,25 @@ import {
 } from "./decision-nonce.js";
 import { AuthorizationError } from "./errors.js";
 import type { AuthorizationRoutingOutcome } from "./result.js";
+import { commitRunTransition } from "../admission/run-transition.js";
+import type { EventStore } from "../admission/event-store.js";
+import type { TransactionManager } from "../durability/transaction.js";
+import { withOptionalTransaction } from "../durability/transaction.js";
+import type { ApprovalDeliverySecretStore } from "./delivery-secret-store.js";
+import {
+  APPROVAL_DELIVERY_EVENT,
+  type ApprovalDeliveryOutboxPayload,
+} from "./outbox-consumer.js";
+
+export interface TransactionalOutboxPort {
+  enqueue(input: {
+    outboxId: string;
+    aggregateType: string;
+    aggregateId: string;
+    eventType: string;
+    payload: unknown;
+  }): Promise<unknown>;
+}
 
 export interface AuthorizationRoutingServiceDeps {
   readiness: AuthorizationReadinessService;
@@ -63,6 +81,12 @@ export interface AuthorizationRoutingServiceDeps {
     runId: string,
     validationDecisionId: string,
   ) => Promise<PlanningException | undefined>;
+  transactions?: TransactionManager;
+  outbox?: TransactionalOutboxPort;
+  deliverySecrets?: ApprovalDeliverySecretStore;
+  events?: EventStore;
+  /** Dispatches durable outbox deliveries after enqueue (outside DB transactions). */
+  dispatchPendingDeliveries?: () => Promise<{ delivered: number; failed: number }>;
 }
 
 /**
@@ -173,10 +197,12 @@ export class AuthorizationRoutingService {
       };
     }
     const next = assertTransition(run.state, "BLOCKED");
-    await this.deps.runs.save(
-      withRunState(run, next, this.deps.clock.nowIso(), {
-        failureReasonCode: "VALIDATION_BLOCK",
-      }),
+    await commitRunTransition(
+      this.deps.runs,
+      run,
+      next,
+      this.deps.clock.nowIso(),
+      { failureReasonCode: "VALIDATION_BLOCK" },
     );
     return {
       outcome: "BLOCKED",
@@ -316,6 +342,51 @@ export class AuthorizationRoutingService {
         ? { replacesApprovalRequestId: priorCancelled.approvalRequestId }
         : {}),
     });
+
+    if (this.deps.outbox && this.deps.transactions) {
+      const outboxId = this.identities.nextApprovalRequestId();
+      await withOptionalTransaction(this.deps.transactions, async () => {
+        await this.deps.requests.save(request);
+        await this.deps.cards.save(request.approvalRequestId, card);
+        await this.deps.deliverySecrets?.storePending(
+          request.approvalRequestId,
+          issued.plaintext,
+        );
+        const payload: ApprovalDeliveryOutboxPayload = {
+          approvalRequestId: request.approvalRequestId,
+          runId,
+          projectId: run.projectId,
+          bindingKey,
+          card,
+        };
+        await this.deps.outbox!.enqueue({
+          outboxId,
+          aggregateType: "approval_request",
+          aggregateId: request.approvalRequestId,
+          eventType: APPROVAL_DELIVERY_EVENT,
+          payload,
+        });
+      });
+      if (this.deps.dispatchPendingDeliveries) {
+        await this.deps.dispatchPendingDeliveries();
+      }
+      const refreshedRun = await this.deps.runs.getById(runId);
+      return {
+        outcome: "PENDING_APPROVAL",
+        runId,
+        planId: plan.planId,
+        planVersion: plan.planVersion,
+        planHash: plan.planHash,
+        validationDecisionId: decision.validationDecisionId,
+        approvalRequestId: request.approvalRequestId,
+        decisionCardHash,
+        runState:
+          refreshedRun?.state === "AWAITING_APPROVAL"
+            ? "AWAITING_APPROVAL"
+            : "AWAITING_APPROVAL",
+      };
+    }
+
     await this.deps.requests.save(request);
     await this.deps.cards.save(request.approvalRequestId, card);
 
@@ -349,9 +420,11 @@ export class AuthorizationRoutingService {
     await this.deps.coordinator.registerPending(request, bindingKey);
 
     if (run.state !== "AWAITING_APPROVAL") {
-      const next = assertTransition(run.state, "AWAITING_APPROVAL");
-      await this.deps.runs.save(
-        withRunState(run, next, this.deps.clock.nowIso()),
+      await commitRunTransition(
+        this.deps.runs,
+        run,
+        "AWAITING_APPROVAL",
+        this.deps.clock.nowIso(),
       );
     }
 

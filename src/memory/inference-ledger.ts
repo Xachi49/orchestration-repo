@@ -43,6 +43,7 @@ export interface LearningInferenceLedger {
   }): Promise<LearningInferenceRecord>;
   release(recordId: string, nowIso: string): Promise<LearningInferenceRecord>;
   listByRun(runId: string): Promise<readonly LearningInferenceRecord[]>;
+  markDispatched?(recordId: string): Promise<void>;
 }
 
 export class InMemoryLearningInferenceLedger

@@ -2,7 +2,7 @@
   "name": "orchestrator-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 9 governed memory & precedent promotion",
+  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 11 durable state",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -10,17 +10,22 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --exclude 'src/infrastructure/postgres/postgres.*.test.ts'",
+    "test:watch": "vitest --exclude 'src/infrastructure/postgres/postgres.*.test.ts'",
+    "test:postgres": "node scripts/test-postgres.mjs",
+    "db:migrate": "node --import tsx src/infrastructure/postgres/cli.ts migrate",
+    "db:status": "node --import tsx src/infrastructure/postgres/cli.ts status",
     "start": "node --import tsx src/api/server.ts"
   },
   "dependencies": {
     "fastify": "^5.4.0",
     "openai": "^4.104.0",
+    "pg": "^8.23.0",
     "zod": "^3.25.67"
   },
   "devDependencies": {
     "@types/node": "^22.15.30",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
     "vitest": "^3.2.3",

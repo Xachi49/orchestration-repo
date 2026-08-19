@@ -25,6 +25,15 @@ import {
 import { HealthSnapshotHasher } from "./hasher.js";
 import { SequenceObservabilityIdentityGenerator } from "./identity.js";
 import type { TelemetrySources } from "./sources.js";
+import type {
+  RunTelemetryRepository,
+  PhaseTelemetryRepository,
+  SystemHealthSnapshotRepository,
+  SLOEvaluationRepository,
+  AnomalyFindingRepository,
+  OptimizationCandidateRepository,
+  ObservabilityLedger,
+} from "./repositories.js";
 import {
   InMemoryRunTelemetryRepository,
   InMemoryPhaseTelemetryRepository,
@@ -41,13 +50,13 @@ import { RunTraceService, RunFunnelService } from "./trace-funnel.js";
 export interface ObservabilityServiceDeps {
   sources: TelemetrySources;
   clock: { nowIso(): string };
-  runTelemetry?: InMemoryRunTelemetryRepository;
-  phaseTelemetry?: InMemoryPhaseTelemetryRepository;
-  snapshots?: InMemorySystemHealthSnapshotRepository;
-  sloEvaluations?: InMemorySLOEvaluationRepository;
-  anomalies?: InMemoryAnomalyFindingRepository;
-  optimizationCandidates?: InMemoryOptimizationCandidateRepository;
-  ledger?: InMemoryObservabilityLedger;
+  runTelemetry?: RunTelemetryRepository;
+  phaseTelemetry?: PhaseTelemetryRepository;
+  snapshots?: SystemHealthSnapshotRepository;
+  sloEvaluations?: SLOEvaluationRepository;
+  anomalies?: AnomalyFindingRepository;
+  optimizationCandidates?: OptimizationCandidateRepository;
+  ledger?: ObservabilityLedger;
   sloRegistry?: SLORegistry;
   identities?: SequenceObservabilityIdentityGenerator;
 }
@@ -65,13 +74,13 @@ export class ObservabilityService {
   readonly trace: RunTraceService;
   readonly funnel: RunFunnelService;
 
-  readonly runTelemetry: InMemoryRunTelemetryRepository;
-  readonly phaseTelemetry: InMemoryPhaseTelemetryRepository;
-  readonly snapshots: InMemorySystemHealthSnapshotRepository;
-  readonly sloEvaluations: InMemorySLOEvaluationRepository;
-  readonly anomalies: InMemoryAnomalyFindingRepository;
-  readonly optimizationCandidates: InMemoryOptimizationCandidateRepository;
-  readonly ledger: InMemoryObservabilityLedger;
+  readonly runTelemetry: RunTelemetryRepository;
+  readonly phaseTelemetry: PhaseTelemetryRepository;
+  readonly snapshots: SystemHealthSnapshotRepository;
+  readonly sloEvaluations: SLOEvaluationRepository;
+  readonly anomalies: AnomalyFindingRepository;
+  readonly optimizationCandidates: OptimizationCandidateRepository;
+  readonly ledger: ObservabilityLedger;
   readonly sloRegistry: SLORegistry;
   private readonly identities: SequenceObservabilityIdentityGenerator;
   private readonly sources: TelemetrySources;
@@ -169,7 +178,7 @@ export class ObservabilityService {
       });
     }
 
-    this.runTelemetry.indexForWindow(
+    this.runTelemetry.indexForWindow?.(
       projectId,
       window.windowFingerprint,
       window.includedRunIds,

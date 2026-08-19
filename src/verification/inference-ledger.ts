@@ -47,6 +47,7 @@ export interface VerificationInferenceLedger {
     nowIso: string,
   ): Promise<VerificationInferenceRecord>;
   listByRun(runId: string): Promise<readonly VerificationInferenceRecord[]>;
+  markDispatched?(recordId: string): Promise<void>;
 }
 
 export class InMemoryVerificationInferenceLedger

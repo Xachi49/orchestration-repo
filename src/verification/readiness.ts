@@ -88,11 +88,12 @@ export class VerificationReadinessService {
     }
 
     const contained = run.state === "CONTAINED";
-    if (run.state !== "EXECUTING" && !contained) {
+    const verifying = run.state === "VERIFYING";
+    if (run.state !== "EXECUTING" && !contained && !verifying) {
       return {
         ready: false,
         code: "RUN_NOT_VERIFIABLE",
-        message: `Run state ${run.state} is not verifiable (need EXECUTING or CONTAINED)`,
+        message: `Run state ${run.state} is not verifiable (need EXECUTING, VERIFYING, or CONTAINED)`,
         details: { state: run.state },
       };
     }
@@ -182,7 +183,7 @@ export class VerificationReadinessService {
       };
     }
 
-    const snapshot = this.deps.execution.getAuthoritySnapshot(
+    const snapshot = await this.deps.execution.getAuthoritySnapshot(
       result.executionAttemptId,
     );
     if (!snapshot) {

@@ -26,6 +26,20 @@ import {
   isHumanPromotableGrounding,
   isNeverPromotableGrounding,
 } from "./promotion-grounding.js";
+import {
+  withOptionalTransaction,
+  type TransactionManager,
+} from "../durability/transaction.js";
+
+export type PromotionFailpointStage =
+  | "AFTER_HUMAN_DECISION"
+  | "AFTER_CANDIDATE_STATE"
+  | "AFTER_PRECEDENT_WRITE"
+  | "AFTER_PROMOTION_LEDGER";
+
+export interface PromotionFailpoint {
+  hit(stage: PromotionFailpointStage): Promise<void>;
+}
 
 export interface PrecedentPromotionServiceDeps {
   readiness: PrecedentPromotionReadinessService;
@@ -39,6 +53,8 @@ export interface PrecedentPromotionServiceDeps {
   policy: PrecedentPromotionPolicy;
   nowIso: () => string;
   outcomes?: OutcomeVerificationRepository;
+  transactions?: TransactionManager;
+  promotionFailpoint?: PromotionFailpoint;
 }
 
 export interface PromotionAttemptResult {
@@ -220,42 +236,59 @@ export class PrecedentPromotionService {
       ...draftDecision,
       decisionHash: this.decisionHasher.hash(draftDecision),
     };
-    await this.deps.decisions.append(decision);
 
-    if (input.decision === "REJECT") {
-      await this.deps.candidates.updateStatus(
-        candidate.learningCandidateId,
-        "REJECTED",
-      );
-      await this.deps.ledger.append({
-        eventId: this.deps.identities.nextLedgerEventId(),
-        eventType: "LEARNING_CANDIDATE_REJECTED",
-        runId: candidate.provenance.runId,
-        projectId: candidate.projectId,
-        learningCandidateId: candidate.learningCandidateId,
-        payload: { promotionDecisionId },
-        createdAt: decidedAt,
+    return await withOptionalTransaction(this.deps.transactions, async () => {
+      await this.deps.decisions.append(decision);
+      await this.deps.promotionFailpoint?.hit("AFTER_HUMAN_DECISION");
+
+      if (input.decision === "REJECT") {
+        await this.deps.candidates.updateStatus(
+          candidate.learningCandidateId,
+          "REJECTED",
+        );
+        await this.deps.ledger.append({
+          eventId: this.deps.identities.nextLedgerEventId(),
+          eventType: "LEARNING_CANDIDATE_REJECTED",
+          runId: candidate.provenance.runId,
+          projectId: candidate.projectId,
+          learningCandidateId: candidate.learningCandidateId,
+          payload: { promotionDecisionId },
+          createdAt: decidedAt,
+        });
+        return { decision };
+      }
+
+      if (input.decision === "REQUEST_NARROWER_SCOPE") {
+        return { decision };
+      }
+
+      const applicability =
+        input.approvedApplicability ?? candidate.applicabilityProposal;
+      const promoted = await this.promoteWithinTransaction(candidate, {
+        method: "HUMAN_REVIEW",
+        trustClass: "HUMAN_REVIEWED",
+        applicability,
+        promotionDecisionId,
       });
-      return { decision };
-    }
-
-    if (input.decision === "REQUEST_NARROWER_SCOPE") {
-      return { decision };
-    }
-
-    // PROMOTE — human may choose applicability, never new facts.
-    const applicability =
-      input.approvedApplicability ?? candidate.applicabilityProposal;
-    const promoted = await this.promote(candidate, {
-      method: "HUMAN_REVIEW",
-      trustClass: "HUMAN_REVIEWED",
-      applicability,
-      promotionDecisionId,
+      return { decision, promoted };
     });
-    return { decision, promoted };
   }
 
   private async promote(
+    candidate: LearningCandidate,
+    opts: {
+      method: "AUTO_PROMOTE" | "HUMAN_REVIEW";
+      trustClass: PromotedPrecedent["trustClass"];
+      applicability: PrecedentApplicability;
+      promotionDecisionId?: string;
+    },
+  ): Promise<PromotedPrecedent> {
+    return withOptionalTransaction(this.deps.transactions, () =>
+      this.promoteWithinTransaction(candidate, opts),
+    );
+  }
+
+  private async promoteWithinTransaction(
     candidate: LearningCandidate,
     opts: {
       method: "AUTO_PROMOTE" | "HUMAN_REVIEW";
@@ -328,6 +361,18 @@ export class PrecedentPromotionService {
       }
     }
 
+    const existingForCandidate = (
+      await this.deps.precedents.listByProject(candidate.projectId)
+    ).find(
+      (record) =>
+        record.candidateId === candidate.learningCandidateId &&
+        record.candidateHash === candidate.candidateHash &&
+        record.status === "ACTIVE",
+    );
+    if (existingForCandidate) {
+      return existingForCandidate;
+    }
+
     const trustClass =
       opts.method === "HUMAN_REVIEW" ? "HUMAN_REVIEWED" : opts.trustClass;
 
@@ -362,10 +407,12 @@ export class PrecedentPromotionService {
       label: "ADVISORY_PRECEDENT",
     };
     await this.deps.precedents.append(precedent);
+    await this.deps.promotionFailpoint?.hit("AFTER_PRECEDENT_WRITE");
     await this.deps.candidates.updateStatus(
       candidate.learningCandidateId,
       "PROMOTED",
     );
+    await this.deps.promotionFailpoint?.hit("AFTER_CANDIDATE_STATE");
     await this.deps.ledger.append({
       eventId: this.deps.identities.nextLedgerEventId(),
       eventType: "PRECEDENT_PROMOTED",
@@ -383,6 +430,7 @@ export class PrecedentPromotionService {
       },
       createdAt,
     });
+    await this.deps.promotionFailpoint?.hit("AFTER_PROMOTION_LEDGER");
     return precedent;
   }
 

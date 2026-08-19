@@ -635,7 +635,7 @@ describe("ExecutionService", () => {
     expect(ready.capabilitySetFingerprint).toBe(auth!.capabilitySetFingerprint);
     const result = await stack.execution.execute(runId);
     expect(result.status).toBe("EXECUTION_SUCCEEDED");
-    const snap = stack.execution.getAuthoritySnapshot(result.executionAttemptId);
+    const snap = await stack.execution.getAuthoritySnapshot(result.executionAttemptId);
     expect(snap?.authorizedCapabilitySetFingerprint).toBe(
       auth!.capabilitySetFingerprint,
     );
@@ -960,18 +960,18 @@ describe("ExecutionService", () => {
     );
   });
 
-  it("remaining execution-time ceiling can prevent starting a step", () => {
+  it("remaining execution-time ceiling can prevent starting a step", async () => {
     const ledger = new ExecutionResourceLedger(
       { ...EXAMPLE_BUDGET, maximumExecutionMinutes: 1 },
       "run_x",
       "att_x",
     );
-    ledger.recordStep({ durationMs: 60_000 });
+    await ledger.recordStep({ durationMs: 60_000 });
     expect(ledger.remainingExecutionMs()).toBe(0);
     expect(
       ledger.allowedRuntimeMs({ capabilityMaximumRuntimeSeconds: 120 }),
     ).toBe(0);
-    expect(() => ledger.reserveDurationMs(1)).toThrow(
+    await expect(ledger.reserveDurationMs(1)).rejects.toThrow(
       /Insufficient execution time/,
     );
   });

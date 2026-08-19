@@ -33,7 +33,7 @@ export class PostExecutionTruthService {
     nowIso: string;
   }): Promise<PostExecutionSnapshot> {
     const { runId, result, nowIso } = input;
-    const snapshot = this.deps.execution.getAuthoritySnapshot(
+    const snapshot = await this.deps.execution.getAuthoritySnapshot(
       result.executionAttemptId,
     );
     if (!snapshot) {

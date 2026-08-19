@@ -1,5 +1,6 @@
 import { assertTransition } from "../domain/run/run-state.js";
-import { withRunState, type RunRepository } from "../admission/run-repository.js";
+import { commitRunTransition } from "../admission/run-transition.js";
+import type { RunRepository } from "../admission/run-repository.js";
 import type { ControlPlaneService } from "../control-plane/index.js";
 import type { ProjectControlContext } from "../control-plane/index.js";
 import type { ControlPlaneClock } from "../control-plane/service.js";
@@ -169,7 +170,12 @@ export class RepositoryTruthService {
 
       if (run.state === "ADMITTED") {
         const next = assertTransition(run.state, "INGESTING");
-        await this.deps.runs.save(withRunState(run, next, now));
+        await commitRunTransition(
+          this.deps.runs,
+          run,
+          next,
+          now,
+        );
       }
 
       const projectIndex = await this.materializeIndex(

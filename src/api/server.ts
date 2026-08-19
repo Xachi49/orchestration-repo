@@ -12,6 +12,7 @@ import type { OutcomeVerificationService } from "../verification/service.js";
 import type { VerificationReadinessService } from "../verification/readiness.js";
 import type { GovernedMemoryService } from "../memory/service.js";
 import type { ObservabilityService } from "../observability/service.js";
+import type { StorageMode } from "../domain/durability/index.js";
 import Fastify from "fastify";
 import { registerRunRoutes } from "./runs.js";
 import { registerIngestRoutes } from "./ingest.js";
@@ -22,7 +23,6 @@ import { registerExecutionRoutes } from "./execute.js";
 import { registerVerificationRoutes } from "./verify.js";
 import { registerLearningRoutes } from "./learn.js";
 import { registerObservabilityRoutes } from "./observability.js";
-import { createLocalObservabilityStack } from "../infrastructure/observability/local-stack.js";
 
 export interface ApiDeps {
   admission?: ObjectiveAdmissionService;
@@ -39,6 +39,14 @@ export interface ApiDeps {
   verificationReadiness?: VerificationReadinessService;
   memory?: GovernedMemoryService;
   observability?: ObservabilityService;
+  storageMode?: StorageMode;
+  readiness?: {
+    storageMode: StorageMode;
+    databaseReachable: boolean;
+    schemaCompatible: boolean;
+    schemaVersion?: string;
+    supportedSchemaVersion: string;
+  };
 }
 
 /**
@@ -58,7 +66,7 @@ export async function buildServer(deps: ApiDeps = {}) {
   app.get("/health", async () => ({
     status: "ok",
     phase: observabilityEnabled
-      ? 10
+      ? 11
       : memoryEnabled
         ? 9
         : verificationEnabled
@@ -87,6 +95,11 @@ export async function buildServer(deps: ApiDeps = {}) {
     memoryEnabled,
     observabilityEnabled,
     approvalEnabled,
+    storageMode: deps.storageMode ?? "memory",
+    databaseReachable: deps.readiness?.databaseReachable ?? null,
+    schemaCompatible: deps.readiness?.schemaCompatible ?? null,
+    schemaVersion: deps.readiness?.schemaVersion ?? null,
+    supportedSchemaVersion: deps.readiness?.supportedSchemaVersion ?? null,
     planningModelToolsEnabled: false,
     validationModelToolsEnabled: false,
     verificationModelToolsEnabled: false,
@@ -140,26 +153,21 @@ export async function buildServer(deps: ApiDeps = {}) {
   return app;
 }
 
+import { startOrchestratorServer } from "./bootstrap.js";
+
 async function main(): Promise<void> {
-  const stack = createLocalObservabilityStack();
-  const app = await buildServer({
-    admission: stack.admission,
-    ingestion: stack.ingestion,
-    planning: stack.planning,
-    validation: stack.validation,
-    authorizationRouting: stack.authorizationRouting,
-    humanAuthorization: stack.humanAuthorization,
-    approvalExpiry: stack.approvalExpiry,
-    authorizationReadiness: stack.authorizationReadiness,
-    execution: stack.execution,
-    executionReadiness: stack.executionReadiness,
-    verification: stack.verification,
-    verificationReadiness: stack.verificationReadiness,
-    memory: stack.memory,
-    observability: stack.observability,
-  });
   const port = Number(process.env["PORT"] ?? 3000);
-  await app.listen({ port, host: "127.0.0.1" });
+  const running = await startOrchestratorServer(port);
+  const shutdown = async () => {
+    await running.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => {
+    void shutdown();
+  });
+  process.on("SIGTERM", () => {
+    void shutdown();
+  });
 }
 
 const isDirectRun =

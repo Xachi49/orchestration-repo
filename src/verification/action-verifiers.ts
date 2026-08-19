@@ -1,17 +1,19 @@
-import { readFile } from "node:fs/promises";
 import type { ExecutionPlan } from "../domain/plan/execution-plan.js";
 import type {
   ExecutionArtifact,
   StepExecutionResult,
 } from "../domain/execution/index.js";
 import type { ExecutionArtifactRepository } from "../execution/artifact-repository.js";
-import { artifactRootFor } from "../execution/paths.js";
-import { resolveContained } from "../ingestion/workspace-paths.js";
 import { TestProfileRegistry } from "../execution/test-profiles.js";
 import { ExecutionTargetValidator } from "../execution/target-validator.js";
 import type { VerificationFinding } from "../domain/verification/index.js";
 import type { CriterionVerdict } from "../domain/verification/index.js";
 import type { VerificationIdentityGenerator } from "./identity.js";
+import {
+  readVerificationArtifactBytes,
+  utf8FromVerificationBytes,
+} from "./artifact-verifier.js";
+import type { ArtifactBlobStore } from "../durability/artifacts.js";
 
 export interface ActionOutcomeContext {
   runId: string;
@@ -22,6 +24,7 @@ export interface ActionOutcomeContext {
   artifacts: ExecutionArtifactRepository;
   recomputedHashes: ReadonlyMap<string, string>;
   workspaceRoot: string;
+  blobStore?: ArtifactBlobStore;
 }
 
 export interface ActionOutcomeVerification {
@@ -108,6 +111,7 @@ export class ActionOutcomeVerifierRegistry {
           artifacts: ctx.artifacts,
           recomputedHashes: ctx.recomputedHashes,
           workspaceRoot: ctx.workspaceRoot,
+          ...(ctx.blobStore !== undefined ? { blobStore: ctx.blobStore } : {}),
         }),
       );
     }
@@ -230,13 +234,7 @@ class CreateLocalPatchVerifier implements ActionOutcomeVerifier {
     ctx: ActionOutcomeContext,
     artifact: ExecutionArtifact,
   ): Promise<string | null> {
-    try {
-      const root = artifactRootFor(ctx.dataRoot, ctx.runId);
-      const absolute = resolveContained(root, artifact.relativePath);
-      return await readFile(absolute, "utf8");
-    } catch {
-      return null;
-    }
+    return readActionArtifactText(ctx, artifact);
   }
 }
 
@@ -279,9 +277,11 @@ class RunTestsVerifier implements ActionOutcomeVerifier {
         continue;
       }
       try {
-        const root = artifactRootFor(ctx.dataRoot, ctx.runId);
-        const absolute = resolveContained(root, artifact.relativePath);
-        const body = JSON.parse(await readFile(absolute, "utf8")) as {
+        const bodyText = await readActionArtifactText(ctx, artifact);
+        if (bodyText === null) {
+          throw new Error("missing artifact body");
+        }
+        const body = JSON.parse(bodyText) as {
           testProfileId?: string;
           exitCode?: number;
           shell?: boolean;
@@ -387,9 +387,11 @@ class CreateTaskVerifier implements ActionOutcomeVerifier {
         continue;
       }
       try {
-        const root = artifactRootFor(ctx.dataRoot, ctx.runId);
-        const absolute = resolveContained(root, artifact.relativePath);
-        const body = JSON.parse(await readFile(absolute, "utf8")) as {
+        const bodyText = await readActionArtifactText(ctx, artifact);
+        if (bodyText === null) {
+          throw new Error("missing artifact body");
+        }
+        const body = JSON.parse(bodyText) as {
           taskId?: string;
           sourcePlanId?: string;
           sourceStepId?: string;
@@ -499,9 +501,11 @@ class PreparePullRequestVerifier implements ActionOutcomeVerifier {
         continue;
       }
       try {
-        const root = artifactRootFor(ctx.dataRoot, ctx.runId);
-        const absolute = resolveContained(root, artifact.relativePath);
-        const body = JSON.parse(await readFile(absolute, "utf8")) as {
+        const bodyText = await readActionArtifactText(ctx, artifact);
+        if (bodyText === null) {
+          throw new Error("missing artifact body");
+        }
+        const body = JSON.parse(bodyText) as {
           title?: string;
           body?: string;
           base?: string;
@@ -610,4 +614,18 @@ function fail(
     observedSummary: summary,
     evidenceHints: [],
   };
+}
+
+async function readActionArtifactText(
+  ctx: ActionOutcomeContext,
+  artifact: ExecutionArtifact,
+): Promise<string | null> {
+  const body = await readVerificationArtifactBytes({
+    artifactId: artifact.artifactId,
+    relativePath: artifact.relativePath,
+    runId: ctx.runId,
+    dataRoot: ctx.dataRoot,
+    ...(ctx.blobStore !== undefined ? { blobStore: ctx.blobStore } : {}),
+  });
+  return body ? utf8FromVerificationBytes(body.bytes) : null;
 }

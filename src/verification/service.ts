@@ -1,6 +1,7 @@
 import type { ClockPort } from "../infrastructure/clock.js";
+import { assertNotInTransaction } from "../durability/transaction.js";
+import { commitRunTransition } from "../admission/run-transition.js";
 import type { RunRepository } from "../admission/run-repository.js";
-import { withRunState } from "../admission/run-repository.js";
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
 import type { PlanRepository } from "../planning/plan-repository.js";
 import type { AuthorizationRecordRepository } from "../authorization/authorization-record-repository.js";
@@ -56,6 +57,20 @@ import { InMemoryOutcomeVerificationRepository } from "./outcome-repository.js";
 import type { CompletionRecordRepository } from "./completion-repository.js";
 import { InMemoryCompletionRecordRepository } from "./completion-repository.js";
 import { parseContextualOutcomeInput } from "./model.js";
+import {
+  withOptionalTransaction,
+  type TransactionManager,
+} from "../durability/transaction.js";
+
+export type VerificationCompletionStage =
+  | "AFTER_OUTCOME_RECORD"
+  | "AFTER_COMPLETION_RECORD"
+  | "AFTER_RUN_TRANSITION"
+  | "AFTER_EVENT_APPEND";
+
+export interface VerificationCompletionFailpoint {
+  hit(stage: VerificationCompletionStage): Promise<void>;
+}
 
 export interface OutcomeVerificationServiceDeps {
   runs: RunRepository;
@@ -81,6 +96,9 @@ export interface OutcomeVerificationServiceDeps {
   identities?: VerificationIdentityGenerator;
   /** When false, skip contextual model even if configured. Default true. */
   enableContextualModel?: boolean;
+  blobStore?: import("../durability/artifacts.js").ArtifactBlobStore;
+  transactions?: TransactionManager;
+  completionFailpoint?: VerificationCompletionFailpoint;
 }
 
 /**
@@ -106,6 +124,7 @@ export class OutcomeVerificationService {
   private readonly deterministic: DeterministicOutcomeVerificationService;
   private readonly decisionEngine = new OutcomeDecisionEngine();
   private readonly enableContextualModel: boolean;
+  private readonly transactions: TransactionManager | undefined;
   private readonly resultsByRun = new Map<string, VerificationResult>();
 
   constructor(private readonly deps: OutcomeVerificationServiceDeps) {
@@ -134,6 +153,7 @@ export class OutcomeVerificationService {
       this.identities,
     );
     this.enableContextualModel = deps.enableContextualModel !== false;
+    this.transactions = deps.transactions;
   }
 
   async verify(runId: string): Promise<VerificationResult> {
@@ -272,9 +292,11 @@ export class OutcomeVerificationService {
 
       // Transition EXECUTING → VERIFYING (skip for already CONTAINED)
       if (!contained && run.state === "EXECUTING") {
-        assertTransition("EXECUTING", "VERIFYING");
-        await this.deps.runs.save(
-          withRunState(run, "VERIFYING", this.deps.clock.nowIso()),
+        await commitRunTransition(
+          this.deps.runs,
+          run,
+          "VERIFYING",
+          this.deps.clock.nowIso(),
         );
       }
 
@@ -305,7 +327,7 @@ export class OutcomeVerificationService {
         plan,
       });
 
-      const authoritySnapshot = this.deps.execution.getAuthoritySnapshot(
+      const authoritySnapshot = await this.deps.execution.getAuthoritySnapshot(
         result.executionAttemptId,
       );
       if (!authoritySnapshot) {
@@ -355,6 +377,9 @@ export class OutcomeVerificationService {
         contained,
         ...(liveCapabilities !== undefined
           ? { liveCapabilities }
+          : {}),
+        ...(this.deps.blobStore !== undefined
+          ? { blobStore: this.deps.blobStore }
           : {}),
       });
 
@@ -480,12 +505,6 @@ export class OutcomeVerificationService {
           : {}),
         createdAt: this.deps.clock.nowIso(),
       });
-      await this.outcomes.append(record);
-
-      await this.appendEvent(runId, "VERIFICATION_DECIDED", {
-        outcomeVerificationId,
-        outcome,
-      });
 
       let completionRecordId: string | undefined;
       const liveRun = await this.deps.runs.getById(runId);
@@ -497,43 +516,72 @@ export class OutcomeVerificationService {
       }
 
       if (contained) {
+        await this.outcomes.append(record);
+        await this.appendEvent(runId, "VERIFICATION_DECIDED", {
+          outcomeVerificationId,
+          outcome,
+        });
         // May record verification but NOT → COMPLETED
         await this.appendEvent(runId, "VERIFICATION_ESCALATED", {
           reason: "CONTAINED",
           outcome,
         });
       } else if (outcome === "VERIFIED_SUCCESS") {
-        completionRecordId = this.identities.nextCompletionRecordId();
-        const completion = parseCompletionRecord({
-          completionRecordId,
-          runId,
-          objectiveId: objective.objectiveId,
-          objectiveVersion: objective.objectiveVersion,
-          planId: plan.planId,
-          planVersion: plan.planVersion,
-          planHash: plan.planHash,
-          executionAttemptId: result.executionAttemptId,
-          authorizationRecordId: auth.authorizationRecordId,
-          outcomeVerificationId,
-          postExecutionSnapshotHash,
-          verificationSpecificationHash:
-            specification.verificationSpecificationHash,
-          completedAt: this.deps.clock.nowIso(),
-        });
-        await this.completions.append(completion);
-        assertTransition("VERIFYING", "COMPLETED");
-        await this.deps.runs.save(
-          withRunState(liveRun, "COMPLETED", this.deps.clock.nowIso()),
+        completionRecordId = await withOptionalTransaction(
+          this.transactions,
+          async () => {
+            await this.outcomes.append(record);
+            await this.deps.completionFailpoint?.hit("AFTER_OUTCOME_RECORD");
+            await this.appendEvent(runId, "VERIFICATION_DECIDED", {
+              outcomeVerificationId,
+              outcome,
+            });
+            const nextCompletionRecordId =
+              this.identities.nextCompletionRecordId();
+            const completion = parseCompletionRecord({
+              completionRecordId: nextCompletionRecordId,
+              runId,
+              objectiveId: objective.objectiveId,
+              objectiveVersion: objective.objectiveVersion,
+              planId: plan.planId,
+              planVersion: plan.planVersion,
+              planHash: plan.planHash,
+              executionAttemptId: result.executionAttemptId,
+              authorizationRecordId: auth.authorizationRecordId,
+              outcomeVerificationId,
+              postExecutionSnapshotHash,
+              verificationSpecificationHash:
+                specification.verificationSpecificationHash,
+              completedAt: this.deps.clock.nowIso(),
+            });
+            await this.completions.append(completion);
+            await this.deps.completionFailpoint?.hit("AFTER_COMPLETION_RECORD");
+            await commitRunTransition(
+              this.deps.runs,
+              liveRun,
+              "COMPLETED",
+              this.deps.clock.nowIso(),
+            );
+            await this.deps.completionFailpoint?.hit("AFTER_RUN_TRANSITION");
+            await this.appendEvent(runId, "COMPLETION_RECORDED", {
+              completionRecordId: nextCompletionRecordId,
+            });
+            await this.deps.completionFailpoint?.hit("AFTER_EVENT_APPEND");
+            return nextCompletionRecordId;
+          },
         );
-        await this.appendEvent(runId, "COMPLETION_RECORDED", {
-          completionRecordId,
-        });
       } else {
-        assertTransition("VERIFYING", "ESCALATED");
-        await this.deps.runs.save(
-          withRunState(liveRun, "ESCALATED", this.deps.clock.nowIso(), {
-            failureReasonCode: outcome,
-          }),
+        await this.outcomes.append(record);
+        await this.appendEvent(runId, "VERIFICATION_DECIDED", {
+          outcomeVerificationId,
+          outcome,
+        });
+        await commitRunTransition(
+          this.deps.runs,
+          liveRun,
+          "ESCALATED",
+          this.deps.clock.nowIso(),
+          { failureReasonCode: outcome },
         );
         await this.appendEvent(runId, "VERIFICATION_ESCALATED", {
           outcome,
@@ -678,6 +726,7 @@ export class OutcomeVerificationService {
     });
 
     try {
+      await this.inferenceLedger.markDispatched?.(recordId);
       const contextualInput = parseContextualOutcomeInput({
         runId: input.runId,
         objectiveId: input.objective.objectiveId,
@@ -704,7 +753,10 @@ export class OutcomeVerificationService {
         model: this.model.modelId,
       });
 
-      const output = await this.model.assessOutcome(contextualInput);
+      const output = await (async () => {
+        assertNotInTransaction("VerificationModel");
+        return this.model.assessOutcome(contextualInput);
+      })();
       const usage = output.usage;
       if (usage) {
         await this.inferenceLedger.settle({

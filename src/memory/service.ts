@@ -1,4 +1,5 @@
 import type { ClockPort } from "../infrastructure/clock.js";
+import { assertNotInTransaction } from "../durability/transaction.js";
 import type { RunRepository } from "../admission/run-repository.js";
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
 import type { PlanRepository } from "../planning/plan-repository.js";
@@ -71,6 +72,7 @@ import {
   type PrecedentRetrievalResult,
 } from "./retriever.js";
 import type { PrecedentApplicability } from "../domain/memory/applicability.js";
+import { assertProjectScope } from "../domain/project-scope.js";
 
 export interface GovernedMemoryServiceDeps {
   runs: RunRepository;
@@ -96,6 +98,8 @@ export interface GovernedMemoryServiceDeps {
   identities?: MemoryIdentityGenerator;
   policy?: PrecedentPromotionPolicy;
   enableLearningModel?: boolean;
+  transactions?: import("../durability/transaction.js").TransactionManager;
+  promotionFailpoint?: import("./promotion.js").PromotionFailpoint;
 }
 
 /**
@@ -173,6 +177,12 @@ export class GovernedMemoryService {
       policy: this.policy,
       nowIso: () => this.deps.clock.nowIso(),
       outcomes: this.deps.outcomes,
+      ...(this.deps.transactions !== undefined
+        ? { transactions: this.deps.transactions }
+        : {}),
+      ...(this.deps.promotionFailpoint !== undefined
+        ? { promotionFailpoint: this.deps.promotionFailpoint }
+        : {}),
     });
     this.contradictionService = new PrecedentContradictionService({
       contradictions: this.contradictions,
@@ -438,6 +448,23 @@ export class GovernedMemoryService {
 
   async getPrecedent(precedentId: string): Promise<PromotedPrecedent | null> {
     return this.precedents.getById(precedentId);
+  }
+
+  async getPrecedentInProject(
+    precedentId: string,
+    projectId: string,
+  ): Promise<PromotedPrecedent | null> {
+    const precedent = await this.precedents.getById(precedentId);
+    if (!precedent) {
+      return null;
+    }
+    assertProjectScope(
+      precedent.projectId,
+      projectId,
+      "precedent",
+      precedentId,
+    );
+    return precedent;
   }
 
   async reviewCandidate(input: {
@@ -785,6 +812,8 @@ export class GovernedMemoryService {
     });
 
     try {
+      await this.inferenceLedger.markDispatched?.(recordId);
+      assertNotInTransaction("LearningModel");
       const assessed = await this.model.assess({
         historicalRun: historical,
         deterministicCandidates: deterministic,

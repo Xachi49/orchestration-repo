@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { assertNotInTransaction } from "../durability/transaction.js";
 import { assertTransition } from "../domain/run/run-state.js";
 import {
-  withRunState,
   type RunRepository,
 } from "../admission/run-repository.js";
+import { commitRunTransition } from "../admission/run-transition.js";
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
 import type { ControlPlaneService } from "../control-plane/service.js";
 import type { ControlPlaneClock } from "../control-plane/service.js";
@@ -188,9 +189,11 @@ export class PlanningService {
       );
       const run = await this.runs.getById(runId);
       if (run && run.state === "PLANNING") {
-        const next = assertTransition(run.state, "VALIDATING");
-        await this.runs.save(
-          withRunState(run, next, this.clock.nowIso()),
+        await commitRunTransition(
+          this.runs,
+          run,
+          "VALIDATING",
+          this.clock.nowIso(),
         );
       }
       const refreshed = await this.runs.getById(runId);
@@ -240,8 +243,7 @@ export class PlanningService {
       }
 
       if (run.state === "INGESTING") {
-        const planningState = assertTransition(run.state, "PLANNING");
-        await this.runs.save(withRunState(run, planningState, now));
+        await commitRunTransition(this.runs, run, "PLANNING", now);
       }
 
       const objective = await this.objectives.getByRunBinding(runId);
@@ -389,9 +391,11 @@ export class PlanningService {
           "Run disappeared during planning",
         );
       }
-      const validating = assertTransition(current.state, "VALIDATING");
-      await this.runs.save(
-        withRunState(current, validating, this.clock.nowIso()),
+      await commitRunTransition(
+        this.runs,
+        current,
+        "VALIDATING",
+        this.clock.nowIso(),
       );
 
       return {
@@ -546,6 +550,8 @@ export class PlanningService {
     });
 
     try {
+      await this.usage.markDispatched?.(callId);
+      assertNotInTransaction("PlanningModel");
       const result = await input.invoke();
       const actualTotal = resolveChargedTokenTotal(result.usage);
       if (actualTotal === undefined) {

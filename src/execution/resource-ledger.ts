@@ -1,5 +1,9 @@
 import type { ResourceBudgetProfile } from "../control-plane/budgets/budget.js";
 import { ExecutionError } from "./errors.js";
+import type {
+  ExecutionResourceLedgerRecord,
+  ExecutionResourceLedgerStore,
+} from "./resource-ledger-store.js";
 
 export interface ExecutionResourceUsage {
   apiCalls: number;
@@ -14,45 +18,106 @@ export interface ExecutionResourceUsage {
 
 /**
  * Deterministic execution resource ledger against budget ceilings.
- * Discrete hard resources that can be known ahead of time are reserved
- * before the side-effect boundary is crossed.
+ * When a store is provided, all authority-bearing state is durable.
  */
 export class ExecutionResourceLedger {
-  private usage: ExecutionResourceUsage = {
-    apiCalls: 0,
-    durationMs: 0,
-    reservedDurationMs: 0,
-    testExecutions: 0,
-    taskCreations: 0,
-    artifactBytes: 0,
-    stepsExecuted: 0,
-  };
+  private usage: ExecutionResourceUsage;
+  private recordRevision: number;
+  private readonly ceilingDurationMs: number;
+  private readonly ceilingApiCalls: number;
+  private readonly ceilingPlanSteps: number;
 
   constructor(
     private readonly budget: ResourceBudgetProfile,
     readonly runId: string,
     readonly executionAttemptId: string,
-  ) {}
+    private readonly store?: ExecutionResourceLedgerStore,
+    initial?: ExecutionResourceLedgerRecord,
+  ) {
+    this.ceilingDurationMs = budget.maximumExecutionMinutes * 60_000;
+    this.ceilingApiCalls = budget.maximumApiCalls;
+    this.ceilingPlanSteps = budget.maximumPlanSteps;
+    if (initial) {
+      this.usage = { ...initial.usage };
+      this.recordRevision = initial.recordRevision;
+    } else {
+      this.usage = {
+        apiCalls: 0,
+        durationMs: 0,
+        reservedDurationMs: 0,
+        testExecutions: 0,
+        taskCreations: 0,
+        artifactBytes: 0,
+        stepsExecuted: 0,
+      };
+      this.recordRevision = 1;
+    }
+  }
+
+  static async create(input: {
+    budget: ResourceBudgetProfile;
+    runId: string;
+    projectId: string;
+    executionAttemptId: string;
+    store?: ExecutionResourceLedgerStore;
+  }): Promise<ExecutionResourceLedger> {
+    if (!input.store) {
+      return new ExecutionResourceLedger(
+        input.budget,
+        input.runId,
+        input.executionAttemptId,
+      );
+    }
+    const record = await input.store.initialize({
+      executionAttemptId: input.executionAttemptId,
+      runId: input.runId,
+      projectId: input.projectId,
+      budget: input.budget,
+    });
+    return new ExecutionResourceLedger(
+      input.budget,
+      input.runId,
+      input.executionAttemptId,
+      input.store,
+      record,
+    );
+  }
+
+  static async loadExisting(input: {
+    budget: ResourceBudgetProfile;
+    store: ExecutionResourceLedgerStore;
+    executionAttemptId: string;
+  }): Promise<ExecutionResourceLedger | null> {
+    const record = await input.store.load(input.executionAttemptId);
+    if (!record) {
+      return null;
+    }
+    return new ExecutionResourceLedger(
+      input.budget,
+      record.runId,
+      record.executionAttemptId,
+      input.store,
+      record,
+    );
+  }
 
   snapshot(): ExecutionResourceUsage {
     return { ...this.usage };
   }
 
   ceilingMs(): number {
-    return this.budget.maximumExecutionMinutes * 60_000;
+    return this.ceilingDurationMs;
   }
 
   remainingExecutionMs(): number {
     return Math.max(
       0,
-      this.ceilingMs() - this.usage.durationMs - this.usage.reservedDurationMs,
+      this.ceilingDurationMs -
+        this.usage.durationMs -
+        this.usage.reservedDurationMs,
     );
   }
 
-  /**
-   * Strictest allowed runtime for a step before actuation.
-   * Returns 0 when the step must not start.
-   */
   allowedRuntimeMs(bounds: {
     capabilityMaximumRuntimeSeconds: number;
     testProfileTimeoutSeconds?: number;
@@ -67,11 +132,86 @@ export class ExecutionResourceLedger {
     return Math.max(0, Math.min(...candidates));
   }
 
-  /**
-   * Reserve discrete duration before crossing the side-effect boundary.
-   * Fails closed if insufficient remaining budget.
-   */
-  reserveDurationMs(ms: number): void {
+  async reserveDurationMs(ms: number): Promise<void> {
+    if (!this.store) {
+      this.reserveDurationMsSync(ms);
+      return;
+    }
+    const record = await this.store.reserveDurationMs(
+      this.executionAttemptId,
+      this.recordRevision,
+      ms,
+    );
+    this.applyRecord(record);
+  }
+
+  async settleReservedDuration(reservedMs: number, actualMs: number): Promise<void> {
+    if (!this.store) {
+      this.settleReservedDurationSync(reservedMs, actualMs);
+      return;
+    }
+    const record = await this.store.settleReservedDuration(
+      this.executionAttemptId,
+      this.recordRevision,
+      reservedMs,
+      actualMs,
+    );
+    this.applyRecord(record);
+  }
+
+  async releaseReservation(reservedMs: number): Promise<void> {
+    if (!this.store) {
+      this.releaseReservationSync(reservedMs);
+      return;
+    }
+    const record = await this.store.releaseReservation(
+      this.executionAttemptId,
+      this.recordRevision,
+      reservedMs,
+    );
+    this.applyRecord(record);
+  }
+
+  assertDiscreteBudgetAvailable(delta: {
+    stepsExecuted?: number;
+    apiCalls?: number;
+  }): void {
+    const nextSteps = this.usage.stepsExecuted + (delta.stepsExecuted ?? 0);
+    if (nextSteps > this.ceilingPlanSteps) {
+      throw new ExecutionError(
+        "EXECUTION_RESOURCE_BUDGET_EXCEEDED",
+        `Executed steps would exceed ceiling of ${this.ceilingPlanSteps}`,
+        { usage: this.usage, requested: delta },
+      );
+    }
+    const nextApi = this.usage.apiCalls + (delta.apiCalls ?? 0);
+    if (nextApi > this.ceilingApiCalls) {
+      throw new ExecutionError(
+        "EXECUTION_RESOURCE_BUDGET_EXCEEDED",
+        `API calls would exceed ceiling of ${this.ceilingApiCalls}`,
+        { usage: this.usage, requested: delta },
+      );
+    }
+  }
+
+  async recordStep(delta: Partial<ExecutionResourceUsage>): Promise<void> {
+    if (!this.store) {
+      this.recordStepSync(delta);
+      return;
+    }
+    const record = await this.store.recordStep(
+      this.executionAttemptId,
+      this.recordRevision,
+      delta,
+    );
+    this.applyRecord(record);
+  }
+
+  assertWithinBudget(): void {
+    this.assertWithinBudgetSync();
+  }
+
+  private reserveDurationMsSync(ms: number): void {
     if (ms <= 0) {
       throw new ExecutionError(
         "EXECUTION_RESOURCE_BUDGET_EXCEEDED",
@@ -89,51 +229,23 @@ export class ExecutionResourceLedger {
     this.usage.reservedDurationMs += ms;
   }
 
-  /** Convert reservation into consumed duration after actuation settles. */
-  settleReservedDuration(reservedMs: number, actualMs: number): void {
+  private settleReservedDurationSync(reservedMs: number, actualMs: number): void {
     this.usage.reservedDurationMs = Math.max(
       0,
       this.usage.reservedDurationMs - reservedMs,
     );
     this.usage.durationMs += Math.max(0, actualMs);
-    this.assertWithinBudget();
+    this.assertWithinBudgetSync();
   }
 
-  releaseReservation(reservedMs: number): void {
+  private releaseReservationSync(reservedMs: number): void {
     this.usage.reservedDurationMs = Math.max(
       0,
       this.usage.reservedDurationMs - reservedMs,
     );
   }
 
-  /**
-   * Fail closed before side effects if discrete counters would exceed ceilings.
-   * Duration is reserved separately via reserveDurationMs.
-   * Does not invent monetary costs.
-   */
-  assertDiscreteBudgetAvailable(delta: {
-    stepsExecuted?: number;
-    apiCalls?: number;
-  }): void {
-    const nextSteps = this.usage.stepsExecuted + (delta.stepsExecuted ?? 0);
-    if (nextSteps > this.budget.maximumPlanSteps) {
-      throw new ExecutionError(
-        "EXECUTION_RESOURCE_BUDGET_EXCEEDED",
-        `Executed steps would exceed ceiling of ${this.budget.maximumPlanSteps}`,
-        { usage: this.usage, requested: delta },
-      );
-    }
-    const nextApi = this.usage.apiCalls + (delta.apiCalls ?? 0);
-    if (nextApi > this.budget.maximumApiCalls) {
-      throw new ExecutionError(
-        "EXECUTION_RESOURCE_BUDGET_EXCEEDED",
-        `API calls would exceed ceiling of ${this.budget.maximumApiCalls}`,
-        { usage: this.usage, requested: delta },
-      );
-    }
-  }
-
-  recordStep(delta: Partial<ExecutionResourceUsage>): void {
+  private recordStepSync(delta: Partial<ExecutionResourceUsage>): void {
     this.usage = {
       apiCalls: this.usage.apiCalls + (delta.apiCalls ?? 0),
       durationMs: this.usage.durationMs + (delta.durationMs ?? 0),
@@ -143,32 +255,36 @@ export class ExecutionResourceLedger {
       artifactBytes: this.usage.artifactBytes + (delta.artifactBytes ?? 0),
       stepsExecuted: this.usage.stepsExecuted + (delta.stepsExecuted ?? 1),
     };
-    this.assertWithinBudget();
+    this.assertWithinBudgetSync();
   }
 
-  assertWithinBudget(): void {
-    const maxMinutes = this.budget.maximumExecutionMinutes;
+  private assertWithinBudgetSync(): void {
     const committed = this.usage.durationMs + this.usage.reservedDurationMs;
-    if (committed > maxMinutes * 60_000) {
+    if (committed > this.ceilingDurationMs) {
       throw new ExecutionError(
         "EXECUTION_RESOURCE_BUDGET_EXCEEDED",
-        `Execution duration exceeds ceiling of ${maxMinutes} minutes`,
+        `Execution duration exceeds ceiling of ${this.budget.maximumExecutionMinutes} minutes`,
         { usage: this.usage },
       );
     }
-    if (this.usage.apiCalls > this.budget.maximumApiCalls) {
+    if (this.usage.apiCalls > this.ceilingApiCalls) {
       throw new ExecutionError(
         "EXECUTION_RESOURCE_BUDGET_EXCEEDED",
-        `API calls exceed ceiling of ${this.budget.maximumApiCalls}`,
+        `API calls exceed ceiling of ${this.ceilingApiCalls}`,
         { usage: this.usage },
       );
     }
-    if (this.usage.stepsExecuted > this.budget.maximumPlanSteps) {
+    if (this.usage.stepsExecuted > this.ceilingPlanSteps) {
       throw new ExecutionError(
         "EXECUTION_RESOURCE_BUDGET_EXCEEDED",
-        `Executed steps exceed ceiling of ${this.budget.maximumPlanSteps}`,
+        `Executed steps exceed ceiling of ${this.ceilingPlanSteps}`,
         { usage: this.usage },
       );
     }
+  }
+
+  private applyRecord(record: ExecutionResourceLedgerRecord): void {
+    this.usage = { ...record.usage };
+    this.recordRevision = record.recordRevision;
   }
 }

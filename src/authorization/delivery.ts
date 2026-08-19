@@ -3,6 +3,7 @@ import type {
   ApprovalRequest,
 } from "../domain/authorization/index.js";
 import { AuthorizationError } from "./errors.js";
+import { assertNotInTransaction } from "../durability/transaction.js";
 
 /**
  * Provider-neutral out-of-band approval delivery.
@@ -49,6 +50,7 @@ export class FakeApprovalDeliveryService implements ApprovalDeliveryService {
     card: ApprovalDecisionCard;
     decisionNonce: string;
   }): Promise<void> {
+    assertNotInTransaction("ApprovalDeliveryService");
     if (this.failAlways || this.failNext) {
       this.failNext = false;
       throw new AuthorizationError(

@@ -7,7 +7,22 @@ Evidence-grounded, policy-governed orchestration: contracts, control plane, admi
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
-## Current milestone: Phase 10 — Observability & system intelligence
+## Current milestone: Phase 11 — Durable state & distributed coordination
+
+Phase 11 makes Phase 0–10 invariants **durable** and **distributedly correct** via PostgreSQL.
+
+- **PROCESS MEMORY != SYSTEM OF RECORD**
+- **DATABASE ROW != DOMAIN AUTHORITY**
+- **LEASE OWNERSHIP != BUSINESS AUTHORIZATION**
+- **LOCAL FILE PATH != DISTRIBUTED ARTIFACT AUTHORITY**
+- **EXACTLY-ONCE EXTERNAL SIDE EFFECTS ARE NOT ASSUMED**
+- **APPLICATION CLOCK != DISTRIBUTED LEASE CLOCK**
+- Default unit tests remain **memory** mode (`ORCHESTRATOR_STORAGE=memory`)
+- Production-capable path: `ORCHESTRATOR_STORAGE=postgres` + `DATABASE_URL` (fail closed; no silent fallback)
+
+See [docs/durability.md](docs/durability.md) and [docs/architecture.md](docs/architecture.md).
+
+## Phase 10 — Observability & system intelligence
 
 Phase 10 observes the full orchestration chain without becoming an authority plane.
 

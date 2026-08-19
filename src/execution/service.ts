@@ -1,6 +1,8 @@
 import type { ClockPort } from "../infrastructure/clock.js";
+import { assertNotInTransaction } from "../durability/transaction.js";
 import type { RunRepository } from "../admission/run-repository.js";
-import { withRunState } from "../admission/run-repository.js";
+import { assertProjectScope } from "../domain/project-scope.js";
+import { commitRunTransition } from "../admission/run-transition.js";
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
 import type { ControlPlaneService } from "../control-plane/service.js";
 import type { PlanRepository } from "../planning/plan-repository.js";
@@ -17,9 +19,7 @@ import {
   type StepExecutionResult,
 } from "../domain/execution/index.js";
 import { assertTransition } from "../domain/run/run-state.js";
-import {
-  workspaceRootFor,
-} from "../ingestion/workspace-paths.js";
+import { resolveContained, workspaceRootFor } from "../ingestion/workspace-paths.js";
 import { DependencyGraphService } from "../planning/dependency-graph.js";
 import type { SafeActuator } from "./actuator.js";
 import type { ExecutionArtifactRepository } from "./artifact-repository.js";
@@ -45,14 +45,20 @@ import { ExecutionResourceLedger } from "./resource-ledger.js";
 import { RollbackService } from "./rollback.js";
 import type { StepExecutionRepository } from "./step-repository.js";
 import { TestProfileRegistry } from "./test-profiles.js";
+import { artifactRootFor } from "./paths.js";
+import type { Capability } from "../control-plane/capabilities/capability.js";
 import {
   CreateLocalPatchArgsSchema,
   CreateTaskArgsSchema,
   PreparePullRequestArgsSchema,
   RunTestsArgsSchema,
 } from "./action-schemas.js";
-import { artifactRootFor } from "./paths.js";
-import type { Capability } from "../control-plane/capabilities/capability.js";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import type { ArtifactBlobStore } from "../durability/artifacts.js";
+import type { TransactionManager } from "../durability/transaction.js";
+import type { ExecutionAuthoritySnapshotStore } from "./authority-snapshot-store.js";
+import type { ExecutionResourceLedgerStore } from "./resource-ledger-store.js";
 import type { ExecutionPlan } from "../domain/plan/execution-plan.js";
 import type { ProjectControlContext } from "../control-plane/context.js";
 
@@ -76,6 +82,10 @@ export interface ExecutionServiceDeps {
   identities?: ExecutionIdentityGenerator;
   testProfiles?: TestProfileRegistry;
   dependencies?: DependencyGraphService;
+  blobStore?: ArtifactBlobStore;
+  transactions?: TransactionManager;
+  authoritySnapshots?: ExecutionAuthoritySnapshotStore;
+  resourceLedgerStore?: ExecutionResourceLedgerStore;
 }
 
 /**
@@ -134,6 +144,7 @@ export class ExecutionService {
         ) {
           const prior = await this.deps.coordinator.getResult(fenceKey);
           if (prior) {
+            this.resultsByRun.set(runId, prior);
             return prior;
           }
           const cached = this.resultsByRun.get(runId);
@@ -177,6 +188,7 @@ export class ExecutionService {
       const prior =
         begin.result ?? (await this.deps.coordinator.getResult(fenceKey));
       if (prior) {
+        this.resultsByRun.set(runId, prior);
         return prior;
       }
       const cached = this.resultsByRun.get(runId);
@@ -275,6 +287,7 @@ export class ExecutionService {
         capturedAt: nowIso,
       });
       this.snapshotsByAttempt.set(attemptId, snapshot);
+      await this.deps.authoritySnapshots?.save(snapshot, attemptId);
 
       const attempt = parseExecutionAttempt({
         executionAttemptId: attemptId,
@@ -300,15 +313,22 @@ export class ExecutionService {
         throw new ExecutionError("EXECUTION_NOT_READY", "Run disappeared");
       }
       assertTransition(run.state, "EXECUTING");
-      await this.deps.runs.save(
-        withRunState(run, "EXECUTING", this.deps.clock.nowIso()),
+      await commitRunTransition(
+        this.deps.runs,
+        run,
+        "EXECUTING",
+        this.deps.clock.nowIso(),
       );
 
-      const ledger = new ExecutionResourceLedger(
-        control.resourceBudget,
+      const ledger = await ExecutionResourceLedger.create({
+        budget: control.resourceBudget,
         runId,
-        attemptId,
-      );
+        projectId: run.projectId,
+        executionAttemptId: attemptId,
+        ...(this.deps.resourceLedgerStore
+          ? { store: this.deps.resourceLedgerStore }
+          : {}),
+      });
       const preconditions = new ExecutionPreconditionService({
         resourceLedger: ledger,
       });
@@ -651,7 +671,27 @@ export class ExecutionService {
   }
 
   async getLatestResult(runId: string): Promise<ExecutionResult | null> {
-    return this.resultsByRun.get(runId) ?? null;
+    const cached = this.resultsByRun.get(runId);
+    if (cached) {
+      return cached;
+    }
+    const stored = await this.loadDurableResult(runId);
+    if (stored) {
+      this.resultsByRun.set(runId, stored);
+    }
+    return stored;
+  }
+
+  async getLatestResultInProject(
+    runId: string,
+    projectId: string,
+  ): Promise<ExecutionResult | null> {
+    const run = await this.deps.runs.getById(runId);
+    if (!run) {
+      return null;
+    }
+    assertProjectScope(run.projectId, projectId, "execution result", runId);
+    return this.getLatestResult(runId);
   }
 
   async getLatestAttempt(runId: string) {
@@ -662,10 +702,38 @@ export class ExecutionService {
     return this.deps.artifacts.listByRun(runId);
   }
 
-  getAuthoritySnapshot(
+  async getAuthoritySnapshot(
     executionAttemptId: string,
-  ): ExecutionAuthoritySnapshot | null {
-    return this.snapshotsByAttempt.get(executionAttemptId) ?? null;
+  ): Promise<ExecutionAuthoritySnapshot | null> {
+    const cached = this.snapshotsByAttempt.get(executionAttemptId);
+    if (cached) {
+      return cached;
+    }
+    const stored = await this.deps.authoritySnapshots?.getByAttempt(
+      executionAttemptId,
+    );
+    if (stored) {
+      this.snapshotsByAttempt.set(executionAttemptId, stored);
+    }
+    return stored ?? null;
+  }
+
+  private async loadDurableResult(
+    runId: string,
+  ): Promise<ExecutionResult | null> {
+    const plan = await this.deps.plans.getByRunId(runId);
+    const authorizationRecord =
+      await this.deps.authorizationRecords.getLatestByRun(runId);
+    if (!plan || !authorizationRecord) {
+      return null;
+    }
+    return this.deps.coordinator.getResult({
+      runId,
+      planId: plan.planId,
+      planVersion: plan.planVersion,
+      planHash: plan.planHash,
+      authorizationRecordId: authorizationRecord.authorizationRecordId,
+    });
   }
 
   private executionOrder(
@@ -765,9 +833,11 @@ export class ExecutionService {
     if (run.state === "CONTAINED") {
       return true;
     }
-    assertTransition(run.state, "CONTAINED");
-    await this.deps.runs.save(
-      withRunState(run, "CONTAINED", this.deps.clock.nowIso()),
+    await commitRunTransition(
+      this.deps.runs,
+      run,
+      "CONTAINED",
+      this.deps.clock.nowIso(),
     );
     return true;
   }
@@ -876,7 +946,7 @@ export class ExecutionService {
     }
 
     ledger.assertDiscreteBudgetAvailable({ stepsExecuted: 1 });
-    ledger.reserveDurationMs(timeoutMs);
+    await ledger.reserveDurationMs(timeoutMs);
 
     await this.appendEvent(input.runId, "STEP_EXECUTION_STARTED", {
       stepId: step.stepId,
@@ -902,8 +972,8 @@ export class ExecutionService {
         actuated,
       );
       const actualMs = Math.max(1, Date.now() - startedMs);
-      ledger.settleReservedDuration(timeoutMs, actualMs);
-      ledger.recordStep({
+      await ledger.settleReservedDuration(timeoutMs, actualMs);
+      await ledger.recordStep({
         testExecutions: step.actionType === "RUN_TESTS" ? 1 : 0,
         taskCreations: step.actionType === "CREATE_TASK" ? 1 : 0,
         artifactBytes: actuated.outputHashes.length,
@@ -911,7 +981,7 @@ export class ExecutionService {
       });
       return { kind: "SUCCEEDED", result: completed };
     } catch (error) {
-      ledger.releaseReservation(timeoutMs);
+      await ledger.releaseReservation(timeoutMs);
       throw error;
     }
   }
@@ -1101,6 +1171,7 @@ export class ExecutionService {
     artifactRoot: string;
     runtime: { timeoutMs: number };
   }): Promise<StepExecutionResult> {
+    assertNotInTransaction("SafeActuator");
     const { step, runtime } = input;
     const nowIso = this.deps.clock.nowIso();
     switch (step.actionType) {
@@ -1126,6 +1197,16 @@ export class ExecutionService {
           relativePath: result.artifactRelativePath,
           contentHash: result.contentHash,
           size: result.size,
+          createdAt: nowIso,
+        });
+        await this.persistArtifactBytes({
+          artifactId,
+          runId: input.runId,
+          executionAttemptId: input.executionAttemptId,
+          stepId: step.stepId,
+          artifactType: "PATCH",
+          relativePath: result.artifactRelativePath,
+          artifactRoot: input.artifactRoot,
           createdAt: nowIso,
         });
         return {
@@ -1168,6 +1249,16 @@ export class ExecutionService {
             relativePath: result.artifactRelativePath,
             contentHash: result.contentHash,
             size: result.stdoutSummary.length + result.stderrSummary.length,
+            createdAt: nowIso,
+          });
+          await this.persistArtifactBytes({
+            artifactId,
+            runId: input.runId,
+            executionAttemptId: input.executionAttemptId,
+            stepId: step.stepId,
+            artifactType: "TEST_RESULT",
+            relativePath: result.artifactRelativePath,
+            artifactRoot: input.artifactRoot,
             createdAt: nowIso,
           });
           refs.push(artifactId);
@@ -1233,6 +1324,16 @@ export class ExecutionService {
           size: result.description.length,
           createdAt: nowIso,
         });
+        await this.persistArtifactBytes({
+          artifactId,
+          runId: input.runId,
+          executionAttemptId: input.executionAttemptId,
+          stepId: step.stepId,
+          artifactType: "TASK",
+          relativePath: result.artifactRelativePath,
+          artifactRoot: input.artifactRoot,
+          createdAt: nowIso,
+        });
         return {
           stepId: step.stepId,
           idempotencyKey: step.idempotencyKey,
@@ -1279,6 +1380,16 @@ export class ExecutionService {
           size: result.size,
           createdAt: nowIso,
         });
+        await this.persistArtifactBytes({
+          artifactId,
+          runId: input.runId,
+          executionAttemptId: input.executionAttemptId,
+          stepId: step.stepId,
+          artifactType: "PR_PREPARATION",
+          relativePath: result.artifactRelativePath,
+          artifactRoot: input.artifactRoot,
+          createdAt: nowIso,
+        });
         return {
           stepId: step.stepId,
           idempotencyKey: step.idempotencyKey,
@@ -1306,6 +1417,38 @@ export class ExecutionService {
         );
       }
     }
+  }
+
+  private async persistArtifactBytes(input: {
+    artifactId: string;
+    runId: string;
+    executionAttemptId: string;
+    stepId: string;
+    artifactType: string;
+    relativePath: string;
+    artifactRoot: string;
+    createdAt: string;
+  }): Promise<void> {
+    if (!this.deps.blobStore) {
+      return;
+    }
+    const run = await this.deps.runs.getById(input.runId);
+    if (!run) {
+      return;
+    }
+    const absolute = resolveContained(input.artifactRoot, input.relativePath);
+    const bytes = await readFile(absolute);
+    await this.deps.blobStore.put({
+      artifactId: input.artifactId,
+      runId: input.runId,
+      projectId: run.projectId,
+      executionAttemptId: input.executionAttemptId,
+      stepId: input.stepId,
+      artifactType: input.artifactType,
+      bytes,
+      mediaType: "application/octet-stream",
+      createdAt: input.createdAt,
+    });
   }
 
   private async appendEvent(

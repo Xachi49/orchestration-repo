@@ -58,6 +58,7 @@ export interface DeterministicVerificationInput {
   contained: boolean;
   /** Live Control Plane capabilities for current-drift observation only. */
   liveCapabilities?: readonly Capability[];
+  blobStore?: import("../durability/artifacts.js").ArtifactBlobStore;
 }
 
 export interface DeterministicVerificationResult {
@@ -179,6 +180,7 @@ export class DeterministicOutcomeVerificationService {
       input.artifacts,
       input.dataRoot,
       this.identities,
+      input.blobStore,
     );
     const artifactOutcome = await artifactVerifier.verify({
       runId: input.runId,
@@ -305,6 +307,7 @@ export class DeterministicOutcomeVerificationService {
       artifacts: input.artifacts,
       recomputedHashes: artifactOutcome.recomputedHashes,
       workspaceRoot: input.workspaceRoot,
+      ...(input.blobStore !== undefined ? { blobStore: input.blobStore } : {}),
     });
     for (const outcome of actionOutcomes) {
       findings.push(...outcome.findings);

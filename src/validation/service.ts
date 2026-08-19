@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertNotInTransaction } from "../durability/transaction.js";
 import type { RunRepository } from "../admission/run-repository.js";
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
 import type { Objective } from "../domain/objective/objective.js";
@@ -1132,6 +1133,8 @@ export class ValidationService {
     });
 
     try {
+      await this.usage.markDispatched?.(callId);
+      assertNotInTransaction("ValidationModel");
       const result = await input.invoke();
       await this.settle(callId, "SUCCESS", reservedTokens, result.usage, input);
       return result.value;

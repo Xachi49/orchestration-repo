@@ -1,6 +1,6 @@
 import type { ClockPort } from "../infrastructure/clock.js";
+import { commitRunTransition } from "../admission/run-transition.js";
 import type { RunRepository } from "../admission/run-repository.js";
-import { withRunState } from "../admission/run-repository.js";
 import { assertTransition } from "../domain/run/run-state.js";
 import type { ApprovalRequest } from "../domain/authorization/index.js";
 import type { ApprovalRequestRepository } from "./approval-request-repository.js";
@@ -61,7 +61,7 @@ export class ApprovalExpiryService {
       let runState = run?.state ?? "EXPIRED";
       if (run && run.state === "AWAITING_APPROVAL") {
         const next = assertTransition(run.state, "EXPIRED");
-        await this.deps.runs.save(withRunState(run, next, now));
+        await commitRunTransition(this.deps.runs, run, next, now);
         runState = next;
       }
       results.push({

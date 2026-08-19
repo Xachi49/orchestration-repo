@@ -16,6 +16,11 @@ export interface RunTelemetryRepository {
     projectId: string,
     windowFingerprint: string,
   ): Promise<readonly RunTelemetryRecord[]>;
+  indexForWindow?(
+    projectId: string,
+    windowFingerprint: string,
+    runIds: readonly string[],
+  ): void | Promise<void>;
 }
 
 export interface PhaseTelemetryRepository {

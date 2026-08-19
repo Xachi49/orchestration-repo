@@ -77,7 +77,12 @@ export {
   type PostExecutionTruthServiceDeps,
 } from "./snapshot.js";
 
-export { ExecutionArtifactVerifier } from "./artifact-verifier.js";
+export {
+  ExecutionArtifactVerifier,
+  readVerificationArtifactBytes,
+  readVerificationArtifactUtf8,
+  utf8FromVerificationBytes,
+} from "./artifact-verifier.js";
 
 export {
   ActionOutcomeVerifierRegistry,

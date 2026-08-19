@@ -238,6 +238,11 @@ export interface ValidationUsageLedger {
   ): Promise<ValidationModelUsage>;
   listByRunId(runId: string): Promise<readonly ValidationModelUsage[]>;
   hasBudgetInvariantViolation(runId: string): Promise<boolean>;
+  markDispatched?(callId: string): Promise<void>;
+  getDurabilityState?(
+    callId: string,
+  ): Promise<import("../domain/durability/index.js").InferenceDurabilityState | null>;
+  markAmbiguous?(callId: string): Promise<void>;
 }
 
 export function aggregateValidationUsage(
@@ -321,6 +326,10 @@ export class InMemoryValidationUsageLedger implements ValidationUsageLedger {
   private readonly byCallId = new Map<string, ValidationModelUsage>();
   private readonly invariantRuns = new Set<string>();
   private readonly runLocks = new Map<string, Promise<unknown>>();
+  private readonly durability = new Map<
+    string,
+    import("../domain/durability/index.js").InferenceDurabilityState
+  >();
 
   private async withRunLock<T>(
     runId: string,
@@ -445,6 +454,7 @@ export class InMemoryValidationUsageLedger implements ValidationUsageLedger {
         record.revisionAttempt = request.revisionAttempt;
       }
       this.byCallId.set(request.callId, record);
+      this.durability.set(request.callId, "RESERVED");
       return { ...record };
     });
   }
@@ -525,5 +535,19 @@ export class InMemoryValidationUsageLedger implements ValidationUsageLedger {
     return this.recordsForRun(runId).some(
       (record) => record.budgetInvariantViolation === true,
     );
+  }
+
+  async markDispatched(callId: string): Promise<void> {
+    this.durability.set(callId, "DISPATCH_STARTED");
+  }
+
+  async getDurabilityState(
+    callId: string,
+  ): Promise<import("../domain/durability/index.js").InferenceDurabilityState | null> {
+    return this.durability.get(callId) ?? null;
+  }
+
+  async markAmbiguous(callId: string): Promise<void> {
+    this.durability.set(callId, "AMBIGUOUS");
   }
 }

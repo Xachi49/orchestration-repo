@@ -140,6 +140,11 @@ export interface PlanningUsageLedger {
   ): Promise<PlanningModelUsage>;
   listByRunId(runId: string): Promise<readonly PlanningModelUsage[]>;
   hasBudgetInvariantViolation(runId: string): Promise<boolean>;
+  markDispatched?(callId: string): Promise<void>;
+  getDurabilityState?(
+    callId: string,
+  ): Promise<import("../domain/durability/index.js").InferenceDurabilityState | null>;
+  markAmbiguous?(callId: string): Promise<void>;
 }
 
 export function aggregatePlanningUsage(
@@ -228,6 +233,10 @@ export class InMemoryPlanningUsageLedger implements PlanningUsageLedger {
   private readonly invariantRuns = new Set<string>();
   /** Per-run serialization chain for process-local atomic reserve/settle. */
   private readonly runLocks = new Map<string, Promise<unknown>>();
+  private readonly durability = new Map<
+    string,
+    import("../domain/durability/index.js").InferenceDurabilityState
+  >();
 
   private async withRunLock<T>(
     runId: string,
@@ -328,6 +337,7 @@ export class InMemoryPlanningUsageLedger implements PlanningUsageLedger {
         status: "STARTED",
       };
       this.byCallId.set(request.callId, record);
+      this.durability.set(request.callId, "RESERVED");
       return { ...record };
     });
   }
@@ -360,6 +370,7 @@ export class InMemoryPlanningUsageLedger implements PlanningUsageLedger {
           totalUsage: 0,
         };
         this.byCallId.set(callId, released);
+        this.durability.set(callId, "FAILED_PRE_DISPATCH");
         return { ...released };
       }
 
@@ -372,6 +383,7 @@ export class InMemoryPlanningUsageLedger implements PlanningUsageLedger {
           totalUsage: current.reservedTokens,
         };
         this.byCallId.set(callId, settled);
+        this.durability.set(callId, "SETTLED");
         return { ...settled };
       }
 
@@ -393,6 +405,7 @@ export class InMemoryPlanningUsageLedger implements PlanningUsageLedger {
         this.invariantRuns.add(current.runId);
       }
       this.byCallId.set(callId, settled);
+      this.durability.set(callId, "SETTLED");
       return { ...settled };
     });
   }
@@ -408,5 +421,19 @@ export class InMemoryPlanningUsageLedger implements PlanningUsageLedger {
     return this.recordsForRun(runId).some(
       (record) => record.budgetInvariantViolation === true,
     );
+  }
+
+  async markDispatched(callId: string): Promise<void> {
+    this.durability.set(callId, "DISPATCH_STARTED");
+  }
+
+  async getDurabilityState(
+    callId: string,
+  ): Promise<import("../domain/durability/index.js").InferenceDurabilityState | null> {
+    return this.durability.get(callId) ?? null;
+  }
+
+  async markAmbiguous(callId: string): Promise<void> {
+    this.durability.set(callId, "AMBIGUOUS");
   }
 }

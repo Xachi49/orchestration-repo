@@ -7,7 +7,13 @@ Evidence-grounded, policy-governed orchestration: contracts, control plane, admi
 
 > AI may determine what could be useful. Deterministic systems determine what is true, permitted, affordable, authorized, executable, successful, and worthy of being remembered.
 
-## Current milestone: Phase 11 — Durable state & distributed coordination
+## Current milestone: Phase 12 — Production readiness
+
+Phase 12 makes Phase 0–11 **operable**: fail-closed production config, startup/readiness, authenticated HTTP perimeter, bounded workers, graceful drain, redacted logs, and backup/restore operator tooling.
+
+See [docs/phase-12-production-readiness.md](docs/phase-12-production-readiness.md) and [docs/runtime-operations.md](docs/runtime-operations.md).
+
+## Phase 11 — Durable state & distributed coordination
 
 Phase 11 makes Phase 0–10 invariants **durable** and **distributedly correct** via PostgreSQL.
 

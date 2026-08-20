@@ -13,6 +13,7 @@ import type { VerificationReadinessService } from "../verification/readiness.js"
 import type { GovernedMemoryService } from "../memory/service.js";
 import type { ObservabilityService } from "../observability/service.js";
 import type { StorageMode } from "../domain/durability/index.js";
+import type { RunRepository } from "../admission/run-repository.js";
 import Fastify from "fastify";
 import { registerRunRoutes } from "./runs.js";
 import { registerIngestRoutes } from "./ingest.js";
@@ -23,6 +24,8 @@ import { registerExecutionRoutes } from "./execute.js";
 import { registerVerificationRoutes } from "./verify.js";
 import { registerLearningRoutes } from "./learn.js";
 import { registerObservabilityRoutes } from "./observability.js";
+import { registerPerimeter, type PerimeterDeps } from "../runtime/perimeter.js";
+import { registerHealthRoutes, type HealthDeps } from "../runtime/health.js";
 
 export interface ApiDeps {
   admission?: ObjectiveAdmissionService;
@@ -40,6 +43,7 @@ export interface ApiDeps {
   memory?: GovernedMemoryService;
   observability?: ObservabilityService;
   storageMode?: StorageMode;
+  runs?: RunRepository;
   readiness?: {
     storageMode: StorageMode;
     databaseReachable: boolean;
@@ -47,13 +51,21 @@ export interface ApiDeps {
     schemaVersion?: string;
     supportedSchemaVersion: string;
   };
+  perimeter?: PerimeterDeps;
+  health?: HealthDeps;
+  bodyLimitBytes?: number;
+  requestTimeoutMs?: number;
 }
 
 /**
  * HTTP surface. Business logic lives in application services.
  */
 export async function buildServer(deps: ApiDeps = {}) {
-  const app = Fastify({ logger: false });
+  const app = Fastify({
+    logger: false,
+    bodyLimit: deps.bodyLimitBytes ?? 1_048_576,
+    requestTimeout: deps.requestTimeoutMs ?? 30_000,
+  });
 
   const approvalEnabled = Boolean(
     deps.authorizationRouting && deps.humanAuthorization,
@@ -63,17 +75,26 @@ export async function buildServer(deps: ApiDeps = {}) {
   const memoryEnabled = Boolean(deps.memory);
   const observabilityEnabled = Boolean(deps.observability);
 
+  if (deps.health) {
+    registerHealthRoutes(app, deps.health);
+  }
+
   app.get("/health", async () => ({
     status: "ok",
     phase: observabilityEnabled
-      ? 11
+      ? 12
       : memoryEnabled
         ? 9
         : verificationEnabled
           ? 8
           : executionEnabled
             ? 7
-            : 6,
+            : approvalEnabled
+              ? 6
+              : deps.validation
+                ? 5
+                : 6,
+    milestone: 12,
     orchestrator: observabilityEnabled
       ? "observability"
       : memoryEnabled
@@ -105,6 +126,10 @@ export async function buildServer(deps: ApiDeps = {}) {
     verificationModelToolsEnabled: false,
     learningModelToolsEnabled: false,
   }));
+
+  if (deps.perimeter) {
+    await registerPerimeter(app, deps.perimeter);
+  }
 
   if (deps.admission) {
     registerRunRoutes(app, deps.admission);
@@ -153,13 +178,13 @@ export async function buildServer(deps: ApiDeps = {}) {
   return app;
 }
 
-import { startOrchestratorServer } from "./bootstrap.js";
+import { createOrchestratorRuntime } from "../runtime/process.js";
 
 async function main(): Promise<void> {
-  const port = Number(process.env["PORT"] ?? 3000);
-  const running = await startOrchestratorServer(port);
+  const runtime = createOrchestratorRuntime();
+  await runtime.start();
   const shutdown = async () => {
-    await running.close();
+    await runtime.close();
     process.exit(0);
   };
   process.on("SIGINT", () => {

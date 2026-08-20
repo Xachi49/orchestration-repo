@@ -10,3 +10,5 @@ Read [docs/architecture.md](docs/architecture.md) before implementing.
 - Deterministic authority overrides probabilistic reasoning.
 - Fail closed when authority is missing. Do not invent defaults or grants.
 - Never introduce external integrations without an explicit milestone.
+- Runtime/bootstrap may compose infrastructure. Domain must not import `src/runtime`.
+- Production configuration, authentication, and worker ownership do not create business authority.

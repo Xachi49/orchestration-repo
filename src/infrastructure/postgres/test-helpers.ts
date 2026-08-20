@@ -136,3 +136,68 @@ export async function waitUntilPostgresLeaseExpired(
     `Lease ${coordinationKey} did not expire within ${timeoutMs}ms according to PostgreSQL NOW()`,
   );
 }
+
+export async function waitUntilPostgresOutboxLeaseExpired(
+  db: PostgresDatabase,
+  outboxId: string,
+  timeoutMs = 8_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await db.query<{ expired: string | number | boolean }>(
+      `SELECT CASE
+         WHEN lease_expires_at IS NULL OR lease_expires_at < NOW() THEN 1
+         ELSE 0
+       END AS expired
+       FROM transactional_outbox
+       WHERE outbox_id = $1`,
+      [outboxId],
+    );
+    if (Number(result.rows[0]?.expired) === 1) {
+      return;
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+  }
+  throw new Error(
+    `Outbox ${outboxId} lease did not expire within ${timeoutMs}ms according to PostgreSQL NOW()`,
+  );
+}
+
+export async function createTestStackOnUrl(
+  instanceId: string,
+  connectionString: string,
+  options: { migrate?: boolean } = {},
+) {
+  process.env["APPROVAL_DELIVERY_SECRET_KEY"] =
+    process.env["APPROVAL_DELIVERY_SECRET_KEY"] ??
+    Buffer.alloc(32, 11).toString("base64");
+  const db = new PostgresDatabase({
+    connectionString,
+    max: 10,
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 10_000,
+    instanceId,
+  });
+  if (options.migrate !== false) {
+    const runner = new PostgresMigrationRunner(db);
+    await runner.migrate();
+    await runner.assertCompatible();
+  } else {
+    const runner = new PostgresMigrationRunner(db);
+    await runner.assertCompatible();
+  }
+  const stack = await createPostgresOrchestratorStack({
+    db,
+    instanceId,
+    seedControlPlane: true,
+  });
+  return {
+    db,
+    stack,
+    async close() {
+      await stack.close();
+    },
+  };
+}

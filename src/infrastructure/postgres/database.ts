@@ -101,6 +101,14 @@ export class PostgresDatabase {
     }
   }
 
+  poolStats(): { total: number; idle: number; waiting: number } {
+    return {
+      total: this.pool.totalCount,
+      idle: this.pool.idleCount,
+      waiting: this.pool.waitingCount,
+    };
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }

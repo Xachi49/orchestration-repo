@@ -126,6 +126,22 @@ export class PostgresMigrationRunner {
         { current: latest.version, supported: SUPPORTED_SCHEMA_VERSION },
       );
     }
+    const files = await listMigrationFiles();
+    const appliedByVersion = new Map(status.applied.map((row) => [row.version, row]));
+    for (const file of files) {
+      const applied = appliedByVersion.get(file.version);
+      if (!applied) {
+        continue;
+      }
+      const checksum = await checksumFile(file.filePath);
+      if (applied.checksum !== checksum) {
+        throw new DurabilityError(
+          "DATABASE_SCHEMA_INCOMPATIBLE",
+          `Migration ${file.version} checksum mismatch`,
+          { version: file.version },
+        );
+      }
+    }
   }
 
   private async appliedMigrations(): Promise<MigrationRecord[]> {

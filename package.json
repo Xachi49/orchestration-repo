@@ -2,7 +2,7 @@
   "name": "orchestrator-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 11 durable state",
+  "description": "Evidence-grounded, policy-governed orchestration engine — Phase 12 production readiness",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -15,7 +15,8 @@
     "test:postgres": "node scripts/test-postgres.mjs",
     "db:migrate": "node --import tsx src/infrastructure/postgres/cli.ts migrate",
     "db:status": "node --import tsx src/infrastructure/postgres/cli.ts status",
-    "start": "node --import tsx src/api/server.ts"
+    "start": "node --import tsx src/runtime/main.ts",
+    "audit:deps": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
     "fastify": "^5.4.0",

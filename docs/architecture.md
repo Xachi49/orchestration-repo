@@ -1559,4 +1559,21 @@ read-only `TelemetrySources` wired to existing Phase 0–9 stores.
 - Monetary `CostAttribution` until pricing authority exists
 - External OpenTelemetry / vendor exporters
 
+## Phase 12 — Production readiness, security hardening, runtime operations
+
+See [docs/phase-12-production-readiness.md](phase-12-production-readiness.md).
+
+Runtime configuration, HTTP authentication, worker ownership, readiness,
+metrics, and deployment version **do not** become policy, approval, execution,
+or completion authority.
+
+Dependency direction:
+
+```text
+domain → application → infrastructure → runtime/bootstrap
+```
+
+Domain must not import runtime. PostgreSQL remains the system of record.
+`PRODUCTION` cannot use `MEMORY` storage or anonymous mutation HTTP.
+
 

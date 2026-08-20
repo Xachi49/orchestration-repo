@@ -152,6 +152,26 @@ export class PostgresTransactionalOutbox {
     );
   }
 
+  async markPermanentFailure(
+    outboxId: string,
+    ownerId: string,
+    fenceToken: number,
+  ): Promise<void> {
+    await this.db.query(
+      `UPDATE transactional_outbox
+       SET status = 'FAILED'
+       WHERE outbox_id = $1 AND lease_owner_id = $2 AND fence_token = $3`,
+      [outboxId, ownerId, fenceToken],
+    );
+  }
+
+  async countPending(): Promise<number> {
+    const result = await this.db.query<{ c: string | number }>(
+      `SELECT COUNT(*)::int AS c FROM transactional_outbox WHERE status IN ('PENDING', 'LEASED')`,
+    );
+    return Number(result.rows[0]?.c ?? 0);
+  }
+
   async listByAggregate(aggregateId: string): Promise<OutboxMessage[]> {
     const result = await this.db.query<{
       outbox_id: string;
@@ -188,6 +208,7 @@ export class LocalOutboxDispatcher {
     private readonly outbox: PostgresTransactionalOutbox,
     private readonly ownerId: string,
     private readonly consumer: OutboxConsumer,
+    private readonly maxAttempts = 8,
   ) {}
 
   async dispatchOnce(limit = 10): Promise<{ delivered: number; failed: number }> {
@@ -199,6 +220,15 @@ export class LocalOutboxDispatcher {
     let failed = 0;
     for (const message of claimed) {
       try {
+        if (message.attemptCount > this.maxAttempts) {
+          await this.outbox.markPermanentFailure(
+            message.outboxId,
+            this.ownerId,
+            message.fenceToken ?? 0,
+          );
+          failed += 1;
+          continue;
+        }
         await this.consumer.consume(message);
         await this.outbox.markDelivered(
           message.outboxId,
@@ -207,11 +237,19 @@ export class LocalOutboxDispatcher {
         );
         delivered += 1;
       } catch {
-        await this.outbox.markFailed(
-          message.outboxId,
-          this.ownerId,
-          message.fenceToken ?? 0,
-        );
+        if (message.attemptCount >= this.maxAttempts) {
+          await this.outbox.markPermanentFailure(
+            message.outboxId,
+            this.ownerId,
+            message.fenceToken ?? 0,
+          );
+        } else {
+          await this.outbox.markFailed(
+            message.outboxId,
+            this.ownerId,
+            message.fenceToken ?? 0,
+          );
+        }
         failed += 1;
       }
     }

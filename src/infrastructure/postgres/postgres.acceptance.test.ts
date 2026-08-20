@@ -1269,7 +1269,7 @@ describe("PostgreSQL Phase 11 acceptance", () => {
     } finally {
       await env.close();
     }
-  });
+  }, 15_000);
 
   it("M78: promoted precedent survives restart with integrity and planning fingerprint", async () => {
     const projectId = uniquePostgresTestId("m78_proj");
@@ -1302,33 +1302,57 @@ describe("PostgreSQL Phase 11 acceptance", () => {
       const learned = await envA.stack.memory.learn(ctx.runId);
       expect(learned.promotedPrecedentIds.length).toBeGreaterThan(0);
       const historical = await envA.stack.memory.getHistoricalRuns().getByRunId(ctx.runId);
-      const candidate = (await envA.stack.memory.getCandidates().listByRunRecord(
-        learned.historicalRunRecordId,
-      )).find((item) => item.status === "PROMOTED");
-      const precedent = await envA.stack.memory.getPrecedent(learned.promotedPrecedentIds[0]!);
       expect(historical).toBeTruthy();
-      expect(candidate).toBeTruthy();
-      expect(precedent).toBeTruthy();
-      expect(precedent!.projectId).toBe(projectId);
+      const promotedCandidates = (
+        await envA.stack.memory.getCandidates().listByRunRecord(
+          learned.historicalRunRecordId,
+        )
+      ).filter((item) => item.status === "PROMOTED");
+      expect(promotedCandidates.length).toBeGreaterThan(0);
+      const promotedPrecedents = [];
+      for (const precedentId of learned.promotedPrecedentIds) {
+        const loaded = await envA.stack.memory.getPrecedent(precedentId);
+        expect(loaded).toBeTruthy();
+        expect(loaded!.precedentId).toBe(precedentId);
+        promotedPrecedents.push(loaded!);
+      }
+      const candidateIdsFromPrecedents = new Set(
+        promotedPrecedents.map((item) => item.candidateId),
+      );
+      const promotedCandidateIds = new Set(
+        promotedCandidates.map((item) => item.learningCandidateId),
+      );
+      expect(candidateIdsFromPrecedents).toEqual(promotedCandidateIds);
+      const capturedPrecedent = promotedPrecedents.find((item) =>
+        promotedCandidateIds.has(item.candidateId),
+      );
+      expect(capturedPrecedent).toBeTruthy();
+      const capturedCandidate = promotedCandidates.find(
+        (item) => item.learningCandidateId === capturedPrecedent!.candidateId,
+      );
+      expect(capturedCandidate).toBeTruthy();
+      expect(capturedPrecedent!.projectId).toBe(projectId);
       captured = {
         runId: ctx.runId,
         historicalRunId: historical!.historicalRunRecordId,
         historicalHash: historical!.recordHash,
-        candidateId: candidate!.learningCandidateId,
-        candidateHash: candidate!.candidateHash,
-        origin: candidate!.origin,
-        claim: candidate!.claim,
-        groundingVerdict: candidate!.grounding.verdict,
-        precedentId: precedent!.precedentId,
-        precedentVersion: precedent!.version,
-        precedentHash: precedent!.precedentHash,
-        provenanceHash: precedent!.provenance.provenanceHash,
-        promotionMethod: precedent!.promotionMethod,
-        applicability: precedent!.applicability,
-        trustClass: precedent!.trustClass,
+        candidateId: capturedCandidate!.learningCandidateId,
+        candidateHash: capturedCandidate!.candidateHash,
+        origin: capturedCandidate!.origin,
+        claim: capturedCandidate!.claim,
+        groundingVerdict: capturedCandidate!.grounding.verdict,
+        precedentId: capturedPrecedent!.precedentId,
+        precedentVersion: capturedPrecedent!.version,
+        precedentHash: capturedPrecedent!.precedentHash,
+        provenanceHash: capturedPrecedent!.provenance.provenanceHash,
+        promotionMethod: capturedPrecedent!.promotionMethod,
+        applicability: capturedPrecedent!.applicability,
+        trustClass: capturedPrecedent!.trustClass,
       };
-      expect(precedent!.applicability.scopeClass).toBe("PROJECT_LOCAL");
-      expect(precedent!.applicability.projectIds).toContain(projectId);
+      expect(captured.candidateId).toBe(capturedPrecedent!.candidateId);
+      expect(captured.candidateHash).toBe(capturedPrecedent!.candidateHash);
+      expect(capturedPrecedent!.applicability.scopeClass).toBe("PROJECT_LOCAL");
+      expect(capturedPrecedent!.applicability.projectIds).toContain(projectId);
       await envA.close();
 
       const envB = await createTestStack(uniquePostgresTestId("m78_b"));

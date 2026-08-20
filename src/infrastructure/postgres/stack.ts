@@ -192,6 +192,7 @@ export interface PostgresOrchestratorStack {
   authorityDirectory: PostgresAuthorityDirectory;
   stepExecutions: PostgresStepExecutionRepository;
   authorizationRecords: PostgresAuthorizationRecordRepository;
+  approvalRequests: PostgresApprovalRequestRepository;
   dataRoot: string;
   close: () => Promise<void>;
 }
@@ -703,6 +704,7 @@ export async function createPostgresOrchestratorStack(options: {
     authorityDirectory,
     stepExecutions,
     authorizationRecords,
+    approvalRequests,
     dataRoot,
     close: async () => {
       await db.close();

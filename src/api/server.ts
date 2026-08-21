@@ -14,6 +14,7 @@ import type { GovernedMemoryService } from "../memory/service.js";
 import type { ObservabilityService } from "../observability/service.js";
 import type { StorageMode } from "../domain/durability/index.js";
 import type { RunRepository } from "../admission/run-repository.js";
+import type { PortfolioSchedulerService } from "../scheduling/service.js";
 import Fastify from "fastify";
 import { registerRunRoutes } from "./runs.js";
 import { registerIngestRoutes } from "./ingest.js";
@@ -24,6 +25,7 @@ import { registerExecutionRoutes } from "./execute.js";
 import { registerVerificationRoutes } from "./verify.js";
 import { registerLearningRoutes } from "./learn.js";
 import { registerObservabilityRoutes } from "./observability.js";
+import { registerSchedulerRoutes } from "./scheduler.js";
 import { registerPerimeter, type PerimeterDeps } from "../runtime/perimeter.js";
 import { registerHealthRoutes, type HealthDeps } from "../runtime/health.js";
 
@@ -42,6 +44,7 @@ export interface ApiDeps {
   verificationReadiness?: VerificationReadinessService;
   memory?: GovernedMemoryService;
   observability?: ObservabilityService;
+  scheduler?: PortfolioSchedulerService;
   storageMode?: StorageMode;
   runs?: RunRepository;
   readiness?: {
@@ -81,33 +84,37 @@ export async function buildServer(deps: ApiDeps = {}) {
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: observabilityEnabled
-      ? 12
-      : memoryEnabled
-        ? 9
-        : verificationEnabled
-          ? 8
-          : executionEnabled
-            ? 7
-            : approvalEnabled
-              ? 6
-              : deps.validation
-                ? 5
-                : 6,
-    milestone: 12,
-    orchestrator: observabilityEnabled
-      ? "observability"
-      : memoryEnabled
-        ? "memory"
-        : verificationEnabled
-          ? "verification"
-          : executionEnabled
-            ? "execution"
-            : approvalEnabled
-              ? "authorization"
-              : deps.validation
-                ? "validation"
-                : "planning",
+    phase: deps.scheduler
+      ? 13
+      : observabilityEnabled
+        ? 12
+        : memoryEnabled
+          ? 9
+          : verificationEnabled
+            ? 8
+            : executionEnabled
+              ? 7
+              : approvalEnabled
+                ? 6
+                : deps.validation
+                  ? 5
+                  : 6,
+    milestone: deps.scheduler ? 13 : 12,
+    orchestrator: deps.scheduler
+      ? "scheduler"
+      : observabilityEnabled
+        ? "observability"
+        : memoryEnabled
+          ? "memory"
+          : verificationEnabled
+            ? "verification"
+            : executionEnabled
+              ? "execution"
+              : approvalEnabled
+                ? "authorization"
+                : deps.validation
+                  ? "validation"
+                  : "planning",
     llmConnected: false,
     githubConnected: false,
     githubWritesEnabled: false,
@@ -116,6 +123,7 @@ export async function buildServer(deps: ApiDeps = {}) {
     memoryEnabled,
     observabilityEnabled,
     approvalEnabled,
+    schedulerEnabled: Boolean(deps.scheduler),
     storageMode: deps.storageMode ?? "memory",
     databaseReachable: deps.readiness?.databaseReachable ?? null,
     schemaCompatible: deps.readiness?.schemaCompatible ?? null,
@@ -173,6 +181,12 @@ export async function buildServer(deps: ApiDeps = {}) {
   }
   if (deps.observability) {
     registerObservabilityRoutes(app, { observability: deps.observability });
+  }
+  if (deps.scheduler && deps.runs) {
+    registerSchedulerRoutes(app, {
+      scheduler: deps.scheduler,
+      runs: deps.runs,
+    });
   }
 
   return app;

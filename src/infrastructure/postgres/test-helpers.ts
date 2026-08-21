@@ -40,6 +40,7 @@ export async function createTestStack(
   opts?: {
     completionFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["completionFailpoint"];
     promotionFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["promotionFailpoint"];
+    schedulerGlobalMaxConcurrency?: number;
   },
 ) {
   process.env["APPROVAL_DELIVERY_SECRET_KEY"] =
@@ -55,6 +56,11 @@ export async function createTestStack(
       : {}),
     ...(opts?.promotionFailpoint !== undefined
       ? { promotionFailpoint: opts.promotionFailpoint }
+      : {}),
+    ...(opts?.schedulerGlobalMaxConcurrency !== undefined
+      ? {
+          schedulerGlobalMaxConcurrency: opts.schedulerGlobalMaxConcurrency,
+        }
       : {}),
   });
   return {

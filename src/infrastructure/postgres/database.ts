@@ -7,6 +7,25 @@ import { MAX_TRANSACTION_RETRIES } from "../../domain/durability/index.js";
 import { currentClient, runWithClient } from "./session.js";
 import { redactUnknown } from "./redact.js";
 
+function isNormalizedApplicationError(error: unknown): boolean {
+  if (error instanceof DurabilityError) {
+    return true;
+  }
+  // Preserve SchedulingError (and similar) thrown intentionally inside TX
+  // callbacks — do not re-wrap as DATABASE_TRANSACTION_FAILED.
+  return (
+    error instanceof Error &&
+    (error.name === "SchedulingError" || error.name === "AdmissionError")
+  );
+}
+
+function throwPreservingNormalized(error: unknown): never {
+  if (isNormalizedApplicationError(error)) {
+    throw error;
+  }
+  throw wrapDatabaseError(error);
+}
+
 export interface PostgresPoolOptions {
   connectionString: string;
   max: number;
@@ -70,14 +89,14 @@ export class PostgresDatabase {
         }
         lastError = error;
         if (!isRetryableConcurrencyError(error) || attempt === MAX_TRANSACTION_RETRIES) {
-          throw wrapDatabaseError(error);
+          throwPreservingNormalized(error);
         }
         await sleep(25 * attempt + Math.floor(Math.random() * 25));
       } finally {
         client.release();
       }
     }
-    throw wrapDatabaseError(lastError);
+    throwPreservingNormalized(lastError);
   }
 
   async nowIso(): Promise<string> {

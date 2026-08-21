@@ -14,8 +14,10 @@ import {
   extractApprovalRequestIdFromUrl,
   extractProjectIdFromBody,
   extractRunIdFromUrl,
+  extractWorkItemIdFromUrl,
 } from "./http-routes.js";
 import type { AuthenticationMode } from "./config.js";
+import type { SchedulerWorkItemRepository } from "../scheduling/repositories.js";
 
 export interface PerimeterDeps {
   authenticator: RequestAuthenticator;
@@ -27,6 +29,7 @@ export interface PerimeterDeps {
   authenticationMode: AuthenticationMode;
   runs?: RunRepository;
   approvalRequests?: ApprovalRequestRepository;
+  workItems?: SchedulerWorkItemRepository;
   databaseAvailable?: () => Promise<boolean>;
 }
 
@@ -139,6 +142,7 @@ export async function registerPerimeter(
 
       const approvalRequestId = extractApprovalRequestIdFromUrl(request.url);
       const runId = extractRunIdFromUrl(request.url);
+      const workItemId = extractWorkItemIdFromUrl(request.url);
       let projectId: string | undefined;
       if (approvalRequestId) {
         if (!deps.approvalRequests) {
@@ -165,6 +169,31 @@ export async function registerPerimeter(
             );
         }
         projectId = approval.projectId;
+      } else if (workItemId) {
+        if (!deps.workItems) {
+          return reply
+            .status(503)
+            .send(
+              productionErrorEnvelope(
+                requestId,
+                "PROJECT_ACCESS_DENIED",
+                "Work item project binding is unavailable",
+              ),
+            );
+        }
+        const work = await deps.workItems.getById(workItemId);
+        if (!work) {
+          return reply
+            .status(404)
+            .send(
+              productionErrorEnvelope(
+                requestId,
+                "WORK_ITEM_NOT_FOUND",
+                "Work item not found",
+              ),
+            );
+        }
+        projectId = work.projectId;
       } else if (runId && deps.runs) {
         const run = await deps.runs.getById(runId);
         if (!run) {
@@ -184,7 +213,11 @@ export async function registerPerimeter(
           /\/v1\/projects\/([^/]+)/.exec(request.url.split("?")[0] ?? "")?.[1];
         projectId = urlProject ?? extractProjectIdFromBody(request.body);
       }
-      if (projectId && !deps.access.canAccessProject(principal.principalId, projectId)) {
+      // Portfolio snapshot is principal-scoped in the route handler.
+      if (
+        projectId &&
+        !deps.access.canAccessProject(principal.principalId, projectId)
+      ) {
         deps.metrics.increment("http_project_access_denied");
         return reply
           .status(403)

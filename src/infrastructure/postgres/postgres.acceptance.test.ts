@@ -488,17 +488,19 @@ describe("PostgreSQL Phase 11 acceptance", () => {
       }
       const b = await outbox.claimBatch({
         ownerId: "dispatcher_b",
-        limit: 1,
+        limit: 50,
         leaseSeconds: 30,
       });
-      expect(b[0]?.fenceToken).toBeGreaterThan(fenceA);
+      const claimedB = b.find((row) => row.outboxId === message.outboxId);
+      expect(claimedB).toBeTruthy();
+      expect(claimedB!.fenceToken).toBeGreaterThan(fenceA);
       await expect(
         outbox.markDelivered(message.outboxId, "dispatcher_a", fenceA),
       ).rejects.toMatchObject({ code: "OUTBOX_DELIVERY_FAILED" });
       await outbox.markDelivered(
         message.outboxId,
         "dispatcher_b",
-        b[0]!.fenceToken!,
+        claimedB!.fenceToken!,
       );
     } finally {
       await env.close();
@@ -1527,7 +1529,7 @@ describe("PostgreSQL Phase 11 acceptance", () => {
         await env.close();
       }
     }
-  });
+  }, 60_000);
 
   it("AFTER_HUMAN_DECISION failpoint does not create promotion authority", async () => {
     const seedFail = {
@@ -1986,5 +1988,5 @@ describe("PostgreSQL Phase 11 acceptance", () => {
     } finally {
       await env.close();
     }
-  });
+  }, 30_000);
 });

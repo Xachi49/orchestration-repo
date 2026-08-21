@@ -3,7 +3,7 @@
 ## Versioning
 
 Application version is `package.json` version plus optional `GIT_COMMIT_SHA` / `BUILD_TIMESTAMP`.
-Schema version is migration `003_phase11_final` (Phase 11). Application and schema versions are independent.
+Schema version is migration `007_phase13_actionable_discovery` (Phase 13). Application and schema versions are independent.
 
 Rolling upgrades: do not apply destructive migrations while old nodes still write. Phase 12 adds no destructive production migration.
 

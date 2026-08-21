@@ -154,6 +154,23 @@ import {
   PostgresVerificationCoordinator,
   PostgresLearningCoordinator,
 } from "./coordinators.js";
+import {
+  PostgresSchedulerWorkItemRepository,
+  PostgresSchedulerDependencyRepository,
+  PostgresSchedulerDecisionRepository,
+  PostgresSchedulerProjectConfigRepository,
+  PostgresSchedulerPauseRepository,
+  PostgresSchedulerFairnessRepository,
+} from "./repositories/scheduler.js";
+import {
+  createPhaseDispatchPorts,
+  DISCOVERABLE_RUN_STATES,
+  PortfolioSchedulerService,
+  SchedulerDispatcher,
+  StackRunArtifactProbe,
+  type PhaseDispatchPorts,
+  type RunArtifactProbe,
+} from "../../scheduling/index.js";
 
 export interface PostgresOrchestratorStack {
   storageMode: "postgres";
@@ -193,6 +210,21 @@ export interface PostgresOrchestratorStack {
   stepExecutions: PostgresStepExecutionRepository;
   authorizationRecords: PostgresAuthorizationRecordRepository;
   approvalRequests: PostgresApprovalRequestRepository;
+  scheduler: PortfolioSchedulerService;
+  schedulerWorkItems: PostgresSchedulerWorkItemRepository;
+  schedulerDependencies: PostgresSchedulerDependencyRepository;
+  schedulerDecisions: PostgresSchedulerDecisionRepository;
+  schedulerProjectConfigs: PostgresSchedulerProjectConfigRepository;
+  schedulerPauses: PostgresSchedulerPauseRepository;
+  schedulerFairness: PostgresSchedulerFairnessRepository;
+  schedulerArtifacts: RunArtifactProbe;
+  schedulerPorts: PhaseDispatchPorts;
+  schedulerDispatcher: SchedulerDispatcher;
+  /** Runs whose durable state can still yield missing scheduler work. */
+  listDiscoverableRunIds: (
+    limit: number,
+    projectIds?: readonly string[],
+  ) => Promise<readonly string[]>;
   dataRoot: string;
   close: () => Promise<void>;
 }
@@ -205,6 +237,8 @@ export async function createPostgresOrchestratorStack(options: {
   dataRoot?: string;
   completionFailpoint?: import("../../verification/service.js").VerificationCompletionFailpoint;
   promotionFailpoint?: import("../../memory/promotion.js").PromotionFailpoint;
+  schedulerGlobalMaxConcurrency?: number;
+  defaultEnvironment?: string;
 }): Promise<PostgresOrchestratorStack> {
   const instanceId = options.instanceId ?? options.db.instanceId;
   const clock = options.clock ?? new SystemClock();
@@ -619,6 +653,7 @@ export async function createPostgresOrchestratorStack(options: {
   });
   planning.bindPrecedentRetriever(memory.getRetriever());
 
+  const healthSnapshots = new PostgresSystemHealthSnapshotRepository(db);
   const observability = new ObservabilityService({
     sources: {
       runs,
@@ -651,7 +686,7 @@ export async function createPostgresOrchestratorStack(options: {
     identities: new UuidObservabilityIdentityGenerator(),
     runTelemetry: new PostgresRunTelemetryRepository(db),
     phaseTelemetry: new PostgresPhaseTelemetryRepository(db),
-    snapshots: new PostgresSystemHealthSnapshotRepository(db),
+    snapshots: healthSnapshots,
     sloEvaluations: new PostgresSLOEvaluationRepository(db),
     anomalies: new PostgresAnomalyFindingRepository(db),
     optimizationCandidates: new PostgresOptimizationCandidateRepository(db),
@@ -666,6 +701,61 @@ export async function createPostgresOrchestratorStack(options: {
     validationUsage,
     verificationInference,
   );
+
+  const schedulerWorkItems = new PostgresSchedulerWorkItemRepository(db);
+  const schedulerDependencies = new PostgresSchedulerDependencyRepository(db);
+  const schedulerDecisions = new PostgresSchedulerDecisionRepository(db);
+  const schedulerProjectConfigs = new PostgresSchedulerProjectConfigRepository(
+    db,
+  );
+  const schedulerPauses = new PostgresSchedulerPauseRepository(db);
+  const schedulerFairness = new PostgresSchedulerFairnessRepository(db);
+  const schedulerArtifacts = new StackRunArtifactProbe({
+    contexts,
+    plans,
+    validationDecisions,
+    authorizationRecords,
+    executionAttempts,
+    completions: completionRecords,
+    learningLedger,
+    healthSnapshots,
+  });
+  const scheduler = new PortfolioSchedulerService({
+    runs,
+    workItems: schedulerWorkItems,
+    dependencies: schedulerDependencies,
+    decisions: schedulerDecisions,
+    projectConfigs: schedulerProjectConfigs,
+    pauses: schedulerPauses,
+    fairness: schedulerFairness,
+    artifacts: schedulerArtifacts,
+    leases,
+    nowIso: () => clock.nowIso(),
+    globalMaxConcurrency: options.schedulerGlobalMaxConcurrency ?? 16,
+    runtimeId: instanceId,
+  });
+  const schedulerPorts = createPhaseDispatchPorts({
+    runs,
+    artifacts: schedulerArtifacts,
+    ingestion,
+    planning,
+    validation,
+    authorizationRouting,
+    execution,
+    verification,
+    memory,
+    observability,
+    planningReadiness,
+    validationReadiness,
+    authorizationReadiness,
+    executionReadiness,
+    verificationReadiness,
+    defaultEnvironment:
+      options.defaultEnvironment ??
+      EXAMPLE_PROJECT.allowedEnvironments[0] ??
+      "local",
+  });
+  const schedulerDispatcher = new SchedulerDispatcher(scheduler, schedulerPorts);
 
   return {
     storageMode: "postgres",
@@ -705,6 +795,22 @@ export async function createPostgresOrchestratorStack(options: {
     stepExecutions,
     authorizationRecords,
     approvalRequests,
+    scheduler,
+    schedulerWorkItems,
+    schedulerDependencies,
+    schedulerDecisions,
+    schedulerProjectConfigs,
+    schedulerPauses,
+    schedulerFairness,
+    schedulerArtifacts,
+    schedulerPorts,
+    schedulerDispatcher,
+    listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
+      runs.listActionableDiscoverableRunIds(
+        DISCOVERABLE_RUN_STATES,
+        limit,
+        projectIds,
+      ),
     dataRoot,
     close: async () => {
       await db.close();

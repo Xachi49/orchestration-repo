@@ -202,4 +202,15 @@ export class PostgresLeaseStore {
       );
     }
   }
+
+  async isLiveHeld(coordinationKey: string): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok FROM coordinator_leases
+       WHERE coordination_key = $1
+         AND status = 'HELD'
+         AND lease_expires_at >= NOW()`,
+      [coordinationKey],
+    );
+    return result.rows.length > 0;
+  }
 }

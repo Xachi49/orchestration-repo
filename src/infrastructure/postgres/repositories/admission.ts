@@ -208,6 +208,224 @@ export class PostgresRunRepository implements RunRepository {
     return updated;
   }
 
+  async listByStates(
+    states: readonly RunState[],
+    limit: number,
+  ): Promise<readonly RunRecord[]> {
+    if (states.length === 0 || limit <= 0) {
+      return [];
+    }
+    const result = await this.db.query<{
+      payload: unknown;
+      record_revision: string | number;
+    }>(
+      `SELECT payload, record_revision FROM runs
+       WHERE state = ANY($1::text[])
+       ORDER BY updated_at ASC, run_id ASC
+       LIMIT $2`,
+      [[...states], limit],
+    );
+    return result.rows.map((row) => mapRunRow(row));
+  }
+
+  async listIdsByStates(
+    states: readonly RunState[],
+    limit: number,
+  ): Promise<readonly string[]> {
+    if (states.length === 0 || limit <= 0) {
+      return [];
+    }
+    const result = await this.db.query<{ run_id: string }>(
+      `SELECT run_id FROM runs
+       WHERE state = ANY($1::text[])
+       ORDER BY updated_at ASC, run_id ASC
+       LIMIT $2`,
+      [[...states], limit],
+    );
+    return result.rows.map((row) => row.run_id);
+  }
+
+  /**
+   * Bounded discovery candidates: discoverable Runs whose current-phase
+   * scheduler work is not yet durably represented. Oldest-actionable-first so
+   * continuous admission cannot starve older missing-work Runs.
+   *
+   * Already-materialized work (any status) is excluded — retries belong to the
+   * work-item lifecycle, not rediscovery rematerialization.
+   *
+   * Optional `projectIds` scopes the page (tests / focused workers). Production
+   * discovery typically omits it.
+   */
+  async listActionableDiscoverableRunIds(
+    states: readonly RunState[],
+    limit: number,
+    projectIds?: readonly string[],
+  ): Promise<readonly string[]> {
+    if (states.length === 0 || limit <= 0) {
+      return [];
+    }
+    const projectFilter =
+      projectIds && projectIds.length > 0
+        ? `AND r.project_id = ANY($3::text[])`
+        : "";
+    const params: unknown[] = [[...states], limit];
+    if (projectIds && projectIds.length > 0) {
+      params.push([...projectIds]);
+    }
+    const result = await this.db.query<{ run_id: string }>(
+      `SELECT r.run_id
+       FROM runs r
+       WHERE r.state = ANY($1::text[])
+         ${projectFilter}
+         AND (r.payload->>'updatedAt') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+         AND (
+           (
+             r.state = 'ADMITTED'
+             AND NOT EXISTS (
+               SELECT 1 FROM scheduler_work_items w
+               WHERE w.run_id = r.run_id AND w.work_kind = 'INGEST_REPOSITORY'
+             )
+           )
+           OR (
+             r.state = 'INGESTING'
+             AND EXISTS (
+               SELECT 1 FROM json_documents d
+               WHERE d.collection = 'verified_contexts'
+                 AND d.run_id = r.run_id
+                 AND d.payload->>'status' = 'VERIFIED'
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM scheduler_work_items w
+               WHERE w.run_id = r.run_id AND w.work_kind = 'PLAN_RUN'
+             )
+           )
+           OR (
+             r.state = 'VALIDATING'
+             AND (
+               (
+                 EXISTS (
+                   SELECT 1 FROM json_documents p
+                   WHERE p.collection = 'plans'
+                     AND p.run_id = r.run_id
+                     AND COALESCE(p.payload->>'status', '') <> 'SUPERSEDED'
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM json_documents v
+                   WHERE v.collection = 'validation_decisions'
+                     AND v.run_id = r.run_id
+                     AND v.payload->>'decision' IN (
+                       'PASS', 'HUMAN_APPROVAL_REQUIRED'
+                     )
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM scheduler_work_items w
+                   WHERE w.run_id = r.run_id AND w.work_kind = 'VALIDATE_PLAN'
+                 )
+               )
+               OR (
+                 EXISTS (
+                   SELECT 1 FROM json_documents v
+                   WHERE v.collection = 'validation_decisions'
+                     AND v.run_id = r.run_id
+                     AND v.payload->>'decision' IN (
+                       'PASS', 'HUMAN_APPROVAL_REQUIRED'
+                     )
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM scheduler_work_items w
+                   WHERE w.run_id = r.run_id
+                     AND w.work_kind = 'ROUTE_AUTHORIZATION'
+                 )
+               )
+             )
+           )
+           OR (
+             r.state = 'REVISING'
+             AND (
+               (
+                 NOT EXISTS (
+                   SELECT 1 FROM json_documents p
+                   WHERE p.collection = 'plans'
+                     AND p.run_id = r.run_id
+                     AND COALESCE(p.payload->>'status', '') <> 'SUPERSEDED'
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM scheduler_work_items w
+                   WHERE w.run_id = r.run_id AND w.work_kind = 'PLAN_RUN'
+                 )
+               )
+               OR (
+                 EXISTS (
+                   SELECT 1 FROM json_documents p
+                   WHERE p.collection = 'plans'
+                     AND p.run_id = r.run_id
+                     AND COALESCE(p.payload->>'status', '') <> 'SUPERSEDED'
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM scheduler_work_items w
+                   WHERE w.run_id = r.run_id AND w.work_kind = 'VALIDATE_PLAN'
+                 )
+               )
+             )
+           )
+           OR (
+             r.state = 'APPROVED'
+             AND NOT EXISTS (
+               SELECT 1 FROM scheduler_work_items w
+               WHERE w.run_id = r.run_id AND w.work_kind = 'EXECUTE_PLAN'
+             )
+           )
+           OR (
+             r.state = 'EXECUTING'
+             AND EXISTS (
+               SELECT 1 FROM json_documents e
+               WHERE e.collection = 'execution_attempts'
+                 AND e.run_id = r.run_id
+                 AND e.payload->>'status' IN (
+                   'SUCCEEDED', 'FAILED', 'PARTIAL', 'CONTAINED'
+                 )
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM scheduler_work_items w
+               WHERE w.run_id = r.run_id AND w.work_kind = 'VERIFY_OUTCOME'
+             )
+           )
+           OR (
+             r.state = 'COMPLETED'
+             AND (
+               (
+                 NOT EXISTS (
+                   SELECT 1 FROM json_documents l
+                   WHERE l.collection = 'learning_ledger'
+                     AND l.run_id = r.run_id
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM scheduler_work_items w
+                   WHERE w.run_id = r.run_id AND w.work_kind = 'LEARN_FROM_RUN'
+                 )
+               )
+               OR (
+                 NOT EXISTS (
+                   SELECT 1 FROM json_documents h
+                   WHERE h.collection = 'health_snapshots'
+                     AND h.project_id = r.project_id
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM scheduler_work_items w
+                   WHERE w.run_id = r.run_id
+                     AND w.work_kind = 'BUILD_OBSERVABILITY'
+                 )
+               )
+             )
+           )
+         )
+       ORDER BY r.updated_at ASC, r.run_id ASC
+       LIMIT $2`,
+      params,
+    );
+    return result.rows.map((row) => row.run_id);
+  }
+
   async transitionInProject(
     runId: string,
     projectId: string,

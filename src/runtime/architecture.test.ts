@@ -21,6 +21,33 @@ describe("Phase 12 architecture constraints", () => {
   });
 });
 
+describe("Phase 13 scheduling constraints", () => {
+  it("scheduling module does not import model providers", () => {
+    const files = collectTs("src/scheduling");
+    for (const file of files) {
+      if (file.endsWith(".test.ts")) {
+        continue;
+      }
+      const body = readFileSync(file, "utf8");
+      expect(body).not.toMatch(/from ["'].*openai/);
+      expect(body).not.toMatch(/from ["'].*anthropic/);
+      expect(body).not.toMatch(/PlanningModel/);
+      expect(body).not.toMatch(/InferencePort/);
+    }
+  });
+
+  it("documents scheduling authority boundary", () => {
+    const body = readFileSync(
+      "docs/scheduling-authority-boundary.md",
+      "utf8",
+    );
+    expect(body).toContain("ELIGIBLE");
+    expect(body).toContain("AUTHORIZED");
+    expect(body).toContain("AUTONOMOUS APPROVAL");
+    expect(body).toContain("Forbidden");
+  });
+});
+
 function collectTs(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

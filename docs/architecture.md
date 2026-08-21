@@ -1576,4 +1576,21 @@ domain → application → infrastructure → runtime/bootstrap
 Domain must not import runtime. PostgreSQL remains the system of record.
 `PRODUCTION` cannot use `MEMORY` storage or anonymous mutation HTTP.
 
+## Phase 13 — Portfolio orchestration & distributed scheduling
+
+See [docs/phase-13-portfolio-orchestration.md](phase-13-portfolio-orchestration.md),
+[docs/scheduler-runtime.md](scheduler-runtime.md), and
+[docs/scheduling-authority-boundary.md](scheduling-authority-boundary.md).
+
+```text
+PLANNER → VALIDATOR → APPROVER → EXECUTOR → VERIFIER → MEMORY
+                         ↑
+              SCHEDULER coordinates WHEN eligible
+              work may compete — never WHETHER
+              it is authorized.
+```
+
+**SCHEDULING ≠ AUTHORITY.** Durable work items, fair claiming, and cross-run
+dependencies are operational. Human approval, verification, and memory trust
+remain with their existing services.
 

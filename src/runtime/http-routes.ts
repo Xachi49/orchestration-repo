@@ -51,6 +51,11 @@ export function extractRunIdFromUrl(url: string): string | undefined {
   return match?.[1];
 }
 
+export function extractWorkItemIdFromUrl(url: string): string | undefined {
+  const match = /\/v1\/work-items\/([^/]+)/.exec(url.split("?")[0] ?? url);
+  return match?.[1];
+}
+
 export function extractApprovalRequestIdFromUrl(url: string): string | undefined {
   const match = /\/v1\/approval-requests\/([^/]+)(?:\/|$)/.exec(
     url.split("?")[0] ?? url,

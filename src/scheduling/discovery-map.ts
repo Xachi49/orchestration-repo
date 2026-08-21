@@ -1,0 +1,148 @@
+import type { RunState } from "../domain/run/run-state.js";
+import { isTerminalRunState } from "../domain/run/run-state.js";
+import type { SchedulerWorkKind } from "./work-kind.js";
+
+/**
+ * Deterministic mapping from durable Run state (+ known artifacts) to
+ * candidate next work kinds. Does not invent illegal transitions.
+ *
+ * HUMAN APPROVAL BARRIER: AWAITING_APPROVAL yields no EXECUTE_PLAN and no
+ * autonomous approval. ROUTE_AUTHORIZATION only creates the approval request.
+ */
+export interface DiscoveryContext {
+  runState: RunState;
+  hasVerifiedRepository?: boolean;
+  hasPlan?: boolean;
+  hasValidationPassOrApprovalRequired?: boolean;
+  hasAuthorizationRecord?: boolean;
+  hasExecutionTerminalForVerification?: boolean;
+  hasCompletionRecord?: boolean;
+  hasLearned?: boolean;
+  hasObservabilitySnapshot?: boolean;
+}
+
+/**
+ * Run states from which `candidateWorkKinds` can yield work. Discovery scans
+ * only these, so polling stays bounded and terminal or in-flight runs are never
+ * re-examined. AWAITING_APPROVAL is absent: waiting on a human yields no work.
+ */
+export const DISCOVERABLE_RUN_STATES = [
+  "ADMITTED",
+  "INGESTING",
+  "VALIDATING",
+  "REVISING",
+  "APPROVED",
+  "EXECUTING",
+  "COMPLETED",
+] as const satisfies readonly RunState[];
+
+export function candidateWorkKinds(
+  context: DiscoveryContext,
+): readonly SchedulerWorkKind[] {
+  const { runState } = context;
+  // Terminal states yield no work. COMPLETED is the sole exception: learning
+  // and observability still run after a run finishes.
+  if (isTerminalRunState(runState) && runState !== "COMPLETED") {
+    return [];
+  }
+  // Non-terminal states awaiting human or recovery action. CONTAINED is
+  // terminal and already excluded above.
+  if (
+    runState === "BLOCKED" ||
+    runState === "ESCALATED" ||
+    runState === "ROLLBACK_REQUIRED"
+  ) {
+    return [];
+  }
+
+  switch (runState) {
+    case "ADMITTED":
+      return ["INGEST_REPOSITORY"];
+    case "INGESTING":
+      return context.hasVerifiedRepository ? ["PLAN_RUN"] : [];
+    case "PLANNING":
+      // In-flight planning; coordinator owns progress.
+      return [];
+    case "VALIDATING":
+      if (!context.hasValidationPassOrApprovalRequired) {
+        return context.hasPlan ? ["VALIDATE_PLAN"] : [];
+      }
+      // Validation terminal (PASS / HUMAN_APPROVAL_REQUIRED) → route to human gate.
+      // Not approval — creates ApprovalRequest and AWAITING_APPROVAL only.
+      return ["ROUTE_AUTHORIZATION"];
+    case "REVISING":
+      return context.hasPlan ? ["VALIDATE_PLAN"] : ["PLAN_RUN"];
+    case "AWAITING_APPROVAL":
+      // CRITICAL: no autonomous execution / approval work.
+      return [];
+    case "APPROVED":
+      return ["EXECUTE_PLAN"];
+    case "EXECUTING":
+      return context.hasExecutionTerminalForVerification
+        ? ["VERIFY_OUTCOME"]
+        : [];
+    case "VERIFYING":
+      // In-flight verification.
+      return [];
+    case "COMPLETED": {
+      const kinds: SchedulerWorkKind[] = [];
+      if (!context.hasLearned) {
+        kinds.push("LEARN_FROM_RUN");
+      }
+      if (!context.hasObservabilitySnapshot) {
+        kinds.push("BUILD_OBSERVABILITY");
+      }
+      return kinds;
+    }
+    case "RECEIVED":
+      // Not yet admitted; admission owns the next move.
+      return [];
+    default: {
+      // Terminal states are excluded above; any remaining state is a new
+      // non-terminal state that must be mapped explicitly.
+      const _exhaustive: never = runState;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Binding hash for a work kind given known durable fingerprints.
+ * Stale work is rejected when live binding differs.
+ */
+export function bindingHashForWorkKind(
+  kind: SchedulerWorkKind,
+  fingerprints: {
+    repositoryFingerprint?: string;
+    planVersion?: number;
+    planHash?: string;
+    authorizationRecordId?: string;
+    validationDecisionId?: string;
+    executionAttemptId?: string;
+    completionRecordId?: string;
+    runId: string;
+  },
+): string {
+  switch (kind) {
+    case "INGEST_REPOSITORY":
+      return `ingest:${fingerprints.runId}`;
+    case "PLAN_RUN":
+      return `plan:${fingerprints.repositoryFingerprint ?? "none"}`;
+    case "VALIDATE_PLAN":
+      return `validate:${fingerprints.planVersion ?? 0}:${fingerprints.planHash ?? "none"}`;
+    case "ROUTE_AUTHORIZATION":
+      return `route:${fingerprints.validationDecisionId ?? "none"}:${fingerprints.planHash ?? "none"}`;
+    case "EXECUTE_PLAN":
+      return `execute:${fingerprints.authorizationRecordId ?? "none"}:${fingerprints.planHash ?? "none"}`;
+    case "VERIFY_OUTCOME":
+      return `verify:${fingerprints.executionAttemptId ?? "none"}`;
+    case "LEARN_FROM_RUN":
+      return `learn:${fingerprints.completionRecordId ?? "none"}`;
+    case "BUILD_OBSERVABILITY":
+      return `observe:${fingerprints.runId}:${fingerprints.completionRecordId ?? "none"}`;
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
+}

@@ -15,6 +15,11 @@ import type { BootstrapResult } from "../infrastructure/bootstrap.js";
 import { buildServer } from "../api/server.js";
 import { PostgresHealthService } from "../infrastructure/postgres/health.js";
 import type { PostgresOrchestratorStack } from "../infrastructure/postgres/stack.js";
+import {
+  SchedulerClaimLoop,
+  SchedulerDiscoveryLoop,
+  SchedulerDispatcher,
+} from "../scheduling/index.js";
 
 export interface OrchestratorRuntime {
   config: RuntimeConfig;
@@ -127,9 +132,14 @@ export function createOrchestratorRuntime(
             verificationReadiness: boot.stack.verificationReadiness,
             memory: boot.stack.memory,
             observability: boot.stack.observability,
+            ...(postgres
+              ? {
+                  scheduler: postgres.scheduler,
+                  runs: postgres.runs,
+                }
+              : {}),
             storageMode: boot.storageMode,
             ...(boot.health ? { readiness: boot.health } : {}),
-            ...(postgres ? { runs: postgres.runs } : {}),
             perimeter: {
               authenticator,
               access,
@@ -142,6 +152,7 @@ export function createOrchestratorRuntime(
                 ? {
                     runs: postgres.runs,
                     approvalRequests: postgres.approvalRequests,
+                    workItems: postgres.schedulerWorkItems,
                     databaseAvailable: () => postgres.db.ping(),
                   }
                 : {}),
@@ -183,6 +194,34 @@ export function createOrchestratorRuntime(
         }
 
         if (config.runtimeRole !== "API" && postgres) {
+          const discovery = new SchedulerDiscoveryLoop({
+            scheduler: postgres.scheduler,
+            createDispatcher: (writer) =>
+              new SchedulerDispatcher(writer, postgres.schedulerPorts),
+            leases: postgres.leases,
+            listDiscoverableRunIds: postgres.listDiscoverableRunIds,
+            databaseReachable: () => postgres.db.ping(),
+            isAccepting: () => drain.isAcceptingWork(),
+            runtimeId: postgres.instanceId,
+            workerCapabilities: ["ALL"],
+            discoveryBatchSize: Math.min(50, config.workerConcurrency * 10),
+            claimBatchSize: config.workerConcurrency,
+            onMetric: (name, delta = 1) => metrics.increment(name, delta),
+          });
+          const claim = new SchedulerClaimLoop({
+            scheduler: postgres.scheduler,
+            createDispatcher: (writer) =>
+              new SchedulerDispatcher(writer, postgres.schedulerPorts),
+            leases: postgres.leases,
+            listDiscoverableRunIds: postgres.listDiscoverableRunIds,
+            databaseReachable: () => postgres.db.ping(),
+            isAccepting: () => drain.isAcceptingWork(),
+            runtimeId: postgres.instanceId,
+            workerCapabilities: ["ALL"],
+            discoveryBatchSize: Math.min(50, config.workerConcurrency * 10),
+            claimBatchSize: config.workerConcurrency,
+            onMetric: (name, delta = 1) => metrics.increment(name, delta),
+          });
           worker = new BoundedWorkerLoop({
             concurrency: config.workerConcurrency,
             pollIntervalMs: config.pollIntervalMs,
@@ -204,6 +243,18 @@ export function createOrchestratorRuntime(
                   if (result.failed > 0) {
                     metrics.increment("outbox_retries", result.failed);
                   }
+                },
+              },
+              {
+                name: "scheduler-discovery",
+                run: async () => {
+                  await discovery.tick();
+                },
+              },
+              {
+                name: "scheduler-claim",
+                run: async () => {
+                  await claim.tick();
                 },
               },
             ],

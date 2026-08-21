@@ -184,7 +184,7 @@ async function fullApi(
           storageMode: "postgres" as const,
           databaseReachable: true,
           schemaCompatible: true,
-          supportedSchemaVersion: "003_phase11_final",
+          supportedSchemaVersion: "007_phase13_actionable_discovery",
         })),
     },
   });
@@ -405,7 +405,7 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             storageMode: "postgres",
             databaseReachable: true,
             schemaCompatible: true,
-            supportedSchemaVersion: "003_phase11_final",
+            supportedSchemaVersion: "007_phase13_actionable_discovery",
           }),
         },
       });
@@ -677,7 +677,7 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             storageMode: "postgres",
             databaseReachable: reachable,
             schemaCompatible: reachable,
-            supportedSchemaVersion: "003_phase11_final",
+            supportedSchemaVersion: "007_phase13_actionable_discovery",
           }),
         },
       );
@@ -905,7 +905,7 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             storageMode: "postgres",
             databaseReachable: true,
             schemaCompatible: true,
-            supportedSchemaVersion: "003_phase11_final",
+            supportedSchemaVersion: "007_phase13_actionable_discovery",
           }),
         },
       });

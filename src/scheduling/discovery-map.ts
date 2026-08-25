@@ -140,6 +140,14 @@ export function bindingHashForWorkKind(
       return `learn:${fingerprints.completionRecordId ?? "none"}`;
     case "BUILD_OBSERVABILITY":
       return `observe:${fingerprints.runId}:${fingerprints.completionRecordId ?? "none"}`;
+    case "DECOMPOSE_PROGRAM":
+    case "VALIDATE_PROGRAM":
+    case "ROUTE_PROGRAM_MATERIALIZATION":
+    case "MATERIALIZE_PROGRAM":
+    case "RECONCILE_PROGRAM":
+    case "VERIFY_PROGRAM":
+      // Program work uses programWorkBindingHash; this path is fail-closed.
+      return `program_misbound:${kind}:${fingerprints.runId}`;
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

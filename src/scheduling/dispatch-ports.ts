@@ -11,6 +11,9 @@ import type { PhaseDispatchPorts } from "./dispatcher.js";
 import type { RunArtifactProbe } from "./service.js";
 import type { SchedulerWorkItem } from "./work-item.js";
 import type { SchedulerWorkKind } from "./work-kind.js";
+import { isProgramSchedulerWorkKind } from "./work-kind.js";
+import type { ProgramOrchestrationService } from "../programs/service.js";
+import type { ProgramRepository } from "../programs/repositories.js";
 
 /**
  * Readiness gate exposed by each phase. Scheduling never substitutes for it:
@@ -60,6 +63,9 @@ export interface PhaseDispatchPortsDeps {
   verificationReadiness: PhaseReadinessProbe;
   defaultEnvironment: string;
   observabilityWindow?: { kind: MetricWindowKind; lastN?: number };
+  /** Phase 14 program progression ports (optional until wired). */
+  programs?: ProgramRepository;
+  programService?: ProgramOrchestrationService;
 }
 
 const DEFAULT_OBSERVABILITY_WINDOW: { kind: MetricWindowKind; lastN: number } =
@@ -87,6 +93,13 @@ function bindingDriftReasonCode(kind: SchedulerWorkKind): string {
       return "COMPLETION_RECORD_CHANGED";
     case "BUILD_OBSERVABILITY":
       return "OBSERVABILITY_BINDING_CHANGED";
+    case "DECOMPOSE_PROGRAM":
+    case "VALIDATE_PROGRAM":
+    case "ROUTE_PROGRAM_MATERIALIZATION":
+    case "MATERIALIZE_PROGRAM":
+    case "RECONCILE_PROGRAM":
+    case "VERIFY_PROGRAM":
+      return "PROGRAM_BINDING_CHANGED";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -122,6 +135,12 @@ export function createPhaseDispatchPorts(
       case "INGEST_REPOSITORY":
       case "LEARN_FROM_RUN":
       case "BUILD_OBSERVABILITY":
+      case "DECOMPOSE_PROGRAM":
+      case "VALIDATE_PROGRAM":
+      case "ROUTE_PROGRAM_MATERIALIZATION":
+      case "MATERIALIZE_PROGRAM":
+      case "RECONCILE_PROGRAM":
+      case "VERIFY_PROGRAM":
         // These phases own their own entry checks; no separate readiness port.
         return null;
       default: {
@@ -194,7 +213,96 @@ export function createPhaseDispatchPorts(
       return { resultRef: result.healthSnapshotId };
     },
 
+    async decomposeProgram(programId) {
+      if (!deps.programService) {
+        throw new Error("Program service not configured");
+      }
+      const result = await deps.programService.decompose(programId);
+      return {
+        resultRef: result.plan?.programPlanHash ?? result.program.status,
+      };
+    },
+
+    async validateProgram(programId) {
+      if (!deps.programService) {
+        throw new Error("Program service not configured");
+      }
+      const result = await deps.programService.validate(programId);
+      return { resultRef: result.program.status };
+    },
+
+    async routeProgramMaterialization(programId) {
+      if (!deps.programService) {
+        throw new Error("Program service not configured");
+      }
+      const result =
+        await deps.programService.routeMaterializationApproval(programId);
+      return { resultRef: result.approval.approvalId };
+    },
+
+    async materializeProgram(programId) {
+      if (!deps.programService) {
+        throw new Error("Program service not configured");
+      }
+      const result = await deps.programService.materializeNext(programId);
+      return { resultRef: result.program.status };
+    },
+
+    async reconcileProgram(programId) {
+      if (!deps.programService) {
+        throw new Error("Program service not configured");
+      }
+      const result = await deps.programService.reconcile(programId);
+      return {
+        resultRef: `${result.requiredComplete}/${result.requiredTotal}`,
+      };
+    },
+
+    async verifyProgram(programId) {
+      if (!deps.programService) {
+        throw new Error("Program service not configured");
+      }
+      const result = await deps.programService.verify(programId);
+      return { resultRef: result.outcome };
+    },
+
     async assertDispatchReady(work: SchedulerWorkItem) {
+      if (isProgramSchedulerWorkKind(work.workKind)) {
+        if (!deps.programs) {
+          return {
+            ok: false as const,
+            reasonCode: "PROGRAM_SERVICE_MISSING",
+            message: "Program repository not configured for dispatch",
+          };
+        }
+        const program = await deps.programs.getById(work.runId);
+        if (!program) {
+          return {
+            ok: false as const,
+            reasonCode: "PROGRAM_NOT_FOUND",
+            message: `Program ${work.runId} no longer exists`,
+          };
+        }
+        if (program.projectId !== work.projectId) {
+          return {
+            ok: false as const,
+            reasonCode: "PROGRAM_PROJECT_MISMATCH",
+            message: `Program ${work.runId} belongs to a different project`,
+          };
+        }
+        if (
+          work.workKind === "MATERIALIZE_PROGRAM" &&
+          program.status === "AWAITING_MATERIALIZATION_APPROVAL"
+        ) {
+          return {
+            ok: false as const,
+            reasonCode: "AWAITING_PROGRAM_MATERIALIZATION_APPROVAL",
+            message: `Program ${work.runId} awaits materialization approval`,
+          };
+        }
+        return { ok: true as const };
+      }
+
       const run = await deps.runs.getById(work.runId);
       if (!run) {
         return {

@@ -16,7 +16,7 @@ import type { PostgresDatabase } from "../database.js";
 
 export interface AuthorityGrantSeed {
   principalId: string;
-  principalType: "REQUESTER" | "APPROVER";
+  principalType: "REQUESTER" | "APPROVER" | "PROGRAM_MATERIALIZER";
   projectId: string;
   environments: readonly string[];
 }
@@ -63,6 +63,22 @@ export class PostgresAuthorityDirectory {
     );
     const row = result.rows[0];
     return row?.authorized_environments ?? [];
+  }
+
+  async isProgramMaterializerEnabled(
+    principalId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM authority_grants
+       WHERE principal_id = $1
+         AND principal_type = 'PROGRAM_MATERIALIZER'
+         AND project_id = $2
+         AND enabled = TRUE`,
+      [principalId, projectId],
+    );
+    return result.rows.length > 0;
   }
 
   async isApproverEnabled(
@@ -199,6 +215,14 @@ export function buildAuthoritySeeds(input: {
     seeds.push({
       principalId: approverId,
       principalType: "APPROVER",
+      projectId: input.projectId,
+      environments: input.environments,
+    });
+    // Distinct durable role: must be granted explicitly (seeded alongside
+    // for bootstrap fixtures; production may separate the principals).
+    seeds.push({
+      principalId: approverId,
+      principalType: "PROGRAM_MATERIALIZER",
       projectId: input.projectId,
       environments: input.environments,
     });

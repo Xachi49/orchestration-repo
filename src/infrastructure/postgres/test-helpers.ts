@@ -39,6 +39,8 @@ export async function createTestStack(
   instanceId: string,
   opts?: {
     completionFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["completionFailpoint"];
+    programCompletionFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["programCompletionFailpoint"];
+    programMaterializationFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["programMaterializationFailpoint"];
     promotionFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["promotionFailpoint"];
     schedulerGlobalMaxConcurrency?: number;
   },
@@ -53,6 +55,14 @@ export async function createTestStack(
     seedControlPlane: true,
     ...(opts?.completionFailpoint !== undefined
       ? { completionFailpoint: opts.completionFailpoint }
+      : {}),
+    ...(opts?.programCompletionFailpoint !== undefined
+      ? { programCompletionFailpoint: opts.programCompletionFailpoint }
+      : {}),
+    ...(opts?.programMaterializationFailpoint !== undefined
+      ? {
+          programMaterializationFailpoint: opts.programMaterializationFailpoint,
+        }
       : {}),
     ...(opts?.promotionFailpoint !== undefined
       ? { promotionFailpoint: opts.promotionFailpoint }

@@ -171,6 +171,22 @@ import {
   type PhaseDispatchPorts,
   type RunArtifactProbe,
 } from "../../scheduling/index.js";
+import {
+  FakeProgramDecompositionModel,
+  ProgramOrchestrationService,
+  ProgramWorkMaterializer,
+} from "../../programs/index.js";
+import { ProgramProgressionLoop } from "../../programs/loops.js";
+import {
+  PostgresProgramRepository,
+  PostgresProgramPlanRepository,
+  PostgresProgramBudgetLedgerRepository,
+  PostgresProgramBudgetReservationRepository,
+  PostgresProgramLineageRepository,
+  PostgresProgramMaterializationApprovalRepository,
+  PostgresProgramCompletionRepository,
+} from "./repositories/programs.js";
+import { CryptoDecisionNonceGenerator } from "../../authorization/decision-nonce.js";
 
 export interface PostgresOrchestratorStack {
   storageMode: "postgres";
@@ -220,6 +236,16 @@ export interface PostgresOrchestratorStack {
   schedulerArtifacts: RunArtifactProbe;
   schedulerPorts: PhaseDispatchPorts;
   schedulerDispatcher: SchedulerDispatcher;
+  programs: PostgresProgramRepository;
+  programPlans: PostgresProgramPlanRepository;
+  programLineage: import("../../programs/repositories.js").ProgramLineageRepository;
+  programCompletions: import("../../programs/repositories.js").ProgramCompletionRepository;
+  runCompletions: import("../../verification/completion-repository.js").CompletionRecordRepository;
+  outcomeVerifications: import("../../verification/outcome-repository.js").OutcomeVerificationRepository;
+  repositorySources: PostgresRepositorySourceRegistry;
+  programService: ProgramOrchestrationService;
+  programProgression: ProgramProgressionLoop;
+  programWorkMaterializer: ProgramWorkMaterializer;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -236,6 +262,8 @@ export async function createPostgresOrchestratorStack(options: {
   seedControlPlane?: boolean;
   dataRoot?: string;
   completionFailpoint?: import("../../verification/service.js").VerificationCompletionFailpoint;
+  programCompletionFailpoint?: import("../../programs/service.js").ProgramCompletionFailpoint;
+  programMaterializationFailpoint?: import("../../programs/service.js").ProgramMaterializationFailpoint;
   promotionFailpoint?: import("../../memory/promotion.js").PromotionFailpoint;
   schedulerGlobalMaxConcurrency?: number;
   defaultEnvironment?: string;
@@ -734,6 +762,79 @@ export async function createPostgresOrchestratorStack(options: {
     globalMaxConcurrency: options.schedulerGlobalMaxConcurrency ?? 16,
     runtimeId: instanceId,
   });
+
+  const programRepos = new PostgresProgramRepository(db);
+  const programPlans = new PostgresProgramPlanRepository(db);
+  const programBudgets = new PostgresProgramBudgetLedgerRepository(db);
+  const programReservations = new PostgresProgramBudgetReservationRepository(db);
+  const programLineage = new PostgresProgramLineageRepository(db);
+  const programMaterializationApprovals =
+    new PostgresProgramMaterializationApprovalRepository(db);
+  const programCompletions = new PostgresProgramCompletionRepository(db);
+  const materializationNonceStore = {
+    map: new Map<string, string>(),
+    async put(id: string, plaintext: string) {
+      this.map.set(id, plaintext);
+    },
+    async take(id: string) {
+      const v = this.map.get(id) ?? null;
+      this.map.delete(id);
+      return v;
+    },
+  };
+  const programService = new ProgramOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    programs: programRepos,
+    plans: programPlans,
+    budgets: programBudgets,
+    reservations: programReservations,
+    lineage: programLineage,
+    materializationApprovals: programMaterializationApprovals,
+    completions: programCompletions,
+    controlPlane,
+    decompositionModel: new FakeProgramDecompositionModel(),
+    nonceGenerator: new CryptoDecisionNonceGenerator(),
+    materializationNonceStore,
+    isProgramMaterializer: (principalId, projectId) =>
+      authorityDirectory.isProgramMaterializerEnabled(principalId, projectId),
+    objectiveAdmission: admission,
+    runs,
+    runCompletions: completionRecords,
+    outcomeVerifications,
+    scheduler,
+    transactions,
+    authorizedRepositoryIdentities: async (projectId) => {
+      const source = await sources.getByProjectId(projectId);
+      if (!source || !source.enabled) {
+        return [];
+      }
+      return [
+        `${source.owner}/${source.repository}`,
+        `github:${source.owner}/${source.repository}`,
+        source.remoteUrl,
+      ];
+    },
+    ...(options.programCompletionFailpoint !== undefined
+      ? { completionFailpoint: options.programCompletionFailpoint }
+      : {}),
+    ...(options.programMaterializationFailpoint !== undefined
+      ? { materializationFailpoint: options.programMaterializationFailpoint }
+      : {}),
+  });
+  const programWorkMaterializer = new ProgramWorkMaterializer({
+    nowIso: () => clock.nowIso(),
+    programs: programRepos,
+    plans: programPlans,
+    materializationApprovals: programMaterializationApprovals,
+    workItems: schedulerWorkItems,
+    projectConfigs: schedulerProjectConfigs,
+  });
+  const programProgression = new ProgramProgressionLoop({
+    programs: programRepos,
+    materializer: programWorkMaterializer,
+    databaseReachable: () => db.ping(),
+  });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -754,6 +855,8 @@ export async function createPostgresOrchestratorStack(options: {
       options.defaultEnvironment ??
       EXAMPLE_PROJECT.allowedEnvironments[0] ??
       "local",
+    programs: programRepos,
+    programService,
   });
   const schedulerDispatcher = new SchedulerDispatcher(scheduler, schedulerPorts);
 
@@ -805,6 +908,16 @@ export async function createPostgresOrchestratorStack(options: {
     schedulerArtifacts,
     schedulerPorts,
     schedulerDispatcher,
+    programs: programRepos,
+    programPlans,
+    programLineage,
+    programCompletions,
+    runCompletions: completionRecords,
+    outcomeVerifications,
+    repositorySources: sources,
+    programService,
+    programProgression,
+    programWorkMaterializer,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

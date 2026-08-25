@@ -44,6 +44,14 @@ export interface PhaseDispatchPorts {
   rebuildObservability: (
     projectId: string,
   ) => Promise<{ resultRef?: string }>;
+  decomposeProgram: (programId: string) => Promise<{ resultRef?: string }>;
+  validateProgram: (programId: string) => Promise<{ resultRef?: string }>;
+  routeProgramMaterialization: (
+    programId: string,
+  ) => Promise<{ resultRef?: string }>;
+  materializeProgram: (programId: string) => Promise<{ resultRef?: string }>;
+  reconcileProgram: (programId: string) => Promise<{ resultRef?: string }>;
+  verifyProgram: (programId: string) => Promise<{ resultRef?: string }>;
   /**
    * Pre-dispatch readiness / binding recheck. Must fail closed on drift.
    */
@@ -127,6 +135,18 @@ export class SchedulerDispatcher {
         return this.ports.learn(work.runId);
       case "BUILD_OBSERVABILITY":
         return this.ports.rebuildObservability(work.projectId);
+      case "DECOMPOSE_PROGRAM":
+        return this.ports.decomposeProgram(work.runId);
+      case "VALIDATE_PROGRAM":
+        return this.ports.validateProgram(work.runId);
+      case "ROUTE_PROGRAM_MATERIALIZATION":
+        return this.ports.routeProgramMaterialization(work.runId);
+      case "MATERIALIZE_PROGRAM":
+        return this.ports.materializeProgram(work.runId);
+      case "RECONCILE_PROGRAM":
+        return this.ports.reconcileProgram(work.runId);
+      case "VERIFY_PROGRAM":
+        return this.ports.verifyProgram(work.runId);
       default: {
         const _exhaustive: never = work.workKind;
         return _exhaustive;

@@ -28,3 +28,14 @@ It does **not** determine:
 
 `ELIGIBLE ≠ AUTHORIZED`. Priority and fairness never bypass readiness, budgets,
 or human authorization. Do not add model-driven scheduling.
+
+## Programs (Phase 14)
+
+PROGRAM DECOMPOSITION proposes bounded structure. It cannot create authority.
+
+DELEGATION is subtractive, never additive.
+
+BUDGETS partition; they do not multiply.
+
+PROGRAM materialization approval does not approve child execution.
+Child Runs still require Phase 6 authorization before any ExecutionAttempt.

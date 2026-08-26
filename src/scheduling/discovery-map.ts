@@ -148,6 +148,16 @@ export function bindingHashForWorkKind(
     case "VERIFY_PROGRAM":
       // Program work uses programWorkBindingHash; this path is fail-closed.
       return `program_misbound:${kind}:${fingerprints.runId}`;
+    case "ANALYZE_PORTFOLIO":
+    case "PLAN_PORTFOLIO":
+    case "VALIDATE_PORTFOLIO":
+    case "ROUTE_PORTFOLIO_AUTHORIZATION":
+    case "MATERIALIZE_PORTFOLIO_PROGRAMS":
+    case "RECONCILE_PORTFOLIO":
+    case "VERIFY_PORTFOLIO":
+    case "REBALANCE_PORTFOLIO":
+      // Portfolio work uses portfolioWorkBindingHash; this path is fail-closed.
+      return `portfolio_misbound:${kind}:${fingerprints.runId}`;
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

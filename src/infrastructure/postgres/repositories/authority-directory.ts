@@ -16,7 +16,11 @@ import type { PostgresDatabase } from "../database.js";
 
 export interface AuthorityGrantSeed {
   principalId: string;
-  principalType: "REQUESTER" | "APPROVER" | "PROGRAM_MATERIALIZER";
+  principalType:
+    | "REQUESTER"
+    | "APPROVER"
+    | "PROGRAM_MATERIALIZER"
+    | "PORTFOLIO_ALLOCATOR";
   projectId: string;
   environments: readonly string[];
 }
@@ -79,6 +83,43 @@ export class PostgresAuthorityDirectory {
       [principalId, projectId],
     );
     return result.rows.length > 0;
+  }
+
+  async isPortfolioAllocatorEnabled(
+    principalId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM authority_grants
+       WHERE principal_id = $1
+         AND principal_type = 'PORTFOLIO_ALLOCATOR'
+         AND project_id = $2
+         AND enabled = TRUE`,
+      [principalId, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Fail-closed intersection: principal must hold an explicit
+   * PORTFOLIO_ALLOCATOR grant for EVERY project in scope.
+   * One-project grants never imply cross-project allocator authority.
+   */
+  async isPortfolioAllocatorForAllProjects(
+    principalId: string,
+    projectIds: readonly string[],
+  ): Promise<boolean> {
+    const unique = [...new Set(projectIds.filter((id) => id.length > 0))];
+    if (unique.length === 0) {
+      return false;
+    }
+    for (const projectId of unique) {
+      if (!(await this.isPortfolioAllocatorEnabled(principalId, projectId))) {
+        return false;
+      }
+    }
+    return true;
   }
 
   async isApproverEnabled(
@@ -202,6 +243,11 @@ export function buildAuthoritySeeds(input: {
   approverIds: readonly string[];
   projectId: string;
   environments: readonly string[];
+  portfolioAllocatorGrants?: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[];
 }): AuthorityGrantSeed[] {
   const seeds: AuthorityGrantSeed[] = input.requesterGrants
     .filter((grant) => grant.projectId === input.projectId)
@@ -225,6 +271,21 @@ export function buildAuthoritySeeds(input: {
       principalType: "PROGRAM_MATERIALIZER",
       projectId: input.projectId,
       environments: input.environments,
+    });
+  }
+  const allocatorGrants: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[] =
+    input.portfolioAllocatorGrants ??
+    input.approverIds.map((principalId) => ({ principalId }));
+  for (const grant of allocatorGrants) {
+    seeds.push({
+      principalId: grant.principalId,
+      principalType: "PORTFOLIO_ALLOCATOR",
+      projectId: grant.projectId ?? input.projectId,
+      environments: grant.environments ?? input.environments,
     });
   }
   return seeds;

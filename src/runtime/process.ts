@@ -136,6 +136,12 @@ export function createOrchestratorRuntime(
               ? {
                   scheduler: postgres.scheduler,
                   runs: postgres.runs,
+                  programService: postgres.programService,
+                  programs: postgres.programs,
+                  programPlans: postgres.programPlans,
+                  portfolioService: postgres.portfolioService,
+                  portfolios: postgres.portfolios,
+                  portfolioPlans: postgres.portfolioPlans,
                 }
               : {}),
             storageMode: boot.storageMode,
@@ -255,6 +261,18 @@ export function createOrchestratorRuntime(
                 name: "scheduler-claim",
                 run: async () => {
                   await claim.tick();
+                },
+              },
+              {
+                name: "program-progression",
+                run: async () => {
+                  await postgres.programProgression.tick();
+                },
+              },
+              {
+                name: "portfolio-progression",
+                run: async () => {
+                  await postgres.portfolioProgression.tick();
                 },
               },
             ],

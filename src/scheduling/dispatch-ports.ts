@@ -12,8 +12,11 @@ import type { RunArtifactProbe } from "./service.js";
 import type { SchedulerWorkItem } from "./work-item.js";
 import type { SchedulerWorkKind } from "./work-kind.js";
 import { isProgramSchedulerWorkKind } from "./work-kind.js";
+import { isPortfolioSchedulerWorkKind } from "./work-kind.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository } from "../programs/repositories.js";
+import type { PortfolioOrchestrationService } from "../portfolio/service.js";
+import type { PortfolioRepository } from "../portfolio/repositories.js";
 
 /**
  * Readiness gate exposed by each phase. Scheduling never substitutes for it:
@@ -66,6 +69,9 @@ export interface PhaseDispatchPortsDeps {
   /** Phase 14 program progression ports (optional until wired). */
   programs?: ProgramRepository;
   programService?: ProgramOrchestrationService;
+  /** Phase 15 portfolio progression ports (optional until wired). */
+  portfolios?: PortfolioRepository;
+  portfolioService?: PortfolioOrchestrationService;
 }
 
 const DEFAULT_OBSERVABILITY_WINDOW: { kind: MetricWindowKind; lastN: number } =
@@ -100,6 +106,15 @@ function bindingDriftReasonCode(kind: SchedulerWorkKind): string {
     case "RECONCILE_PROGRAM":
     case "VERIFY_PROGRAM":
       return "PROGRAM_BINDING_CHANGED";
+    case "ANALYZE_PORTFOLIO":
+    case "PLAN_PORTFOLIO":
+    case "VALIDATE_PORTFOLIO":
+    case "ROUTE_PORTFOLIO_AUTHORIZATION":
+    case "MATERIALIZE_PORTFOLIO_PROGRAMS":
+    case "RECONCILE_PORTFOLIO":
+    case "VERIFY_PORTFOLIO":
+    case "REBALANCE_PORTFOLIO":
+      return "PORTFOLIO_BINDING_CHANGED";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -142,6 +157,15 @@ export function createPhaseDispatchPorts(
       case "RECONCILE_PROGRAM":
       case "VERIFY_PROGRAM":
         // These phases own their own entry checks; no separate readiness port.
+        return null;
+      case "ANALYZE_PORTFOLIO":
+      case "PLAN_PORTFOLIO":
+      case "VALIDATE_PORTFOLIO":
+      case "ROUTE_PORTFOLIO_AUTHORIZATION":
+      case "MATERIALIZE_PORTFOLIO_PROGRAMS":
+      case "RECONCILE_PORTFOLIO":
+      case "VERIFY_PORTFOLIO":
+      case "REBALANCE_PORTFOLIO":
         return null;
       default: {
         const _exhaustive: never = kind;
@@ -266,7 +290,116 @@ export function createPhaseDispatchPorts(
       return { resultRef: result.outcome };
     },
 
+    async analyzePortfolio(portfolioId) {
+      if (!deps.portfolioService) {
+        throw new Error("Portfolio service not configured");
+      }
+      const result = await deps.portfolioService.analyze(portfolioId);
+      return { resultRef: result.portfolio.status };
+    },
+
+    async planPortfolio(portfolioId) {
+      if (!deps.portfolioService) {
+        throw new Error("Portfolio service not configured");
+      }
+      const result = await deps.portfolioService.plan(portfolioId);
+      return {
+        resultRef: result.plan.portfolioPlanHash ?? result.portfolio.status,
+      };
+    },
+
+    async validatePortfolio(portfolioId) {
+      if (!deps.portfolioService) {
+        throw new Error("Portfolio service not configured");
+      }
+      const result = await deps.portfolioService.validate(portfolioId);
+      return { resultRef: result.portfolio.status };
+    },
+
+    async routePortfolioAuthorization(portfolioId) {
+      if (!deps.portfolioService) {
+        throw new Error("Portfolio service not configured");
+      }
+      const result =
+        await deps.portfolioService.routeAuthorization(portfolioId);
+      return { resultRef: result.request.authorizationId };
+    },
+
+    async materializePortfolioPrograms(portfolioId) {
+      if (!deps.portfolioService) {
+        throw new Error("Portfolio service not configured");
+      }
+      const result =
+        await deps.portfolioService.materializePrograms(portfolioId);
+      return { resultRef: result.portfolio.status };
+    },
+
+    async reconcilePortfolio(portfolioId) {
+      if (!deps.portfolioService) {
+        throw new Error("Portfolio service not configured");
+      }
+      const result = await deps.portfolioService.reconcile(portfolioId);
+      return {
+        resultRef: `${result.stalledPrograms.length}:${result.computedAt}`,
+      };
+    },
+
+    async verifyPortfolio(portfolioId) {
+      if (!deps.portfolioService) {
+        throw new Error("Portfolio service not configured");
+      }
+      const result = await deps.portfolioService.verify(portfolioId);
+      return { resultRef: result.outcome };
+    },
+
+    async rebalancePortfolio(portfolioId) {
+      if (!deps.portfolioService) {
+        throw new Error("Portfolio service not configured");
+      }
+      const result = await deps.portfolioService.proposeRebalance(
+        portfolioId,
+        "GOAL_COVERAGE_GAP",
+      );
+      return { resultRef: result.proposal.rebalanceId };
+    },
+
     async assertDispatchReady(work: SchedulerWorkItem) {
+      if (isPortfolioSchedulerWorkKind(work.workKind)) {
+        if (!deps.portfolios) {
+          return {
+            ok: false as const,
+            reasonCode: "PORTFOLIO_SERVICE_MISSING",
+            message: "Portfolio repository not configured for dispatch",
+          };
+        }
+        const portfolio = await deps.portfolios.getById(work.runId);
+        if (!portfolio) {
+          return {
+            ok: false as const,
+            reasonCode: "PORTFOLIO_NOT_FOUND",
+            message: `Portfolio ${work.runId} no longer exists`,
+          };
+        }
+        if (portfolio.primaryProjectId !== work.projectId) {
+          return {
+            ok: false as const,
+            reasonCode: "PORTFOLIO_PROJECT_MISMATCH",
+            message: `Portfolio ${work.runId} belongs to a different project`,
+          };
+        }
+        if (
+          work.workKind === "MATERIALIZE_PORTFOLIO_PROGRAMS" &&
+          portfolio.status === "AWAITING_AUTHORIZATION"
+        ) {
+          return {
+            ok: false as const,
+            reasonCode: "AWAITING_PORTFOLIO_AUTHORIZATION",
+            message: `Portfolio ${work.runId} awaits portfolio authorization`,
+          };
+        }
+        return { ok: true as const };
+      }
+
       if (isProgramSchedulerWorkKind(work.workKind)) {
         if (!deps.programs) {
           return {

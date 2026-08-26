@@ -39,3 +39,21 @@ BUDGETS partition; they do not multiply.
 
 PROGRAM materialization approval does not approve child execution.
 Child Runs still require Phase 6 authorization before any ExecutionAttempt.
+
+## Portfolios (Phase 15)
+
+PORTFOLIO STRATEGY proposes capital allocation and Program dispositions.
+It cannot create execution authority.
+
+PORTFOLIO_ALLOCATOR ≠ APPROVER ≠ PROGRAM_MATERIALIZER.
+
+Portfolio authorization authorizes allocation / Program admission association only.
+Each Program still requires Phase 14 materialization authorization.
+Each child still requires Phase 6 execution authorization.
+
+Budgets partition: Program allocation ≤ Portfolio allocation ≤ Portfolio ceiling.
+Rebalancing that changes material allocation requires a new PortfolioPlanVersion
+and a new Portfolio authorization.
+
+Portfolio success is proven from Program / Phase 8 evidence — never from
+Program COMPLETED status alone, model narrative, or observational metrics.

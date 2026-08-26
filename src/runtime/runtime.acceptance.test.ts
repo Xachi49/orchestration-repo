@@ -203,7 +203,7 @@ describe("Phase 12 runtime acceptance (unit)", () => {
           storageMode: "postgres",
           databaseReachable: reachable,
           schemaCompatible: reachable,
-          supportedSchemaVersion: "009_phase14_program_scheduler",
+          supportedSchemaVersion: "010_phase15_portfolios",
         }),
       },
     });

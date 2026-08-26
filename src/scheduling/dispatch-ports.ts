@@ -13,6 +13,9 @@ import type { SchedulerWorkItem } from "./work-item.js";
 import type { SchedulerWorkKind } from "./work-kind.js";
 import { isProgramSchedulerWorkKind } from "./work-kind.js";
 import { isPortfolioSchedulerWorkKind } from "./work-kind.js";
+import { isScenarioSchedulerWorkKind } from "./work-kind.js";
+import type { ScenarioOrchestrationService } from "../scenarios/service.js";
+import type { DecisionProblemRepository } from "../scenarios/repositories.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -72,6 +75,9 @@ export interface PhaseDispatchPortsDeps {
   /** Phase 15 portfolio progression ports (optional until wired). */
   portfolios?: PortfolioRepository;
   portfolioService?: PortfolioOrchestrationService;
+  /** Phase 16 scenario progression ports (optional until wired). */
+  decisionProblems?: DecisionProblemRepository;
+  scenarioService?: ScenarioOrchestrationService;
 }
 
 const DEFAULT_OBSERVABILITY_WINDOW: { kind: MetricWindowKind; lastN: number } =
@@ -115,6 +121,14 @@ function bindingDriftReasonCode(kind: SchedulerWorkKind): string {
     case "VERIFY_PORTFOLIO":
     case "REBALANCE_PORTFOLIO":
       return "PORTFOLIO_BINDING_CHANGED";
+    case "GROUND_DECISION_PROBLEM":
+    case "GENERATE_SCENARIOS":
+    case "SIMULATE_SCENARIOS":
+    case "ANALYZE_SCENARIOS":
+    case "VALIDATE_DECISION_PACKAGE":
+    case "ROUTE_STRATEGY_SELECTION":
+    case "MATERIALIZE_PORTFOLIO_PROPOSAL":
+      return "SCENARIO_BINDING_CHANGED";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -166,6 +180,14 @@ export function createPhaseDispatchPorts(
       case "RECONCILE_PORTFOLIO":
       case "VERIFY_PORTFOLIO":
       case "REBALANCE_PORTFOLIO":
+        return null;
+      case "GROUND_DECISION_PROBLEM":
+      case "GENERATE_SCENARIOS":
+      case "SIMULATE_SCENARIOS":
+      case "ANALYZE_SCENARIOS":
+      case "VALIDATE_DECISION_PACKAGE":
+      case "ROUTE_STRATEGY_SELECTION":
+      case "MATERIALIZE_PORTFOLIO_PROPOSAL":
         return null;
       default: {
         const _exhaustive: never = kind;
@@ -363,7 +385,115 @@ export function createPhaseDispatchPorts(
       return { resultRef: result.proposal.rebalanceId };
     },
 
+    async groundDecisionProblem(decisionProblemId) {
+      if (!deps.scenarioService) {
+        throw new Error("Scenario service not configured");
+      }
+      const result = await deps.scenarioService.ground(decisionProblemId);
+      return { resultRef: result.status };
+    },
+
+    async generateScenarios(decisionProblemId) {
+      if (!deps.scenarioService) {
+        throw new Error("Scenario service not configured");
+      }
+      const result =
+        await deps.scenarioService.generateScenarios(decisionProblemId);
+      return { resultRef: result.scenarioSet.scenarioSetHash };
+    },
+
+    async simulateScenarios(decisionProblemId) {
+      if (!deps.scenarioService) {
+        throw new Error("Scenario service not configured");
+      }
+      const result = await deps.scenarioService.simulateAll(decisionProblemId);
+      return { resultRef: `${result.results.length}` };
+    },
+
+    async analyzeScenarios(decisionProblemId) {
+      if (!deps.scenarioService) {
+        throw new Error("Scenario service not configured");
+      }
+      const result = await deps.scenarioService.analyze(decisionProblemId);
+      return { resultRef: result.problem.status };
+    },
+
+    async validateDecisionPackage(decisionProblemId) {
+      if (!deps.scenarioService) {
+        throw new Error("Scenario service not configured");
+      }
+      const result =
+        await deps.scenarioService.validatePackage(decisionProblemId);
+      return { resultRef: result.pkg.decisionPackageHash };
+    },
+
+    async routeStrategySelection(decisionProblemId) {
+      if (!deps.scenarioService) {
+        throw new Error("Scenario service not configured");
+      }
+      const result =
+        await deps.scenarioService.routeSelection(decisionProblemId);
+      return { resultRef: result.request.selectionId };
+    },
+
+    async materializePortfolioProposal(decisionProblemId) {
+      if (!deps.scenarioService) {
+        throw new Error("Scenario service not configured");
+      }
+      const result =
+        await deps.scenarioService.materializePortfolioProposal(
+          decisionProblemId,
+        );
+      return { resultRef: result.lineage.lineageId };
+    },
+
     async assertDispatchReady(work: SchedulerWorkItem) {
+      if (isScenarioSchedulerWorkKind(work.workKind)) {
+        if (!deps.decisionProblems) {
+          return {
+            ok: false as const,
+            reasonCode: "SCENARIO_SERVICE_MISSING",
+            message: "Decision problem repository not configured for dispatch",
+          };
+        }
+        const problem = await deps.decisionProblems.getById(work.runId);
+        if (!problem) {
+          return {
+            ok: false as const,
+            reasonCode: "DECISION_PROBLEM_NOT_FOUND",
+            message: `Decision problem ${work.runId} no longer exists`,
+          };
+        }
+        if (problem.primaryProjectId !== work.projectId) {
+          return {
+            ok: false as const,
+            reasonCode: "DECISION_PROBLEM_PROJECT_MISMATCH",
+            message: `Decision problem ${work.runId} belongs to a different project`,
+          };
+        }
+        if (
+          work.workKind === "MATERIALIZE_PORTFOLIO_PROPOSAL" &&
+          problem.status !== "SELECTED"
+        ) {
+          return {
+            ok: false as const,
+            reasonCode: "STRATEGY_SELECTION_REQUIRED",
+            message: `Decision problem ${work.runId} requires strategy selection first`,
+          };
+        }
+        if (
+          work.workKind === "ROUTE_STRATEGY_SELECTION" &&
+          problem.status !== "AWAITING_SELECTION"
+        ) {
+          return {
+            ok: false as const,
+            reasonCode: "DECISION_PROBLEM_STATE_CONFLICT",
+            message: `Decision problem ${work.runId} not awaiting selection`,
+          };
+        }
+        return { ok: true as const };
+      }
+
       if (isPortfolioSchedulerWorkKind(work.workKind)) {
         if (!deps.portfolios) {
           return {

@@ -27,6 +27,13 @@ export const SCHEDULER_WORK_KINDS = [
   "RECONCILE_PORTFOLIO",
   "VERIFY_PORTFOLIO",
   "REBALANCE_PORTFOLIO",
+  "GROUND_DECISION_PROBLEM",
+  "GENERATE_SCENARIOS",
+  "SIMULATE_SCENARIOS",
+  "ANALYZE_SCENARIOS",
+  "VALIDATE_DECISION_PACKAGE",
+  "ROUTE_STRATEGY_SELECTION",
+  "MATERIALIZE_PORTFOLIO_PROPOSAL",
 ] as const;
 
 export type SchedulerWorkKind = (typeof SCHEDULER_WORK_KINDS)[number];
@@ -69,6 +76,25 @@ export function isPortfolioSchedulerWorkKind(
   return (PORTFOLIO_SCHEDULER_WORK_KINDS as readonly string[]).includes(kind);
 }
 
+export const SCENARIO_SCHEDULER_WORK_KINDS = [
+  "GROUND_DECISION_PROBLEM",
+  "GENERATE_SCENARIOS",
+  "SIMULATE_SCENARIOS",
+  "ANALYZE_SCENARIOS",
+  "VALIDATE_DECISION_PACKAGE",
+  "ROUTE_STRATEGY_SELECTION",
+  "MATERIALIZE_PORTFOLIO_PROPOSAL",
+] as const satisfies readonly SchedulerWorkKind[];
+
+export type ScenarioSchedulerWorkKind =
+  (typeof SCENARIO_SCHEDULER_WORK_KINDS)[number];
+
+export function isScenarioSchedulerWorkKind(
+  kind: SchedulerWorkKind,
+): kind is ScenarioSchedulerWorkKind {
+  return (SCENARIO_SCHEDULER_WORK_KINDS as readonly string[]).includes(kind);
+}
+
 export const WORKER_CAPABILITY_LABELS = [
   "INGESTION",
   "PLANNING",
@@ -80,6 +106,7 @@ export const WORKER_CAPABILITY_LABELS = [
   "OBSERVABILITY",
   "PROGRAM_ORCHESTRATION",
   "PORTFOLIO_ORCHESTRATION",
+  "SCENARIO_ORCHESTRATION",
   "ALL",
 ] as const;
 
@@ -121,6 +148,14 @@ export function workKindToCapability(
     case "VERIFY_PORTFOLIO":
     case "REBALANCE_PORTFOLIO":
       return "PORTFOLIO_ORCHESTRATION";
+    case "GROUND_DECISION_PROBLEM":
+    case "GENERATE_SCENARIOS":
+    case "SIMULATE_SCENARIOS":
+    case "ANALYZE_SCENARIOS":
+    case "VALIDATE_DECISION_PACKAGE":
+    case "ROUTE_STRATEGY_SELECTION":
+    case "MATERIALIZE_PORTFOLIO_PROPOSAL":
+      return "SCENARIO_ORCHESTRATION";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

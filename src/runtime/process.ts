@@ -142,6 +142,10 @@ export function createOrchestratorRuntime(
                   portfolioService: postgres.portfolioService,
                   portfolios: postgres.portfolios,
                   portfolioPlans: postgres.portfolioPlans,
+                  scenarioService: postgres.scenarioService,
+                  decisionProblems: postgres.decisionProblems,
+                  decisionPackages: postgres.decisionPackages,
+                  calibrationRecords: postgres.scenarioCalibration,
                 }
               : {}),
             storageMode: boot.storageMode,
@@ -273,6 +277,12 @@ export function createOrchestratorRuntime(
                 name: "portfolio-progression",
                 run: async () => {
                   await postgres.portfolioProgression.tick();
+                },
+              },
+              {
+                name: "scenario-progression",
+                run: async () => {
+                  await postgres.scenarioProgression.tick();
                 },
               },
             ],

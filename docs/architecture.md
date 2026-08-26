@@ -1604,3 +1604,13 @@ execution. Budgets partition downward; rebalancing requires a new plan version
 and human authorization. Portfolio completion is proven from Program / Phase 8
 evidence, never from status alone.
 
+## Phase 16 — Scenario intelligence
+
+See [docs/phase-16-scenario-intelligence.md](phase-16-scenario-intelligence.md).
+
+Decision problems frame strategic questions, generate bounded scenarios, and
+simulate outcomes. **STRATEGY_SELECTOR** binds human scenario choice only —
+not portfolio authorization or execution. Simulation produces estimates;
+calibration is observational. Portfolio proposal materialization is admit-only
+and does not bypass Phase 15 authorization.
+

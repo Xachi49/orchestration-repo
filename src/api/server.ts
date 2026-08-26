@@ -28,6 +28,7 @@ import { registerObservabilityRoutes } from "./observability.js";
 import { registerSchedulerRoutes } from "./scheduler.js";
 import { registerProgramRoutes } from "./programs.js";
 import { registerPortfolioRoutes } from "./portfolios.js";
+import { registerDecisionRoutes } from "./decisions.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository, ProgramPlanRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -35,6 +36,12 @@ import type {
   PortfolioRepository,
   PortfolioPlanRepository,
 } from "../portfolio/repositories.js";
+import type { ScenarioOrchestrationService } from "../scenarios/service.js";
+import type {
+  DecisionProblemRepository,
+  DecisionPackageRepository,
+  ScenarioCalibrationRepository,
+} from "../scenarios/repositories.js";
 import { registerPerimeter, type PerimeterDeps } from "../runtime/perimeter.js";
 import { registerHealthRoutes, type HealthDeps } from "../runtime/health.js";
 
@@ -60,6 +67,10 @@ export interface ApiDeps {
   portfolioService?: PortfolioOrchestrationService;
   portfolios?: PortfolioRepository;
   portfolioPlans?: PortfolioPlanRepository;
+  scenarioService?: ScenarioOrchestrationService;
+  decisionProblems?: DecisionProblemRepository;
+  decisionPackages?: DecisionPackageRepository;
+  calibrationRecords?: ScenarioCalibrationRepository;
   storageMode?: StorageMode;
   runs?: RunRepository;
   readiness?: {
@@ -99,51 +110,57 @@ export async function buildServer(deps: ApiDeps = {}) {
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: deps.portfolioService
-      ? 15
-      : deps.programService
-        ? 14
-        : deps.scheduler
-          ? 13
-          : observabilityEnabled
-            ? 12
-            : memoryEnabled
-              ? 9
-              : verificationEnabled
-                ? 8
-                : executionEnabled
-                  ? 7
-                  : approvalEnabled
-                    ? 6
-                    : deps.validation
-                      ? 5
-                      : 6,
-    milestone: deps.portfolioService
-      ? 15
-      : deps.programService
-        ? 14
-        : deps.scheduler
-          ? 13
-          : 12,
-    orchestrator: deps.portfolioService
-      ? "portfolios"
-      : deps.programService
-        ? "programs"
-        : deps.scheduler
-          ? "scheduler"
-          : observabilityEnabled
-            ? "observability"
-            : memoryEnabled
-              ? "memory"
-              : verificationEnabled
-                ? "verification"
-                : executionEnabled
-                  ? "execution"
-                  : approvalEnabled
-                    ? "authorization"
-                    : deps.validation
-                      ? "validation"
-                      : "planning",
+    phase: deps.scenarioService
+      ? 16
+      : deps.portfolioService
+        ? 15
+        : deps.programService
+          ? 14
+          : deps.scheduler
+            ? 13
+            : observabilityEnabled
+              ? 12
+              : memoryEnabled
+                ? 9
+                : verificationEnabled
+                  ? 8
+                  : executionEnabled
+                    ? 7
+                    : approvalEnabled
+                      ? 6
+                      : deps.validation
+                        ? 5
+                        : 6,
+    milestone: deps.scenarioService
+      ? 16
+      : deps.portfolioService
+        ? 15
+        : deps.programService
+          ? 14
+          : deps.scheduler
+            ? 13
+            : 12,
+    orchestrator: deps.scenarioService
+      ? "scenarios"
+      : deps.portfolioService
+        ? "portfolios"
+        : deps.programService
+          ? "programs"
+          : deps.scheduler
+            ? "scheduler"
+            : observabilityEnabled
+              ? "observability"
+              : memoryEnabled
+                ? "memory"
+                : verificationEnabled
+                  ? "verification"
+                  : executionEnabled
+                    ? "execution"
+                    : approvalEnabled
+                      ? "authorization"
+                      : deps.validation
+                        ? "validation"
+                        : "planning",
     llmConnected: false,
     githubConnected: false,
     githubWritesEnabled: false,
@@ -231,6 +248,20 @@ export async function buildServer(deps: ApiDeps = {}) {
       portfolioService: deps.portfolioService,
       portfolios: deps.portfolios,
       portfolioPlans: deps.portfolioPlans,
+    });
+  }
+
+  if (
+    deps.scenarioService &&
+    deps.decisionProblems &&
+    deps.decisionPackages &&
+    deps.calibrationRecords
+  ) {
+    registerDecisionRoutes(app, {
+      scenarioService: deps.scenarioService,
+      decisionProblems: deps.decisionProblems,
+      decisionPackages: deps.decisionPackages,
+      calibrationRecords: deps.calibrationRecords,
     });
   }
 

@@ -203,6 +203,25 @@ import {
   PostgresPortfolioCompletionRepository,
   PostgresPortfolioRebalanceRepository,
 } from "./repositories/portfolios.js";
+import {
+  PostgresDecisionProblemRepository,
+  PostgresScenarioSetRepository,
+  PostgresSimulationResultRepository,
+  PostgresDecisionPackageRepository,
+  PostgresStrategySelectionRequestRepository,
+  PostgresStrategySelectionRecordRepository,
+  PostgresScenarioPortfolioLineageRepository,
+  PostgresScenarioCalibrationRepository,
+  PostgresSimulationUsageLedgerRepository,
+} from "./repositories/scenarios.js";
+import {
+  FakeScenarioGenerationModel,
+  Phase15PortfolioProposalAdmissionPort,
+  ScenarioOrchestrationService,
+  ScenarioProgressionLoop,
+  ScenarioWorkMaterializer,
+  FakeScenarioSimulationEngine,
+} from "../../scenarios/index.js";
 import { CryptoDecisionNonceGenerator } from "../../authorization/decision-nonce.js";
 
 export interface PostgresOrchestratorStack {
@@ -268,6 +287,13 @@ export interface PostgresOrchestratorStack {
   portfolioService: PortfolioOrchestrationService;
   portfolioProgression: PortfolioProgressionLoop;
   portfolioWorkMaterializer: PortfolioWorkMaterializer;
+  decisionProblems: PostgresDecisionProblemRepository;
+  scenarioSets: PostgresScenarioSetRepository;
+  decisionPackages: PostgresDecisionPackageRepository;
+  scenarioCalibration: PostgresScenarioCalibrationRepository;
+  scenarioService: ScenarioOrchestrationService;
+  scenarioProgression: ScenarioProgressionLoop;
+  scenarioWorkMaterializer: ScenarioWorkMaterializer;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -289,6 +315,8 @@ export async function createPostgresOrchestratorStack(options: {
   portfolioCompletionFailpoint?: import("../../portfolio/service.js").PortfolioCompletionFailpoint;
   portfolioMaterializationFailpoint?: import("../../portfolio/service.js").PortfolioMaterializationFailpoint;
   portfolioStrategyModel?: import("../../portfolio/strategy-model.js").PortfolioStrategyModel;
+  scenarioSimulationFailpoint?: import("../../scenarios/service.js").ScenarioSimulationFailpoint;
+  scenarioGenerationModel?: import("../../scenarios/generation-model.js").ScenarioGenerationModel;
   promotionFailpoint?: import("../../memory/promotion.js").PromotionFailpoint;
   schedulerGlobalMaxConcurrency?: number;
   defaultEnvironment?: string;
@@ -940,6 +968,70 @@ export async function createPostgresOrchestratorStack(options: {
     databaseReachable: () => db.ping(),
   });
 
+  const decisionProblems = new PostgresDecisionProblemRepository(db);
+  const scenarioSets = new PostgresScenarioSetRepository(db);
+  const simulationResults = new PostgresSimulationResultRepository(db);
+  const decisionPackages = new PostgresDecisionPackageRepository(db);
+  const selectionRequests = new PostgresStrategySelectionRequestRepository(db);
+  const selectionRecords = new PostgresStrategySelectionRecordRepository(db);
+  const scenarioLineage = new PostgresScenarioPortfolioLineageRepository(db);
+  const scenarioCalibration = new PostgresScenarioCalibrationRepository(db);
+  const simulationUsage = new PostgresSimulationUsageLedgerRepository(db);
+  const selectionNonceStore = {
+    map: new Map<string, string>(),
+    async put(id: string, plaintext: string) {
+      this.map.set(id, plaintext);
+    },
+    async take(id: string) {
+      const v = this.map.get(id) ?? null;
+      this.map.delete(id);
+      return v;
+    },
+  };
+  const scenarioService = new ScenarioOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    decisionProblems,
+    scenarioSets,
+    simulationResults,
+    decisionPackages,
+    selectionRequests,
+    selectionRecords,
+    lineage: scenarioLineage,
+    usageLedger: simulationUsage,
+    controlPlane,
+    generationModel:
+      options.scenarioGenerationModel ?? new FakeScenarioGenerationModel(),
+    simulationEngine: new FakeScenarioSimulationEngine(),
+    nonceGenerator: new CryptoDecisionNonceGenerator(),
+    selectionNonceStore,
+    isStrategySelector: (principalId, projectIds) =>
+      authorityDirectory.isStrategySelectorForAllProjects(
+        principalId,
+        projectIds,
+      ),
+    portfolioAdmissionPort: new Phase15PortfolioProposalAdmissionPort(
+      portfolioService,
+    ),
+    portfolioService,
+    transactions,
+    ...(options.scenarioSimulationFailpoint !== undefined
+      ? { simulationFailpoint: options.scenarioSimulationFailpoint }
+      : {}),
+  });
+  const scenarioWorkMaterializer = new ScenarioWorkMaterializer({
+    nowIso: () => clock.nowIso(),
+    decisionProblems,
+    scenarioSets,
+    decisionPackages,
+    workItems: schedulerWorkItems,
+    projectConfigs: schedulerProjectConfigs,
+  });
+  const scenarioProgression = new ScenarioProgressionLoop({
+    decisionProblems,
+    materializer: scenarioWorkMaterializer,
+    databaseReachable: () => db.ping(),
+  });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -964,6 +1056,8 @@ export async function createPostgresOrchestratorStack(options: {
     programService,
     portfolios: portfolioRepos,
     portfolioService,
+    decisionProblems,
+    scenarioService,
   });
   const schedulerDispatcher = new SchedulerDispatcher(scheduler, schedulerPorts);
 
@@ -1030,6 +1124,13 @@ export async function createPostgresOrchestratorStack(options: {
     portfolioService,
     portfolioProgression,
     portfolioWorkMaterializer,
+    decisionProblems,
+    scenarioSets,
+    decisionPackages,
+    scenarioCalibration,
+    scenarioService,
+    scenarioProgression,
+    scenarioWorkMaterializer,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

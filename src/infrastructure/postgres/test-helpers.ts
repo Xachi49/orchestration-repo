@@ -44,6 +44,8 @@ export async function createTestStack(
     portfolioCompletionFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["portfolioCompletionFailpoint"];
     portfolioMaterializationFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["portfolioMaterializationFailpoint"];
     portfolioStrategyModel?: Parameters<typeof createPostgresOrchestratorStack>[0]["portfolioStrategyModel"];
+    scenarioSimulationFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["scenarioSimulationFailpoint"];
+    scenarioGenerationModel?: Parameters<typeof createPostgresOrchestratorStack>[0]["scenarioGenerationModel"];
     promotionFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["promotionFailpoint"];
     schedulerGlobalMaxConcurrency?: number;
   },
@@ -78,6 +80,12 @@ export async function createTestStack(
       : {}),
     ...(opts?.portfolioStrategyModel !== undefined
       ? { portfolioStrategyModel: opts.portfolioStrategyModel }
+      : {}),
+    ...(opts?.scenarioSimulationFailpoint !== undefined
+      ? { scenarioSimulationFailpoint: opts.scenarioSimulationFailpoint }
+      : {}),
+    ...(opts?.scenarioGenerationModel !== undefined
+      ? { scenarioGenerationModel: opts.scenarioGenerationModel }
       : {}),
     ...(opts?.promotionFailpoint !== undefined
       ? { promotionFailpoint: opts.promotionFailpoint }

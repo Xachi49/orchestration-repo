@@ -1,7 +1,8 @@
 /**
  * Deterministic work kinds. SCHEDULING != AUTHORITY.
  * HUMAN_APPROVAL is intentionally absent — never autonomous.
- * ROUTE_AUTHORIZATION / ROUTE_PROGRAM_MATERIALIZATION open human gates only.
+ * ROUTE_AUTHORIZATION / ROUTE_PROGRAM_MATERIALIZATION / ROUTE_PORTFOLIO_AUTHORIZATION
+ * open human gates only.
  */
 export const SCHEDULER_WORK_KINDS = [
   "INGEST_REPOSITORY",
@@ -18,6 +19,14 @@ export const SCHEDULER_WORK_KINDS = [
   "MATERIALIZE_PROGRAM",
   "RECONCILE_PROGRAM",
   "VERIFY_PROGRAM",
+  "ANALYZE_PORTFOLIO",
+  "PLAN_PORTFOLIO",
+  "VALIDATE_PORTFOLIO",
+  "ROUTE_PORTFOLIO_AUTHORIZATION",
+  "MATERIALIZE_PORTFOLIO_PROGRAMS",
+  "RECONCILE_PORTFOLIO",
+  "VERIFY_PORTFOLIO",
+  "REBALANCE_PORTFOLIO",
 ] as const;
 
 export type SchedulerWorkKind = (typeof SCHEDULER_WORK_KINDS)[number];
@@ -40,6 +49,26 @@ export function isProgramSchedulerWorkKind(
   return (PROGRAM_SCHEDULER_WORK_KINDS as readonly string[]).includes(kind);
 }
 
+export const PORTFOLIO_SCHEDULER_WORK_KINDS = [
+  "ANALYZE_PORTFOLIO",
+  "PLAN_PORTFOLIO",
+  "VALIDATE_PORTFOLIO",
+  "ROUTE_PORTFOLIO_AUTHORIZATION",
+  "MATERIALIZE_PORTFOLIO_PROGRAMS",
+  "RECONCILE_PORTFOLIO",
+  "VERIFY_PORTFOLIO",
+  "REBALANCE_PORTFOLIO",
+] as const satisfies readonly SchedulerWorkKind[];
+
+export type PortfolioSchedulerWorkKind =
+  (typeof PORTFOLIO_SCHEDULER_WORK_KINDS)[number];
+
+export function isPortfolioSchedulerWorkKind(
+  kind: SchedulerWorkKind,
+): kind is PortfolioSchedulerWorkKind {
+  return (PORTFOLIO_SCHEDULER_WORK_KINDS as readonly string[]).includes(kind);
+}
+
 export const WORKER_CAPABILITY_LABELS = [
   "INGESTION",
   "PLANNING",
@@ -50,6 +79,7 @@ export const WORKER_CAPABILITY_LABELS = [
   "LEARNING",
   "OBSERVABILITY",
   "PROGRAM_ORCHESTRATION",
+  "PORTFOLIO_ORCHESTRATION",
   "ALL",
 ] as const;
 
@@ -82,6 +112,15 @@ export function workKindToCapability(
     case "RECONCILE_PROGRAM":
     case "VERIFY_PROGRAM":
       return "PROGRAM_ORCHESTRATION";
+    case "ANALYZE_PORTFOLIO":
+    case "PLAN_PORTFOLIO":
+    case "VALIDATE_PORTFOLIO":
+    case "ROUTE_PORTFOLIO_AUTHORIZATION":
+    case "MATERIALIZE_PORTFOLIO_PROGRAMS":
+    case "RECONCILE_PORTFOLIO":
+    case "VERIFY_PORTFOLIO":
+    case "REBALANCE_PORTFOLIO":
+      return "PORTFOLIO_ORCHESTRATION";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

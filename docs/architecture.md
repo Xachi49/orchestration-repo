@@ -1594,3 +1594,13 @@ PLANNER → VALIDATOR → APPROVER → EXECUTOR → VERIFIER → MEMORY
 dependencies are operational. Human approval, verification, and memory trust
 remain with their existing services.
 
+## Phase 15 — Strategic portfolio orchestration
+
+See [docs/phase-15-strategic-portfolio.md](phase-15-strategic-portfolio.md).
+
+Portfolios propose capital allocation across Programs. **PORTFOLIO_ALLOCATOR**
+authorizes the strategic plan only — not Program materialization or Phase 6
+execution. Budgets partition downward; rebalancing requires a new plan version
+and human authorization. Portfolio completion is proven from Program / Phase 8
+evidence, never from status alone.
+

@@ -52,6 +52,18 @@ export interface PhaseDispatchPorts {
   materializeProgram: (programId: string) => Promise<{ resultRef?: string }>;
   reconcileProgram: (programId: string) => Promise<{ resultRef?: string }>;
   verifyProgram: (programId: string) => Promise<{ resultRef?: string }>;
+  analyzePortfolio: (portfolioId: string) => Promise<{ resultRef?: string }>;
+  planPortfolio: (portfolioId: string) => Promise<{ resultRef?: string }>;
+  validatePortfolio: (portfolioId: string) => Promise<{ resultRef?: string }>;
+  routePortfolioAuthorization: (
+    portfolioId: string,
+  ) => Promise<{ resultRef?: string }>;
+  materializePortfolioPrograms: (
+    portfolioId: string,
+  ) => Promise<{ resultRef?: string }>;
+  reconcilePortfolio: (portfolioId: string) => Promise<{ resultRef?: string }>;
+  verifyPortfolio: (portfolioId: string) => Promise<{ resultRef?: string }>;
+  rebalancePortfolio: (portfolioId: string) => Promise<{ resultRef?: string }>;
   /**
    * Pre-dispatch readiness / binding recheck. Must fail closed on drift.
    */
@@ -147,6 +159,22 @@ export class SchedulerDispatcher {
         return this.ports.reconcileProgram(work.runId);
       case "VERIFY_PROGRAM":
         return this.ports.verifyProgram(work.runId);
+      case "ANALYZE_PORTFOLIO":
+        return this.ports.analyzePortfolio(work.runId);
+      case "PLAN_PORTFOLIO":
+        return this.ports.planPortfolio(work.runId);
+      case "VALIDATE_PORTFOLIO":
+        return this.ports.validatePortfolio(work.runId);
+      case "ROUTE_PORTFOLIO_AUTHORIZATION":
+        return this.ports.routePortfolioAuthorization(work.runId);
+      case "MATERIALIZE_PORTFOLIO_PROGRAMS":
+        return this.ports.materializePortfolioPrograms(work.runId);
+      case "RECONCILE_PORTFOLIO":
+        return this.ports.reconcilePortfolio(work.runId);
+      case "VERIFY_PORTFOLIO":
+        return this.ports.verifyPortfolio(work.runId);
+      case "REBALANCE_PORTFOLIO":
+        return this.ports.rebalancePortfolio(work.runId);
       default: {
         const _exhaustive: never = work.workKind;
         return _exhaustive;

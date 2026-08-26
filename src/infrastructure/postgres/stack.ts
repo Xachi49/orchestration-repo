@@ -178,6 +178,12 @@ import {
 } from "../../programs/index.js";
 import { ProgramProgressionLoop } from "../../programs/loops.js";
 import {
+  FakePortfolioStrategyModel,
+  PortfolioOrchestrationService,
+  PortfolioWorkMaterializer,
+} from "../../portfolio/index.js";
+import { PortfolioProgressionLoop } from "../../portfolio/loops.js";
+import {
   PostgresProgramRepository,
   PostgresProgramPlanRepository,
   PostgresProgramBudgetLedgerRepository,
@@ -186,6 +192,17 @@ import {
   PostgresProgramMaterializationApprovalRepository,
   PostgresProgramCompletionRepository,
 } from "./repositories/programs.js";
+import {
+  PostgresPortfolioRepository,
+  PostgresPortfolioPlanRepository,
+  PostgresPortfolioBudgetLedgerRepository,
+  PostgresPortfolioBudgetReservationRepository,
+  PostgresPortfolioProgramLineageRepository,
+  PostgresPortfolioAuthorizationRequestRepository,
+  PostgresPortfolioAuthorizationRecordRepository,
+  PostgresPortfolioCompletionRepository,
+  PostgresPortfolioRebalanceRepository,
+} from "./repositories/portfolios.js";
 import { CryptoDecisionNonceGenerator } from "../../authorization/decision-nonce.js";
 
 export interface PostgresOrchestratorStack {
@@ -246,6 +263,11 @@ export interface PostgresOrchestratorStack {
   programService: ProgramOrchestrationService;
   programProgression: ProgramProgressionLoop;
   programWorkMaterializer: ProgramWorkMaterializer;
+  portfolios: PostgresPortfolioRepository;
+  portfolioPlans: PostgresPortfolioPlanRepository;
+  portfolioService: PortfolioOrchestrationService;
+  portfolioProgression: PortfolioProgressionLoop;
+  portfolioWorkMaterializer: PortfolioWorkMaterializer;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -264,6 +286,9 @@ export async function createPostgresOrchestratorStack(options: {
   completionFailpoint?: import("../../verification/service.js").VerificationCompletionFailpoint;
   programCompletionFailpoint?: import("../../programs/service.js").ProgramCompletionFailpoint;
   programMaterializationFailpoint?: import("../../programs/service.js").ProgramMaterializationFailpoint;
+  portfolioCompletionFailpoint?: import("../../portfolio/service.js").PortfolioCompletionFailpoint;
+  portfolioMaterializationFailpoint?: import("../../portfolio/service.js").PortfolioMaterializationFailpoint;
+  portfolioStrategyModel?: import("../../portfolio/strategy-model.js").PortfolioStrategyModel;
   promotionFailpoint?: import("../../memory/promotion.js").PromotionFailpoint;
   schedulerGlobalMaxConcurrency?: number;
   defaultEnvironment?: string;
@@ -835,6 +860,86 @@ export async function createPostgresOrchestratorStack(options: {
     databaseReachable: () => db.ping(),
   });
 
+  const portfolioRepos = new PostgresPortfolioRepository(db);
+  const portfolioPlans = new PostgresPortfolioPlanRepository(db);
+  const portfolioBudgets = new PostgresPortfolioBudgetLedgerRepository(db);
+  const portfolioReservations =
+    new PostgresPortfolioBudgetReservationRepository(db);
+  const portfolioLineage = new PostgresPortfolioProgramLineageRepository(db);
+  const portfolioAuthRequests =
+    new PostgresPortfolioAuthorizationRequestRepository(db);
+  const portfolioAuthRecords =
+    new PostgresPortfolioAuthorizationRecordRepository(db);
+  const portfolioCompletions = new PostgresPortfolioCompletionRepository(db);
+  const portfolioRebalances = new PostgresPortfolioRebalanceRepository(db);
+  const authorizationNonceStore = {
+    map: new Map<string, string>(),
+    async put(id: string, plaintext: string) {
+      this.map.set(id, plaintext);
+    },
+    async take(id: string) {
+      const v = this.map.get(id) ?? null;
+      this.map.delete(id);
+      return v;
+    },
+  };
+  const portfolioService = new PortfolioOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    portfolios: portfolioRepos,
+    plans: portfolioPlans,
+    budgets: portfolioBudgets,
+    reservations: portfolioReservations,
+    lineage: portfolioLineage,
+    authRequests: portfolioAuthRequests,
+    authRecords: portfolioAuthRecords,
+    completions: portfolioCompletions,
+    rebalances: portfolioRebalances,
+    controlPlane,
+    strategyModel:
+      options.portfolioStrategyModel ?? new FakePortfolioStrategyModel(),
+    nonceGenerator: new CryptoDecisionNonceGenerator(),
+    authorizationNonceStore,
+    isPortfolioAllocator: (principalId, projectIds) =>
+      authorityDirectory.isPortfolioAllocatorForAllProjects(
+        principalId,
+        projectIds,
+      ),
+    programOrchestration: programService,
+    programs: programRepos,
+    programCompletions: programCompletions,
+    transactions,
+    authorizedRepositoryIdentities: async (projectId) => {
+      const source = await sources.getByProjectId(projectId);
+      if (!source || !source.enabled) {
+        return [];
+      }
+      return [
+        `${source.owner}/${source.repository}`,
+        `github:${source.owner}/${source.repository}`,
+        source.remoteUrl,
+      ];
+    },
+    ...(options.portfolioCompletionFailpoint !== undefined
+      ? { completionFailpoint: options.portfolioCompletionFailpoint }
+      : {}),
+    ...(options.portfolioMaterializationFailpoint !== undefined
+      ? { materializationFailpoint: options.portfolioMaterializationFailpoint }
+      : {}),
+  });
+  const portfolioWorkMaterializer = new PortfolioWorkMaterializer({
+    nowIso: () => clock.nowIso(),
+    portfolios: portfolioRepos,
+    plans: portfolioPlans,
+    authorizationRecords: portfolioAuthRecords,
+    workItems: schedulerWorkItems,
+    projectConfigs: schedulerProjectConfigs,
+  });
+  const portfolioProgression = new PortfolioProgressionLoop({
+    portfolios: portfolioRepos,
+    materializer: portfolioWorkMaterializer,
+    databaseReachable: () => db.ping(),
+  });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -857,6 +962,8 @@ export async function createPostgresOrchestratorStack(options: {
       "local",
     programs: programRepos,
     programService,
+    portfolios: portfolioRepos,
+    portfolioService,
   });
   const schedulerDispatcher = new SchedulerDispatcher(scheduler, schedulerPorts);
 
@@ -918,6 +1025,11 @@ export async function createPostgresOrchestratorStack(options: {
     programService,
     programProgression,
     programWorkMaterializer,
+    portfolios: portfolioRepos,
+    portfolioPlans,
+    portfolioService,
+    portfolioProgression,
+    portfolioWorkMaterializer,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

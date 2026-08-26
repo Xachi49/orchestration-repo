@@ -3,7 +3,11 @@
 ## Versioning
 
 Application version is `package.json` version plus optional `GIT_COMMIT_SHA` / `BUILD_TIMESTAMP`.
-Schema version is migration `009_phase14_program_scheduler` (Phase 14). Application and schema versions are independent.
+Schema version is migration `010_phase15_portfolios` (Phase 15). Application and schema versions are independent.
+
+Migration `010_phase15_portfolios` adds Portfolio aggregates, budget ledger,
+authorization, lineage, completion, scheduler portfolio work kinds, and
+`PORTFOLIO_ALLOCATOR`. See [phase-15-strategic-portfolio.md](phase-15-strategic-portfolio.md).
 
 Rolling upgrades: do not apply destructive migrations while old nodes still write. Phase 12 adds no destructive production migration.
 

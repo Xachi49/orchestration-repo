@@ -184,7 +184,7 @@ async function fullApi(
           storageMode: "postgres" as const,
           databaseReachable: true,
           schemaCompatible: true,
-          supportedSchemaVersion: "010_phase15_portfolios",
+          supportedSchemaVersion: "011_phase16_scenario_intelligence",
         })),
     },
   });
@@ -405,7 +405,7 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             storageMode: "postgres",
             databaseReachable: true,
             schemaCompatible: true,
-            supportedSchemaVersion: "010_phase15_portfolios",
+            supportedSchemaVersion: "011_phase16_scenario_intelligence",
           }),
         },
       });
@@ -677,7 +677,7 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             storageMode: "postgres",
             databaseReachable: reachable,
             schemaCompatible: reachable,
-            supportedSchemaVersion: "010_phase15_portfolios",
+            supportedSchemaVersion: "011_phase16_scenario_intelligence",
           }),
         },
       );
@@ -905,7 +905,7 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             storageMode: "postgres",
             databaseReachable: true,
             schemaCompatible: true,
-            supportedSchemaVersion: "010_phase15_portfolios",
+            supportedSchemaVersion: "011_phase16_scenario_intelligence",
           }),
         },
       });

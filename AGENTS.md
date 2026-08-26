@@ -57,3 +57,18 @@ and a new Portfolio authorization.
 
 Portfolio success is proven from Program / Phase 8 evidence — never from
 Program COMPLETED status alone, model narrative, or observational metrics.
+
+## Scenarios (Phase 16)
+
+SCENARIO INTELLIGENCE proposes bounded futures and simulates outcomes.
+It cannot create execution authority.
+
+STRATEGY_SELECTOR ≠ PORTFOLIO_ALLOCATOR ≠ PROGRAM_MATERIALIZER ≠ APPROVER.
+
+Strategy selection binds scenario choice only — not capital allocation.
+Simulation ranks and recommends; humans select via STRATEGY_SELECTOR.
+Calibration records are observational — never selection authority.
+
+Each selected scenario still requires Phase 15 portfolio authorization before
+Programs materialize. Each Program still requires Phase 14 materialization
+authorization. Each child still requires Phase 6 execution authorization.

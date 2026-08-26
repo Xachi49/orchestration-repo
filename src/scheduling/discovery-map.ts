@@ -158,6 +158,15 @@ export function bindingHashForWorkKind(
     case "REBALANCE_PORTFOLIO":
       // Portfolio work uses portfolioWorkBindingHash; this path is fail-closed.
       return `portfolio_misbound:${kind}:${fingerprints.runId}`;
+    case "GROUND_DECISION_PROBLEM":
+    case "GENERATE_SCENARIOS":
+    case "SIMULATE_SCENARIOS":
+    case "ANALYZE_SCENARIOS":
+    case "VALIDATE_DECISION_PACKAGE":
+    case "ROUTE_STRATEGY_SELECTION":
+    case "MATERIALIZE_PORTFOLIO_PROPOSAL":
+      // Scenario work uses scenarioWorkBindingHash; this path is fail-closed.
+      return `scenario_misbound:${kind}:${fingerprints.runId}`;
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

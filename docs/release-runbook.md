@@ -3,7 +3,13 @@
 ## Versioning
 
 Application version is `package.json` version plus optional `GIT_COMMIT_SHA` / `BUILD_TIMESTAMP`.
-Schema version is migration `010_phase15_portfolios` (Phase 15). Application and schema versions are independent.
+Schema version is migration `011_phase16_scenario_intelligence` (Phase 16). Application and schema versions are independent.
+
+Migration `011_phase16_scenario_intelligence` adds strategic decision problems,
+scenario sets, simulation results, decision packages, strategy selection,
+portfolio lineage, calibration records, usage ledgers, scheduler scenario work
+kinds, and `STRATEGY_SELECTOR`. See
+[phase-16-scenario-intelligence.md](phase-16-scenario-intelligence.md).
 
 Migration `010_phase15_portfolios` adds Portfolio aggregates, budget ledger,
 authorization, lineage, completion, scheduler portfolio work kinds, and

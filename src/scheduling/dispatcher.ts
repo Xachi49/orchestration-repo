@@ -64,6 +64,21 @@ export interface PhaseDispatchPorts {
   reconcilePortfolio: (portfolioId: string) => Promise<{ resultRef?: string }>;
   verifyPortfolio: (portfolioId: string) => Promise<{ resultRef?: string }>;
   rebalancePortfolio: (portfolioId: string) => Promise<{ resultRef?: string }>;
+  groundDecisionProblem: (
+    decisionProblemId: string,
+  ) => Promise<{ resultRef?: string }>;
+  generateScenarios: (decisionProblemId: string) => Promise<{ resultRef?: string }>;
+  simulateScenarios: (decisionProblemId: string) => Promise<{ resultRef?: string }>;
+  analyzeScenarios: (decisionProblemId: string) => Promise<{ resultRef?: string }>;
+  validateDecisionPackage: (
+    decisionProblemId: string,
+  ) => Promise<{ resultRef?: string }>;
+  routeStrategySelection: (
+    decisionProblemId: string,
+  ) => Promise<{ resultRef?: string }>;
+  materializePortfolioProposal: (
+    decisionProblemId: string,
+  ) => Promise<{ resultRef?: string }>;
   /**
    * Pre-dispatch readiness / binding recheck. Must fail closed on drift.
    */
@@ -175,6 +190,20 @@ export class SchedulerDispatcher {
         return this.ports.verifyPortfolio(work.runId);
       case "REBALANCE_PORTFOLIO":
         return this.ports.rebalancePortfolio(work.runId);
+      case "GROUND_DECISION_PROBLEM":
+        return this.ports.groundDecisionProblem(work.runId);
+      case "GENERATE_SCENARIOS":
+        return this.ports.generateScenarios(work.runId);
+      case "SIMULATE_SCENARIOS":
+        return this.ports.simulateScenarios(work.runId);
+      case "ANALYZE_SCENARIOS":
+        return this.ports.analyzeScenarios(work.runId);
+      case "VALIDATE_DECISION_PACKAGE":
+        return this.ports.validateDecisionPackage(work.runId);
+      case "ROUTE_STRATEGY_SELECTION":
+        return this.ports.routeStrategySelection(work.runId);
+      case "MATERIALIZE_PORTFOLIO_PROPOSAL":
+        return this.ports.materializePortfolioProposal(work.runId);
       default: {
         const _exhaustive: never = work.workKind;
         return _exhaustive;

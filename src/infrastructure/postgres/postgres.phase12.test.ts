@@ -184,7 +184,7 @@ async function fullApi(
           storageMode: "postgres" as const,
           databaseReachable: true,
           schemaCompatible: true,
-          supportedSchemaVersion: "012_phase17_governed_experiments",
+          supportedSchemaVersion: "013_phase18_causal_intelligence",
         })),
     },
   });
@@ -405,7 +405,7 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             storageMode: "postgres",
             databaseReachable: true,
             schemaCompatible: true,
-            supportedSchemaVersion: "012_phase17_governed_experiments",
+            supportedSchemaVersion: "013_phase18_causal_intelligence",
           }),
         },
       });
@@ -677,7 +677,7 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             storageMode: "postgres",
             databaseReachable: reachable,
             schemaCompatible: reachable,
-            supportedSchemaVersion: "012_phase17_governed_experiments",
+            supportedSchemaVersion: "013_phase18_causal_intelligence",
           }),
         },
       );
@@ -905,7 +905,7 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             storageMode: "postgres",
             databaseReachable: true,
             schemaCompatible: true,
-            supportedSchemaVersion: "012_phase17_governed_experiments",
+            supportedSchemaVersion: "013_phase18_causal_intelligence",
           }),
         },
       });

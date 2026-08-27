@@ -177,6 +177,16 @@ export function bindingHashForWorkKind(
     case "PROPOSE_ASSUMPTION_UPDATE":
       // Experiment work uses experimentWorkBindingHash; this path is fail-closed.
       return `experiment_misbound:${kind}:${fingerprints.runId}`;
+    case "PROPOSE_CAUSAL_GRAPH":
+    case "ANALYZE_IDENTIFICATION":
+    case "ESTIMATE_CAUSAL_EFFECT":
+    case "SYNTHESIZE_CAUSAL_EVIDENCE":
+    case "VALIDATE_CAUSAL_CLAIM":
+    case "ROUTE_CAUSAL_REVIEW":
+    case "PROMOTE_CAUSAL_CLAIM":
+    case "PROPOSE_MODEL_CALIBRATION":
+      // Causal work uses causalWorkBindingHash; this path is fail-closed.
+      return `causal_misbound:${kind}:${fingerprints.runId}`;
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

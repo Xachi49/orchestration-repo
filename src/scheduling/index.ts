@@ -7,9 +7,12 @@ export {
   workerSupportsKind,
   EXPERIMENT_SCHEDULER_WORK_KINDS,
   isExperimentSchedulerWorkKind,
+  CAUSAL_SCHEDULER_WORK_KINDS,
+  isCausalSchedulerWorkKind,
   type SchedulerWorkKind,
   type WorkerCapabilityLabel,
   type ExperimentSchedulerWorkKind,
+  type CausalSchedulerWorkKind,
 } from "./work-kind.js";
 export {
   PRIORITY_CLASSES,
@@ -46,6 +49,10 @@ export {
   candidateExperimentWorkKinds,
   experimentWorkBindingHash,
 } from "./experiment-discovery-map.js";
+export {
+  candidateCausalWorkKinds,
+  causalWorkBindingHash,
+} from "./causal-discovery-map.js";
 export {
   candidateScenarioWorkKinds,
   scenarioWorkBindingHash,

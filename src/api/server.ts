@@ -30,6 +30,7 @@ import { registerProgramRoutes } from "./programs.js";
 import { registerPortfolioRoutes } from "./portfolios.js";
 import { registerDecisionRoutes } from "./decisions.js";
 import { registerExperimentRoutes } from "./experiments.js";
+import { registerCausalRoutes } from "./causal.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository, ProgramPlanRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -48,6 +49,12 @@ import type {
   ExperimentRepository,
   ExperimentEvidenceBundleRepository,
 } from "../experiments/repositories.js";
+import type { CausalOrchestrationService } from "../causal/service.js";
+import type {
+  CausalQuestionRepository,
+  PromotedCausalClaimRepository,
+  DecisionModelCalibrationCandidateRepository,
+} from "../causal/repositories.js";
 import { registerPerimeter, type PerimeterDeps } from "../runtime/perimeter.js";
 import { registerHealthRoutes, type HealthDeps } from "../runtime/health.js";
 
@@ -80,6 +87,10 @@ export interface ApiDeps {
   experimentService?: ExperimentOrchestrationService;
   experiments?: ExperimentRepository;
   experimentEvidenceBundles?: ExperimentEvidenceBundleRepository;
+  causalService?: CausalOrchestrationService;
+  causalQuestions?: CausalQuestionRepository;
+  promotedCausalClaims?: PromotedCausalClaimRepository;
+  causalCalibrationCandidates?: DecisionModelCalibrationCandidateRepository;
   storageMode?: StorageMode;
   runs?: RunRepository;
   readiness?: {
@@ -119,63 +130,69 @@ export async function buildServer(deps: ApiDeps = {}) {
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: deps.experimentService
-      ? 17
-      : deps.scenarioService
-        ? 16
-        : deps.portfolioService
-          ? 15
-          : deps.programService
-            ? 14
-            : deps.scheduler
-              ? 13
-              : observabilityEnabled
-                ? 12
-                : memoryEnabled
-                  ? 9
-                  : verificationEnabled
-                    ? 8
-                    : executionEnabled
-                      ? 7
-                      : approvalEnabled
-                        ? 6
-                        : deps.validation
-                          ? 5
-                          : 6,
-    milestone: deps.experimentService
-      ? 17
-      : deps.scenarioService
-        ? 16
-        : deps.portfolioService
-          ? 15
-          : deps.programService
-            ? 14
-            : deps.scheduler
-              ? 13
-              : 12,
-    orchestrator: deps.experimentService
-      ? "experiments"
-      : deps.scenarioService
-        ? "scenarios"
-        : deps.portfolioService
-          ? "portfolios"
-          : deps.programService
-            ? "programs"
-            : deps.scheduler
-              ? "scheduler"
-              : observabilityEnabled
-                ? "observability"
-                : memoryEnabled
-                  ? "memory"
-                  : verificationEnabled
-                    ? "verification"
-                    : executionEnabled
-                      ? "execution"
-                      : approvalEnabled
-                        ? "authorization"
-                        : deps.validation
-                          ? "validation"
-                          : "planning",
+    phase: deps.causalService
+      ? 18
+      : deps.experimentService
+        ? 17
+        : deps.scenarioService
+          ? 16
+          : deps.portfolioService
+            ? 15
+            : deps.programService
+              ? 14
+              : deps.scheduler
+                ? 13
+                : observabilityEnabled
+                  ? 12
+                  : memoryEnabled
+                    ? 9
+                    : verificationEnabled
+                      ? 8
+                      : executionEnabled
+                        ? 7
+                        : approvalEnabled
+                          ? 6
+                          : deps.validation
+                            ? 5
+                            : 6,
+    milestone: deps.causalService
+      ? 18
+      : deps.experimentService
+        ? 17
+        : deps.scenarioService
+          ? 16
+          : deps.portfolioService
+            ? 15
+            : deps.programService
+              ? 14
+              : deps.scheduler
+                ? 13
+                : 12,
+    orchestrator: deps.causalService
+      ? "causal"
+      : deps.experimentService
+        ? "experiments"
+        : deps.scenarioService
+          ? "scenarios"
+          : deps.portfolioService
+            ? "portfolios"
+            : deps.programService
+              ? "programs"
+              : deps.scheduler
+                ? "scheduler"
+                : observabilityEnabled
+                  ? "observability"
+                  : memoryEnabled
+                    ? "memory"
+                    : verificationEnabled
+                      ? "verification"
+                      : executionEnabled
+                        ? "execution"
+                        : approvalEnabled
+                          ? "authorization"
+                          : deps.validation
+                            ? "validation"
+                            : "planning",
     llmConnected: false,
     githubConnected: false,
     githubWritesEnabled: false,
@@ -289,6 +306,20 @@ export async function buildServer(deps: ApiDeps = {}) {
       experimentService: deps.experimentService,
       experiments: deps.experiments,
       evidenceBundles: deps.experimentEvidenceBundles,
+    });
+  }
+
+  if (
+    deps.causalService &&
+    deps.causalQuestions &&
+    deps.promotedCausalClaims &&
+    deps.causalCalibrationCandidates
+  ) {
+    registerCausalRoutes(app, {
+      causalService: deps.causalService,
+      questions: deps.causalQuestions,
+      promotedClaims: deps.promotedCausalClaims,
+      calibrationCandidates: deps.causalCalibrationCandidates,
     });
   }
 

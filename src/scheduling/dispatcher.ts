@@ -93,6 +93,30 @@ export interface PhaseDispatchPorts {
   proposeAssumptionUpdate: (
     experimentId: string,
   ) => Promise<{ resultRef?: string }>;
+  proposeCausalGraph: (
+    causalQuestionId: string,
+  ) => Promise<{ resultRef?: string }>;
+  analyzeIdentification: (
+    causalQuestionId: string,
+  ) => Promise<{ resultRef?: string }>;
+  estimateCausalEffect: (
+    causalQuestionId: string,
+  ) => Promise<{ resultRef?: string }>;
+  synthesizeCausalEvidence: (
+    causalQuestionId: string,
+  ) => Promise<{ resultRef?: string }>;
+  validateCausalClaim: (
+    causalQuestionId: string,
+  ) => Promise<{ resultRef?: string }>;
+  routeCausalReview: (
+    causalQuestionId: string,
+  ) => Promise<{ resultRef?: string }>;
+  promoteCausalClaim: (
+    causalQuestionId: string,
+  ) => Promise<{ resultRef?: string }>;
+  proposeModelCalibration: (
+    causalQuestionId: string,
+  ) => Promise<{ resultRef?: string }>;
   /**
    * Pre-dispatch readiness / binding recheck. Must fail closed on drift.
    */
@@ -234,6 +258,22 @@ export class SchedulerDispatcher {
         return this.ports.buildEvidenceBundle(work.runId);
       case "PROPOSE_ASSUMPTION_UPDATE":
         return this.ports.proposeAssumptionUpdate(work.runId);
+      case "PROPOSE_CAUSAL_GRAPH":
+        return this.ports.proposeCausalGraph(work.runId);
+      case "ANALYZE_IDENTIFICATION":
+        return this.ports.analyzeIdentification(work.runId);
+      case "ESTIMATE_CAUSAL_EFFECT":
+        return this.ports.estimateCausalEffect(work.runId);
+      case "SYNTHESIZE_CAUSAL_EVIDENCE":
+        return this.ports.synthesizeCausalEvidence(work.runId);
+      case "VALIDATE_CAUSAL_CLAIM":
+        return this.ports.validateCausalClaim(work.runId);
+      case "ROUTE_CAUSAL_REVIEW":
+        return this.ports.routeCausalReview(work.runId);
+      case "PROMOTE_CAUSAL_CLAIM":
+        return this.ports.promoteCausalClaim(work.runId);
+      case "PROPOSE_MODEL_CALIBRATION":
+        return this.ports.proposeModelCalibration(work.runId);
       default: {
         const _exhaustive: never = work.workKind;
         return _exhaustive;

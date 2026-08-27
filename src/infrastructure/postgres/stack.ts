@@ -243,6 +243,32 @@ import {
   Phase2ExperimentObjectiveAdmissionPort,
   Phase8ExperimentOutcomeVerificationPort,
 } from "../../experiments/index.js";
+import {
+  PostgresCausalQuestionRepository,
+  PostgresCausalGraphRepository,
+  PostgresCausalEvidenceReferenceRepository,
+  PostgresCausalIdentificationAnalysisRepository,
+  PostgresCausalEstimateRepository,
+  PostgresCausalEvidenceSynthesisRepository,
+  PostgresCausalClaimCandidateRepository,
+  PostgresCausalReviewRequestRepository,
+  PostgresCausalReviewRecordRepository,
+  PostgresPromotedCausalClaimRepository,
+  PostgresDecisionModelCalibrationCandidateRepository,
+  PostgresCausalEvidenceGapRepository,
+  PostgresCausalUsageLedgerRepository,
+} from "./repositories/causal.js";
+import {
+  FakeCausalGraphProposalModel,
+  CausalOrchestrationService,
+  CausalProgressionLoop,
+  CausalWorkMaterializer,
+  type InMemoryAuthoritativeExperimentEvidencePort,
+} from "../../causal/index.js";
+import {
+  PostgresAuthoritativeExperimentEvidencePort,
+  composeTestAuthoritativeExperimentEvidencePort,
+} from "./causal-authoritative-evidence.js";
 import { CryptoDecisionNonceGenerator } from "../../authorization/decision-nonce.js";
 
 export interface PostgresOrchestratorStack {
@@ -321,6 +347,12 @@ export interface PostgresOrchestratorStack {
   experimentService: ExperimentOrchestrationService;
   experimentProgression: ExperimentProgressionLoop;
   experimentWorkMaterializer: ExperimentWorkMaterializer;
+  causalQuestions: PostgresCausalQuestionRepository;
+  causalService: CausalOrchestrationService;
+  causalProgression: CausalProgressionLoop;
+  causalWorkMaterializer: CausalWorkMaterializer;
+  promotedCausalClaims: PostgresPromotedCausalClaimRepository;
+  causalCalibrationCandidates: PostgresDecisionModelCalibrationCandidateRepository;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -347,6 +379,11 @@ export async function createPostgresOrchestratorStack(options: {
   promotionFailpoint?: import("../../memory/promotion.js").PromotionFailpoint;
   schedulerGlobalMaxConcurrency?: number;
   defaultEnvironment?: string;
+  /**
+   * @internal TEST ONLY — PostgreSQL integration tests may supply in-memory
+   * authoritative evidence seeds. Bootstrap and production runtime must not set this.
+   */
+  testOnlyCausalEvidenceSeeds?: InMemoryAuthoritativeExperimentEvidencePort;
 }): Promise<PostgresOrchestratorStack> {
   const instanceId = options.instanceId ?? options.db.instanceId;
   const clock = options.clock ?? new SystemClock();
@@ -1143,6 +1180,75 @@ export async function createPostgresOrchestratorStack(options: {
     databaseReachable: () => db.ping(),
   });
 
+  const causalQuestions = new PostgresCausalQuestionRepository(db);
+  const causalGraphs = new PostgresCausalGraphRepository(db);
+  const causalEvidenceRefs = new PostgresCausalEvidenceReferenceRepository(db);
+  const causalIdentifications =
+    new PostgresCausalIdentificationAnalysisRepository(db);
+  const causalEstimates = new PostgresCausalEstimateRepository(db);
+  const causalSyntheses = new PostgresCausalEvidenceSynthesisRepository(db);
+  const causalClaims = new PostgresCausalClaimCandidateRepository(db);
+  const causalReviewRequests = new PostgresCausalReviewRequestRepository(db);
+  const causalReviewRecords = new PostgresCausalReviewRecordRepository(db);
+  const promotedCausalClaims = new PostgresPromotedCausalClaimRepository(db);
+  const causalCalibrationCandidates =
+    new PostgresDecisionModelCalibrationCandidateRepository(db);
+  const causalEvidenceGaps = new PostgresCausalEvidenceGapRepository(db);
+  const causalUsage = new PostgresCausalUsageLedgerRepository(db);
+  const postgresAuthoritativeExperimentEvidence =
+    new PostgresAuthoritativeExperimentEvidencePort({
+      experiments,
+      experimentPlans,
+      experimentEvidenceBundles,
+      experimentLineage,
+    });
+  const authoritativeExperimentEvidence = options.testOnlyCausalEvidenceSeeds
+    ? composeTestAuthoritativeExperimentEvidencePort(
+        postgresAuthoritativeExperimentEvidence,
+        options.testOnlyCausalEvidenceSeeds,
+      )
+    : postgresAuthoritativeExperimentEvidence;
+  const causalService = new CausalOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    questions: causalQuestions,
+    graphs: causalGraphs,
+    evidenceRefs: causalEvidenceRefs,
+    identifications: causalIdentifications,
+    estimates: causalEstimates,
+    syntheses: causalSyntheses,
+    claims: causalClaims,
+    reviewRequests: causalReviewRequests,
+    reviewRecords: causalReviewRecords,
+    promotedClaims: promotedCausalClaims,
+    calibrationCandidates: causalCalibrationCandidates,
+    evidenceGaps: causalEvidenceGaps,
+    usage: causalUsage,
+    controlPlane,
+    graphModel: new FakeCausalGraphProposalModel(),
+    nonceGenerator: new CryptoDecisionNonceGenerator(),
+    isCausalReviewer: (principalId, projectIds) =>
+      authorityDirectory.isCausalReviewerForAllProjects(
+        principalId,
+        projectIds,
+      ),
+    authoritativeExperimentEvidence,
+    transactions,
+  });
+  const causalWorkMaterializer = new CausalWorkMaterializer({
+    nowIso: () => clock.nowIso(),
+    questions: causalQuestions,
+    graphs: causalGraphs,
+    identifications: causalIdentifications,
+    claims: causalClaims,
+    workItems: schedulerWorkItems,
+    projectConfigs: schedulerProjectConfigs,
+  });
+  const causalProgression = new CausalProgressionLoop({
+    questions: causalQuestions,
+    materializer: causalWorkMaterializer,
+    databaseReachable: () => db.ping(),
+  });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -1171,6 +1277,8 @@ export async function createPostgresOrchestratorStack(options: {
     scenarioService,
     experiments,
     experimentService,
+    causalQuestions,
+    causalService,
   });
   const schedulerDispatcher = new SchedulerDispatcher(scheduler, schedulerPorts);
 
@@ -1250,6 +1358,12 @@ export async function createPostgresOrchestratorStack(options: {
     experimentService,
     experimentProgression,
     experimentWorkMaterializer,
+    causalQuestions,
+    causalService,
+    causalProgression,
+    causalWorkMaterializer,
+    promotedCausalClaims,
+    causalCalibrationCandidates,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

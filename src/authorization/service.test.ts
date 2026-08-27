@@ -810,6 +810,168 @@ describe("HumanAuthorizationService", () => {
   });
 });
 
+describe("ApprovalRequest reissue after burned nonce", () => {
+  it("reissues B while run remains AWAITING_APPROVAL and A stays terminal", async () => {
+    const { stack, runId, delivery } = await validatedRun();
+    const routed = await stack.authorizationRouting.route(runId);
+    if (routed.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+    const approvalRequestA = routed.approvalRequestId;
+    const nonceA = deliveredNonce(delivery, approvalRequestA);
+
+    await expect(
+      stack.humanAuthorization.decide({
+        approvalRequestId: approvalRequestA,
+        approverId: "totally_unknown",
+        decision: "APPROVE",
+        submittedAt: stack.clock.nowIso(),
+        decisionNonce: nonceA,
+      }),
+    ).rejects.toMatchObject({ code: "UNKNOWN_APPROVER" });
+
+    expect((await stack.runs.getById(runId))?.state).toBe("AWAITING_APPROVAL");
+    expect(
+      (await stack.approvalRequests.getById(approvalRequestA))?.status,
+    ).toBe("PENDING");
+
+    await expect(
+      stack.humanAuthorization.decide({
+        approvalRequestId: approvalRequestA,
+        approverId: "approver_bootstrap",
+        decision: "APPROVE",
+        submittedAt: stack.clock.nowIso(),
+        decisionNonce: nonceA,
+      }),
+    ).rejects.toMatchObject({ code: "AUTHORIZATION_DECISION_REPLAYED" });
+
+    const reissued = await stack.humanAuthorization.reissueApprovalRequest({
+      runId,
+      replacedApprovalRequestId: approvalRequestA,
+    });
+
+    expect(reissued.runState).toBe("AWAITING_APPROVAL");
+    expect((await stack.runs.getById(runId))?.state).toBe("AWAITING_APPROVAL");
+    expect(reissued.approvalRequestId).not.toBe(approvalRequestA);
+    expect(reissued.replacesApprovalRequestId).toBe(approvalRequestA);
+    expect(
+      (await stack.approvalRequests.getById(approvalRequestA))?.status,
+    ).toBe("CANCELLED");
+
+    const pending = await stack.approvalRequests.getPendingByRun(runId);
+    expect(pending?.approvalRequestId).toBe(reissued.approvalRequestId);
+    expect(pending?.replacesApprovalRequestId).toBe(approvalRequestA);
+    expect(pending?.planHash).toBe(reissued.planHash);
+    expect(
+      (await stack.approvalRequests.listByRun(runId)).filter(
+        (r) => r.status === "PENDING",
+      ),
+    ).toHaveLength(1);
+
+    const nonceB = deliveredNonce(delivery, reissued.approvalRequestId);
+    expect(nonceB).not.toBe(nonceA);
+    expect(hashDecisionNonce(nonceB)).toBe(pending!.decisionNonceHash);
+
+    const approved = await stack.humanAuthorization.decide({
+      approvalRequestId: reissued.approvalRequestId,
+      approverId: "approver_bootstrap",
+      decision: "APPROVE",
+      submittedAt: stack.clock.nowIso(),
+      decisionNonce: nonceB,
+    });
+    expect(approved.result).toBe("APPROVED");
+  });
+
+  it("rejects reissue when nonce is still usable", async () => {
+    const { stack, runId } = await validatedRun();
+    const routed = await stack.authorizationRouting.route(runId);
+    if (routed.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+    await expect(
+      stack.humanAuthorization.reissueApprovalRequest({
+        runId,
+        replacedApprovalRequestId: routed.approvalRequestId,
+      }),
+    ).rejects.toMatchObject({ code: "APPROVAL_REISSUE_NOT_ELIGIBLE" });
+  });
+
+  it("concurrent reissue attempts yield one live PENDING replacement", async () => {
+    const { stack, runId, delivery } = await validatedRun();
+    const routed = await stack.authorizationRouting.route(runId);
+    if (routed.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+    const approvalRequestA = routed.approvalRequestId;
+    const nonceA = deliveredNonce(delivery, approvalRequestA);
+    await expect(
+      stack.humanAuthorization.decide({
+        approvalRequestId: approvalRequestA,
+        approverId: "totally_unknown",
+        decision: "APPROVE",
+        submittedAt: stack.clock.nowIso(),
+        decisionNonce: nonceA,
+      }),
+    ).rejects.toMatchObject({ code: "UNKNOWN_APPROVER" });
+
+    const [first, second] = await Promise.all([
+      stack.humanAuthorization.reissueApprovalRequest({
+        runId,
+        replacedApprovalRequestId: approvalRequestA,
+      }),
+      stack.humanAuthorization.reissueApprovalRequest({
+        runId,
+        replacedApprovalRequestId: approvalRequestA,
+      }),
+    ]);
+
+    expect(first.approvalRequestId).toBe(second.approvalRequestId);
+    expect(first.replacesApprovalRequestId).toBe(approvalRequestA);
+    expect(
+      (await stack.approvalRequests.listByRun(runId)).filter(
+        (r) => r.status === "PENDING",
+      ),
+    ).toHaveLength(1);
+    expect((await stack.runs.getById(runId))?.state).toBe("AWAITING_APPROVAL");
+  });
+
+  it("does not regress through REVISING or call route() for replacement", async () => {
+    const { stack, runId, delivery } = await validatedRun();
+    const routed = await stack.authorizationRouting.route(runId);
+    if (routed.outcome !== "PENDING_APPROVAL") {
+      throw new Error("expected pending");
+    }
+    const approvalRequestA = routed.approvalRequestId;
+    await expect(
+      stack.humanAuthorization.decide({
+        approvalRequestId: approvalRequestA,
+        approverId: "totally_unknown",
+        decision: "APPROVE",
+        submittedAt: stack.clock.nowIso(),
+        decisionNonce: deliveredNonce(delivery, approvalRequestA),
+      }),
+    ).rejects.toMatchObject({ code: "UNKNOWN_APPROVER" });
+
+    const before = (await stack.runs.getById(runId))!;
+    const reissued = await stack.humanAuthorization.reissueApprovalRequest({
+      runId,
+      replacedApprovalRequestId: approvalRequestA,
+    });
+    const after = (await stack.runs.getById(runId))!;
+    expect(before.state).toBe("AWAITING_APPROVAL");
+    expect(after.state).toBe("AWAITING_APPROVAL");
+    expect(after.recordRevision).toBe(before.recordRevision);
+    expect(reissued.runState).toBe("AWAITING_APPROVAL");
+
+    // route() from AWAITING_APPROVAL with live pending returns ALREADY_ROUTED
+    const secondRoute = await stack.authorizationRouting.route(runId);
+    expect(secondRoute.outcome).toBe("ALREADY_ROUTED");
+    if (secondRoute.outcome === "ALREADY_ROUTED") {
+      expect(secondRoute.approvalRequestId).toBe(reissued.approvalRequestId);
+    }
+  });
+});
+
 describe("approval window default", () => {
   it("uses 24h default window", () => {
     expect(DEFAULT_APPROVAL_WINDOW_MS).toBe(24 * 60 * 60 * 1000);

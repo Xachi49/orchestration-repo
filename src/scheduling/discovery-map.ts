@@ -167,6 +167,16 @@ export function bindingHashForWorkKind(
     case "MATERIALIZE_PORTFOLIO_PROPOSAL":
       // Scenario work uses scenarioWorkBindingHash; this path is fail-closed.
       return `scenario_misbound:${kind}:${fingerprints.runId}`;
+    case "DESIGN_EXPERIMENT":
+    case "VALIDATE_EXPERIMENT":
+    case "ROUTE_EXPERIMENT_AUTHORIZATION":
+    case "COMPILE_EXPERIMENT_EXECUTION":
+    case "RECONCILE_EXPERIMENT":
+    case "VERIFY_EXPERIMENT":
+    case "BUILD_EVIDENCE_BUNDLE":
+    case "PROPOSE_ASSUMPTION_UPDATE":
+      // Experiment work uses experimentWorkBindingHash; this path is fail-closed.
+      return `experiment_misbound:${kind}:${fingerprints.runId}`;
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

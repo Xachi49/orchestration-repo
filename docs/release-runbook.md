@@ -3,7 +3,13 @@
 ## Versioning
 
 Application version is `package.json` version plus optional `GIT_COMMIT_SHA` / `BUILD_TIMESTAMP`.
-Schema version is migration `011_phase16_scenario_intelligence` (Phase 16). Application and schema versions are independent.
+Schema version is migration `012_phase17_governed_experiments` (Phase 17). Application and schema versions are independent.
+
+Migration `012_phase17_governed_experiments` adds governed experiments, plans,
+sponsor authorization, execution lineage, results, evidence bundles, completion,
+assumption update candidates, usage ledgers, scheduler experiment work kinds,
+and `EXPERIMENT_SPONSOR`. See
+[phase-17-governed-experimentation.md](phase-17-governed-experimentation.md).
 
 Migration `011_phase16_scenario_intelligence` adds strategic decision problems,
 scenario sets, simulation results, decision packages, strategy selection,

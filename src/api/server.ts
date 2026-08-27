@@ -29,6 +29,7 @@ import { registerSchedulerRoutes } from "./scheduler.js";
 import { registerProgramRoutes } from "./programs.js";
 import { registerPortfolioRoutes } from "./portfolios.js";
 import { registerDecisionRoutes } from "./decisions.js";
+import { registerExperimentRoutes } from "./experiments.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository, ProgramPlanRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -42,6 +43,11 @@ import type {
   DecisionPackageRepository,
   ScenarioCalibrationRepository,
 } from "../scenarios/repositories.js";
+import type { ExperimentOrchestrationService } from "../experiments/service.js";
+import type {
+  ExperimentRepository,
+  ExperimentEvidenceBundleRepository,
+} from "../experiments/repositories.js";
 import { registerPerimeter, type PerimeterDeps } from "../runtime/perimeter.js";
 import { registerHealthRoutes, type HealthDeps } from "../runtime/health.js";
 
@@ -71,6 +77,9 @@ export interface ApiDeps {
   decisionProblems?: DecisionProblemRepository;
   decisionPackages?: DecisionPackageRepository;
   calibrationRecords?: ScenarioCalibrationRepository;
+  experimentService?: ExperimentOrchestrationService;
+  experiments?: ExperimentRepository;
+  experimentEvidenceBundles?: ExperimentEvidenceBundleRepository;
   storageMode?: StorageMode;
   runs?: RunRepository;
   readiness?: {
@@ -110,57 +119,63 @@ export async function buildServer(deps: ApiDeps = {}) {
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: deps.scenarioService
-      ? 16
-      : deps.portfolioService
-        ? 15
-        : deps.programService
-          ? 14
-          : deps.scheduler
-            ? 13
-            : observabilityEnabled
-              ? 12
-              : memoryEnabled
-                ? 9
-                : verificationEnabled
-                  ? 8
-                  : executionEnabled
-                    ? 7
-                    : approvalEnabled
-                      ? 6
-                      : deps.validation
-                        ? 5
-                        : 6,
-    milestone: deps.scenarioService
-      ? 16
-      : deps.portfolioService
-        ? 15
-        : deps.programService
-          ? 14
-          : deps.scheduler
-            ? 13
-            : 12,
-    orchestrator: deps.scenarioService
-      ? "scenarios"
-      : deps.portfolioService
-        ? "portfolios"
-        : deps.programService
-          ? "programs"
-          : deps.scheduler
-            ? "scheduler"
-            : observabilityEnabled
-              ? "observability"
-              : memoryEnabled
-                ? "memory"
-                : verificationEnabled
-                  ? "verification"
-                  : executionEnabled
-                    ? "execution"
-                    : approvalEnabled
-                      ? "authorization"
-                      : deps.validation
-                        ? "validation"
-                        : "planning",
+    phase: deps.experimentService
+      ? 17
+      : deps.scenarioService
+        ? 16
+        : deps.portfolioService
+          ? 15
+          : deps.programService
+            ? 14
+            : deps.scheduler
+              ? 13
+              : observabilityEnabled
+                ? 12
+                : memoryEnabled
+                  ? 9
+                  : verificationEnabled
+                    ? 8
+                    : executionEnabled
+                      ? 7
+                      : approvalEnabled
+                        ? 6
+                        : deps.validation
+                          ? 5
+                          : 6,
+    milestone: deps.experimentService
+      ? 17
+      : deps.scenarioService
+        ? 16
+        : deps.portfolioService
+          ? 15
+          : deps.programService
+            ? 14
+            : deps.scheduler
+              ? 13
+              : 12,
+    orchestrator: deps.experimentService
+      ? "experiments"
+      : deps.scenarioService
+        ? "scenarios"
+        : deps.portfolioService
+          ? "portfolios"
+          : deps.programService
+            ? "programs"
+            : deps.scheduler
+              ? "scheduler"
+              : observabilityEnabled
+                ? "observability"
+                : memoryEnabled
+                  ? "memory"
+                  : verificationEnabled
+                    ? "verification"
+                    : executionEnabled
+                      ? "execution"
+                      : approvalEnabled
+                        ? "authorization"
+                        : deps.validation
+                          ? "validation"
+                          : "planning",
     llmConnected: false,
     githubConnected: false,
     githubWritesEnabled: false,
@@ -262,6 +277,18 @@ export async function buildServer(deps: ApiDeps = {}) {
       decisionProblems: deps.decisionProblems,
       decisionPackages: deps.decisionPackages,
       calibrationRecords: deps.calibrationRecords,
+    });
+  }
+
+  if (
+    deps.experimentService &&
+    deps.experiments &&
+    deps.experimentEvidenceBundles
+  ) {
+    registerExperimentRoutes(app, {
+      experimentService: deps.experimentService,
+      experiments: deps.experiments,
+      evidenceBundles: deps.experimentEvidenceBundles,
     });
   }
 

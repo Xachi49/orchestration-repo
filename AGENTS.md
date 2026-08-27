@@ -72,3 +72,17 @@ Calibration records are observational — never selection authority.
 Each selected scenario still requires Phase 15 portfolio authorization before
 Programs materialize. Each Program still requires Phase 14 materialization
 authorization. Each child still requires Phase 6 execution authorization.
+
+## Experiments (Phase 17)
+
+GOVERNED EXPERIMENTATION proposes bounded measurement of assumptions.
+It cannot create execution authority.
+
+EXPERIMENT_SPONSOR ≠ STRATEGY_SELECTOR ≠ PORTFOLIO_ALLOCATOR ≠ PROGRAM_MATERIALIZER ≠ APPROVER.
+
+Experiment authorization approves design / sponsorship only — not Phase 6
+execution. Compilation produces lineage and compiled objectives; child Runs
+still require Phase 6 authorization before any ExecutionAttempt.
+
+Experiments produce evidence. They do not produce authority. Assumption update
+candidates require Phase 16 re-analysis — never mutate AssumptionSets in place.

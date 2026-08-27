@@ -1614,3 +1614,12 @@ not portfolio authorization or execution. Simulation produces estimates;
 calibration is observational. Portfolio proposal materialization is admit-only
 and does not bypass Phase 15 authorization.
 
+## Phase 17 — Governed experimentation
+
+See [docs/phase-17-governed-experimentation.md](phase-17-governed-experimentation.md).
+
+Governed experiments design bounded measurements of assumptions and route
+**EXPERIMENT_SPONSOR** approval. Sponsorship does not authorize Phase 6
+execution. Compilation produces lineage only; verified evidence and assumption
+update candidates never create authority.
+

@@ -76,6 +76,7 @@ import type { PostgresLeaseStore } from "./leases.js";
 import { PostgresExecutionResultRepository } from "./repositories/phase-stores.js";
 
 const BINDINGS_COLLECTION = "authorization_bindings";
+const REISSUE_COLLECTION = "authorization_reissues";
 const VERIFICATION_RESULTS_COLLECTION = "verification_results";
 
 function makeOwnerToken(instanceId: string, fenceToken: number): string {
@@ -1016,6 +1017,112 @@ export class PostgresAuthorizationCoordinator
       superseded.push(updated);
     }
     return superseded;
+  }
+
+  async beginReissue(
+    replacedApprovalRequestId: string,
+  ): Promise<
+    | { outcome: "PROCEED" }
+    | { outcome: "ALREADY"; approvalRequestId: string }
+  > {
+    const existingId = await this.getReissueReplacementId(
+      replacedApprovalRequestId,
+    );
+    if (existingId) {
+      return { outcome: "ALREADY", approvalRequestId: existingId };
+    }
+    const uniqueKey = `reissue:${replacedApprovalRequestId}`;
+    try {
+      await this.docs.insert({
+        collection: REISSUE_COLLECTION,
+        documentId: uniqueKey,
+        uniqueKey,
+        runId: replacedApprovalRequestId,
+        projectId: "authorization_reissue",
+        payload: {
+          replacedApprovalRequestId,
+          status: "IN_FLIGHT",
+        },
+      });
+      return { outcome: "PROCEED" };
+    } catch (error) {
+      if (error instanceof DurabilityError && error.code === "DURABLE_CONFLICT") {
+        // Peer claimed first — wait briefly for completion then return ALREADY.
+        for (let i = 0; i < 50; i += 1) {
+          const id = await this.getReissueReplacementId(
+            replacedApprovalRequestId,
+          );
+          if (id) {
+            return { outcome: "ALREADY", approvalRequestId: id };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        const raced = await this.getReissueReplacementId(
+          replacedApprovalRequestId,
+        );
+        if (raced) {
+          return { outcome: "ALREADY", approvalRequestId: raced };
+        }
+        throw new AuthorizationError(
+          "APPROVAL_REISSUE_NOT_ELIGIBLE",
+          "Concurrent approval reissue did not complete",
+          { replacedApprovalRequestId },
+        );
+      }
+      throw error;
+    }
+  }
+
+  async completeReissue(
+    replacedApprovalRequestId: string,
+    replacementApprovalRequestId: string,
+  ): Promise<void> {
+    const uniqueKey = `reissue:${replacedApprovalRequestId}`;
+    await this.db.query(
+      `UPDATE json_documents
+       SET payload = $3::jsonb
+       WHERE collection = $1 AND unique_key = $2`,
+      [
+        REISSUE_COLLECTION,
+        uniqueKey,
+        JSON.stringify({
+          replacedApprovalRequestId,
+          replacementApprovalRequestId,
+          status: "COMPLETE",
+        }),
+      ],
+    );
+  }
+
+  async failReissue(replacedApprovalRequestId: string): Promise<void> {
+    const uniqueKey = `reissue:${replacedApprovalRequestId}`;
+    await this.db.query(
+      `DELETE FROM json_documents
+       WHERE collection = $1 AND unique_key = $2
+         AND payload->>'status' = 'IN_FLIGHT'`,
+      [REISSUE_COLLECTION, uniqueKey],
+    );
+  }
+
+  async getReissueReplacementId(
+    replacedApprovalRequestId: string,
+  ): Promise<string | null> {
+    const uniqueKey = `reissue:${replacedApprovalRequestId}`;
+    const row = await this.docs.getByUniqueKey(
+      REISSUE_COLLECTION,
+      uniqueKey,
+      (input: unknown) => {
+        const value = input as {
+          replacementApprovalRequestId?: string;
+          status?: string;
+        };
+        return value;
+      },
+    );
+    if (!row || row.status !== "COMPLETE" || !row.replacementApprovalRequestId) {
+      return null;
+    }
+    return row.replacementApprovalRequestId;
   }
 
   private async clearBindingsForRequest(approvalRequestId: string): Promise<void> {

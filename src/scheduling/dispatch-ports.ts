@@ -14,8 +14,11 @@ import type { SchedulerWorkKind } from "./work-kind.js";
 import { isProgramSchedulerWorkKind } from "./work-kind.js";
 import { isPortfolioSchedulerWorkKind } from "./work-kind.js";
 import { isScenarioSchedulerWorkKind } from "./work-kind.js";
+import { isExperimentSchedulerWorkKind } from "./work-kind.js";
 import type { ScenarioOrchestrationService } from "../scenarios/service.js";
 import type { DecisionProblemRepository } from "../scenarios/repositories.js";
+import type { ExperimentOrchestrationService } from "../experiments/service.js";
+import type { ExperimentRepository } from "../experiments/repositories.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -78,6 +81,9 @@ export interface PhaseDispatchPortsDeps {
   /** Phase 16 scenario progression ports (optional until wired). */
   decisionProblems?: DecisionProblemRepository;
   scenarioService?: ScenarioOrchestrationService;
+  /** Phase 17 experiment progression ports (optional until wired). */
+  experiments?: ExperimentRepository;
+  experimentService?: ExperimentOrchestrationService;
 }
 
 const DEFAULT_OBSERVABILITY_WINDOW: { kind: MetricWindowKind; lastN: number } =
@@ -129,6 +135,15 @@ function bindingDriftReasonCode(kind: SchedulerWorkKind): string {
     case "ROUTE_STRATEGY_SELECTION":
     case "MATERIALIZE_PORTFOLIO_PROPOSAL":
       return "SCENARIO_BINDING_CHANGED";
+    case "DESIGN_EXPERIMENT":
+    case "VALIDATE_EXPERIMENT":
+    case "ROUTE_EXPERIMENT_AUTHORIZATION":
+    case "COMPILE_EXPERIMENT_EXECUTION":
+    case "RECONCILE_EXPERIMENT":
+    case "VERIFY_EXPERIMENT":
+    case "BUILD_EVIDENCE_BUNDLE":
+    case "PROPOSE_ASSUMPTION_UPDATE":
+      return "EXPERIMENT_BINDING_CHANGED";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -188,6 +203,15 @@ export function createPhaseDispatchPorts(
       case "VALIDATE_DECISION_PACKAGE":
       case "ROUTE_STRATEGY_SELECTION":
       case "MATERIALIZE_PORTFOLIO_PROPOSAL":
+        return null;
+      case "DESIGN_EXPERIMENT":
+      case "VALIDATE_EXPERIMENT":
+      case "ROUTE_EXPERIMENT_AUTHORIZATION":
+      case "COMPILE_EXPERIMENT_EXECUTION":
+      case "RECONCILE_EXPERIMENT":
+      case "VERIFY_EXPERIMENT":
+      case "BUILD_EVIDENCE_BUNDLE":
+      case "PROPOSE_ASSUMPTION_UPDATE":
         return null;
       default: {
         const _exhaustive: never = kind;
@@ -447,7 +471,128 @@ export function createPhaseDispatchPorts(
       return { resultRef: result.lineage.lineageId };
     },
 
+    async designExperiment(experimentId) {
+      if (!deps.experimentService) {
+        throw new Error("Experiment service not configured");
+      }
+      const result = await deps.experimentService.design(experimentId);
+      return { resultRef: result.plan.experimentPlanHash };
+    },
+
+    async validateExperiment(experimentId) {
+      if (!deps.experimentService) {
+        throw new Error("Experiment service not configured");
+      }
+      const result = await deps.experimentService.validate(experimentId);
+      return { resultRef: result.experiment.status };
+    },
+
+    async routeExperimentAuthorization(experimentId) {
+      if (!deps.experimentService) {
+        throw new Error("Experiment service not configured");
+      }
+      const result =
+        await deps.experimentService.routeAuthorization(experimentId);
+      return { resultRef: result.request.authorizationId };
+    },
+
+    async compileExperimentExecution(experimentId) {
+      if (!deps.experimentService) {
+        throw new Error("Experiment service not configured");
+      }
+      const result =
+        await deps.experimentService.compileExecution(experimentId);
+      return { resultRef: result.lineage.lineageId };
+    },
+
+    async reconcileExperiment(experimentId) {
+      if (!deps.experimentService) {
+        throw new Error("Experiment service not configured");
+      }
+      // Producer-facing reconcile: recheck truth; do not invent Phase 6 auth.
+      const experiment =
+        await deps.experiments?.getById(experimentId);
+      if (experiment) {
+        await deps.experimentService.recheckTruthOrMarkStale(experiment);
+      }
+      return { resultRef: experimentId };
+    },
+
+    async verifyExperiment(experimentId) {
+      if (!deps.experimentService) {
+        throw new Error("Experiment service not configured");
+      }
+      const result = await deps.experimentService.verifyAndComplete(experimentId);
+      return { resultRef: result.completion.completionRecordId };
+    },
+
+    async buildEvidenceBundle(experimentId) {
+      if (!deps.experimentService) {
+        throw new Error("Experiment service not configured");
+      }
+      // Evidence is built inside verifyAndComplete; this kind is idempotent reuse.
+      const result = await deps.experimentService.verifyAndComplete(experimentId);
+      return { resultRef: result.evidenceBundle.evidenceBundleId };
+    },
+
+    async proposeAssumptionUpdate(experimentId) {
+      if (!deps.experimentService) {
+        throw new Error("Experiment service not configured");
+      }
+      const result = await deps.experimentService.verifyAndComplete(experimentId);
+      return {
+        resultRef: result.updateCandidates[0]?.candidateId ?? experimentId,
+      };
+    },
+
     async assertDispatchReady(work: SchedulerWorkItem) {
+      if (isExperimentSchedulerWorkKind(work.workKind)) {
+        if (!deps.experiments) {
+          return {
+            ok: false as const,
+            reasonCode: "EXPERIMENT_SERVICE_MISSING",
+            message: "Experiment repository not configured for dispatch",
+          };
+        }
+        const experiment = await deps.experiments.getById(work.runId);
+        if (!experiment) {
+          return {
+            ok: false as const,
+            reasonCode: "EXPERIMENT_NOT_FOUND",
+            message: `Experiment ${work.runId} no longer exists`,
+          };
+        }
+        if (experiment.projectId !== work.projectId) {
+          return {
+            ok: false as const,
+            reasonCode: "EXPERIMENT_PROJECT_MISMATCH",
+            message: `Experiment ${work.runId} belongs to a different project`,
+          };
+        }
+        if (
+          work.workKind === "ROUTE_EXPERIMENT_AUTHORIZATION" &&
+          experiment.status !== "AWAITING_AUTHORIZATION"
+        ) {
+          return {
+            ok: false as const,
+            reasonCode: "EXPERIMENT_STATE_CONFLICT",
+            message: `Experiment ${work.runId} not awaiting authorization`,
+          };
+        }
+        if (
+          work.workKind === "COMPILE_EXPERIMENT_EXECUTION" &&
+          experiment.status !== "AUTHORIZED" &&
+          experiment.status !== "AWAITING_EXECUTION_AUTHORIZATION"
+        ) {
+          return {
+            ok: false as const,
+            reasonCode: "EXPERIMENT_AUTHORIZATION_REQUIRED",
+            message: `Experiment ${work.runId} requires sponsor authorization first`,
+          };
+        }
+        return { ok: true as const };
+      }
+
       if (isScenarioSchedulerWorkKind(work.workKind)) {
         if (!deps.decisionProblems) {
           return {

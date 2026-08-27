@@ -34,6 +34,14 @@ export const SCHEDULER_WORK_KINDS = [
   "VALIDATE_DECISION_PACKAGE",
   "ROUTE_STRATEGY_SELECTION",
   "MATERIALIZE_PORTFOLIO_PROPOSAL",
+  "DESIGN_EXPERIMENT",
+  "VALIDATE_EXPERIMENT",
+  "ROUTE_EXPERIMENT_AUTHORIZATION",
+  "COMPILE_EXPERIMENT_EXECUTION",
+  "RECONCILE_EXPERIMENT",
+  "VERIFY_EXPERIMENT",
+  "BUILD_EVIDENCE_BUNDLE",
+  "PROPOSE_ASSUMPTION_UPDATE",
 ] as const;
 
 export type SchedulerWorkKind = (typeof SCHEDULER_WORK_KINDS)[number];
@@ -95,6 +103,26 @@ export function isScenarioSchedulerWorkKind(
   return (SCENARIO_SCHEDULER_WORK_KINDS as readonly string[]).includes(kind);
 }
 
+export const EXPERIMENT_SCHEDULER_WORK_KINDS = [
+  "DESIGN_EXPERIMENT",
+  "VALIDATE_EXPERIMENT",
+  "ROUTE_EXPERIMENT_AUTHORIZATION",
+  "COMPILE_EXPERIMENT_EXECUTION",
+  "RECONCILE_EXPERIMENT",
+  "VERIFY_EXPERIMENT",
+  "BUILD_EVIDENCE_BUNDLE",
+  "PROPOSE_ASSUMPTION_UPDATE",
+] as const satisfies readonly SchedulerWorkKind[];
+
+export type ExperimentSchedulerWorkKind =
+  (typeof EXPERIMENT_SCHEDULER_WORK_KINDS)[number];
+
+export function isExperimentSchedulerWorkKind(
+  kind: SchedulerWorkKind,
+): kind is ExperimentSchedulerWorkKind {
+  return (EXPERIMENT_SCHEDULER_WORK_KINDS as readonly string[]).includes(kind);
+}
+
 export const WORKER_CAPABILITY_LABELS = [
   "INGESTION",
   "PLANNING",
@@ -107,6 +135,7 @@ export const WORKER_CAPABILITY_LABELS = [
   "PROGRAM_ORCHESTRATION",
   "PORTFOLIO_ORCHESTRATION",
   "SCENARIO_ORCHESTRATION",
+  "EXPERIMENT_ORCHESTRATION",
   "ALL",
 ] as const;
 
@@ -156,6 +185,15 @@ export function workKindToCapability(
     case "ROUTE_STRATEGY_SELECTION":
     case "MATERIALIZE_PORTFOLIO_PROPOSAL":
       return "SCENARIO_ORCHESTRATION";
+    case "DESIGN_EXPERIMENT":
+    case "VALIDATE_EXPERIMENT":
+    case "ROUTE_EXPERIMENT_AUTHORIZATION":
+    case "COMPILE_EXPERIMENT_EXECUTION":
+    case "RECONCILE_EXPERIMENT":
+    case "VERIFY_EXPERIMENT":
+    case "BUILD_EVIDENCE_BUNDLE":
+    case "PROPOSE_ASSUMPTION_UPDATE":
+      return "EXPERIMENT_ORCHESTRATION";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

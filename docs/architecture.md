@@ -1634,3 +1634,16 @@ advisory knowledge only — never policy or execution authority. Phase 9 uses
 dedicated causal storage with advisory retrieval; there is no second memory
 authority. **Causal knowledge informs decisions. It does not authorize them.**
 
+## Phase 19 — Decision policy optimization
+
+See [docs/phase-19-decision-policy-optimization.md](phase-19-decision-policy-optimization.md).
+
+Decision contexts define observable state and eligible bounded actions.
+Candidate policies use a deterministic predicate DSL (no arbitrary code).
+Offline evaluation and champion/challenger comparison produce evidence only.
+**DECISION_POLICY_APPROVER** grants SHADOW eligibility; **DECISION_POLICY_ACTIVATOR**
+grants recommendation authority. Shadow mode creates zero downstream work.
+Live recommendations are not execution — they enter declared Phase 2/14/15/17
+paths and still require those phases' human authorization.
+**A Decision Policy recommends. It does not govern the governor. It does not execute.**
+

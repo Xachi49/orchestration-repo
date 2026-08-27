@@ -50,6 +50,15 @@ export const SCHEDULER_WORK_KINDS = [
   "ROUTE_CAUSAL_REVIEW",
   "PROMOTE_CAUSAL_CLAIM",
   "PROPOSE_MODEL_CALIBRATION",
+  "SYNTHESIZE_DECISION_POLICY",
+  "VALIDATE_DECISION_POLICY",
+  "EVALUATE_DECISION_POLICY",
+  "ROUTE_POLICY_APPROVAL",
+  "RUN_POLICY_SHADOW",
+  "EVALUATE_POLICY_SHADOW",
+  "ROUTE_POLICY_ACTIVATION",
+  "GENERATE_DECISION_RECOMMENDATION",
+  "PROPOSE_POLICY_REVISION",
 ] as const;
 
 export type SchedulerWorkKind = (typeof SCHEDULER_WORK_KINDS)[number];
@@ -151,6 +160,29 @@ export function isCausalSchedulerWorkKind(
   return (CAUSAL_SCHEDULER_WORK_KINDS as readonly string[]).includes(kind);
 }
 
+export const DECISION_POLICY_SCHEDULER_WORK_KINDS = [
+  "SYNTHESIZE_DECISION_POLICY",
+  "VALIDATE_DECISION_POLICY",
+  "EVALUATE_DECISION_POLICY",
+  "ROUTE_POLICY_APPROVAL",
+  "RUN_POLICY_SHADOW",
+  "EVALUATE_POLICY_SHADOW",
+  "ROUTE_POLICY_ACTIVATION",
+  "GENERATE_DECISION_RECOMMENDATION",
+  "PROPOSE_POLICY_REVISION",
+] as const satisfies readonly SchedulerWorkKind[];
+
+export type DecisionPolicySchedulerWorkKind =
+  (typeof DECISION_POLICY_SCHEDULER_WORK_KINDS)[number];
+
+export function isDecisionPolicySchedulerWorkKind(
+  kind: SchedulerWorkKind,
+): kind is DecisionPolicySchedulerWorkKind {
+  return (DECISION_POLICY_SCHEDULER_WORK_KINDS as readonly string[]).includes(
+    kind,
+  );
+}
+
 export const WORKER_CAPABILITY_LABELS = [
   "INGESTION",
   "PLANNING",
@@ -165,6 +197,7 @@ export const WORKER_CAPABILITY_LABELS = [
   "SCENARIO_ORCHESTRATION",
   "EXPERIMENT_ORCHESTRATION",
   "CAUSAL_ORCHESTRATION",
+  "DECISION_POLICY_ORCHESTRATION",
   "ALL",
 ] as const;
 
@@ -232,6 +265,16 @@ export function workKindToCapability(
     case "PROMOTE_CAUSAL_CLAIM":
     case "PROPOSE_MODEL_CALIBRATION":
       return "CAUSAL_ORCHESTRATION";
+    case "SYNTHESIZE_DECISION_POLICY":
+    case "VALIDATE_DECISION_POLICY":
+    case "EVALUATE_DECISION_POLICY":
+    case "ROUTE_POLICY_APPROVAL":
+    case "RUN_POLICY_SHADOW":
+    case "EVALUATE_POLICY_SHADOW":
+    case "ROUTE_POLICY_ACTIVATION":
+    case "GENERATE_DECISION_RECOMMENDATION":
+    case "PROPOSE_POLICY_REVISION":
+      return "DECISION_POLICY_ORCHESTRATION";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

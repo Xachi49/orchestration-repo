@@ -117,6 +117,33 @@ export interface PhaseDispatchPorts {
   proposeModelCalibration: (
     causalQuestionId: string,
   ) => Promise<{ resultRef?: string }>;
+  synthesizeDecisionPolicy: (
+    decisionPolicyId: string,
+  ) => Promise<{ resultRef?: string }>;
+  validateDecisionPolicy: (
+    decisionPolicyId: string,
+  ) => Promise<{ resultRef?: string }>;
+  evaluateDecisionPolicy: (
+    decisionPolicyId: string,
+  ) => Promise<{ resultRef?: string }>;
+  routePolicyApproval: (
+    decisionPolicyId: string,
+  ) => Promise<{ resultRef?: string }>;
+  runPolicyShadow: (
+    decisionPolicyId: string,
+  ) => Promise<{ resultRef?: string }>;
+  evaluatePolicyShadow: (
+    decisionPolicyId: string,
+  ) => Promise<{ resultRef?: string }>;
+  routePolicyActivation: (
+    decisionPolicyId: string,
+  ) => Promise<{ resultRef?: string }>;
+  generateDecisionRecommendation: (
+    decisionPolicyId: string,
+  ) => Promise<{ resultRef?: string }>;
+  proposePolicyRevision: (
+    decisionPolicyId: string,
+  ) => Promise<{ resultRef?: string }>;
   /**
    * Pre-dispatch readiness / binding recheck. Must fail closed on drift.
    */
@@ -274,6 +301,24 @@ export class SchedulerDispatcher {
         return this.ports.promoteCausalClaim(work.runId);
       case "PROPOSE_MODEL_CALIBRATION":
         return this.ports.proposeModelCalibration(work.runId);
+      case "SYNTHESIZE_DECISION_POLICY":
+        return this.ports.synthesizeDecisionPolicy(work.runId);
+      case "VALIDATE_DECISION_POLICY":
+        return this.ports.validateDecisionPolicy(work.runId);
+      case "EVALUATE_DECISION_POLICY":
+        return this.ports.evaluateDecisionPolicy(work.runId);
+      case "ROUTE_POLICY_APPROVAL":
+        return this.ports.routePolicyApproval(work.runId);
+      case "RUN_POLICY_SHADOW":
+        return this.ports.runPolicyShadow(work.runId);
+      case "EVALUATE_POLICY_SHADOW":
+        return this.ports.evaluatePolicyShadow(work.runId);
+      case "ROUTE_POLICY_ACTIVATION":
+        return this.ports.routePolicyActivation(work.runId);
+      case "GENERATE_DECISION_RECOMMENDATION":
+        return this.ports.generateDecisionRecommendation(work.runId);
+      case "PROPOSE_POLICY_REVISION":
+        return this.ports.proposePolicyRevision(work.runId);
       default: {
         const _exhaustive: never = work.workKind;
         return _exhaustive;

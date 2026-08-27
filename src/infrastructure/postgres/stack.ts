@@ -263,6 +263,8 @@ import {
   CausalOrchestrationService,
   CausalProgressionLoop,
   CausalWorkMaterializer,
+  CausalGovernedMemoryAdapter,
+  CausalEvidenceSynthesisSchema,
   type InMemoryAuthoritativeExperimentEvidencePort,
 } from "../../causal/index.js";
 import {
@@ -270,6 +272,34 @@ import {
   composeTestAuthoritativeExperimentEvidencePort,
 } from "./causal-authoritative-evidence.js";
 import { CryptoDecisionNonceGenerator } from "../../authorization/decision-nonce.js";
+import {
+  PostgresDecisionContextRepository,
+  PostgresDecisionPolicyCandidateRepository,
+  PostgresDecisionPolicyEvaluationRepository,
+  PostgresDecisionPolicyComparisonRepository,
+  PostgresDecisionPolicyApprovalRequestRepository,
+  PostgresDecisionPolicyApprovalRecordRepository,
+  PostgresDecisionPolicyShadowRecordRepository,
+  PostgresDecisionPolicyShadowEvaluationRepository,
+  PostgresDecisionPolicyActivationRequestRepository,
+  PostgresDecisionPolicyActivationRecordRepository,
+  PostgresDecisionStateSnapshotRepository,
+  PostgresDecisionRecommendationRepository,
+  PostgresDecisionOverrideRecordRepository,
+  PostgresDecisionPolicyPerformanceRecordRepository,
+  PostgresDecisionPolicyRevisionCandidateRepository,
+} from "./repositories/decision-policies.js";
+import {
+  DecisionPolicyOrchestrationService,
+} from "../../decision-policies/service.js";
+import { DecisionPolicyProgressionLoop } from "../../decision-policies/loops.js";
+import { DecisionPolicyWorkMaterializer } from "../../decision-policies/work-materializer.js";
+import { FakeDecisionPolicySynthesisModel } from "../../decision-policies/synthesis-model.js";
+import {
+  CausalGovernedMemoryEvidencePort,
+  InMemoryDecisionRecommendationMaterializationLineageRepository,
+  InMemoryDecisionStateSourcePort,
+} from "../../decision-policies/index.js";
 
 export interface PostgresOrchestratorStack {
   storageMode: "postgres";
@@ -353,6 +383,12 @@ export interface PostgresOrchestratorStack {
   causalWorkMaterializer: CausalWorkMaterializer;
   promotedCausalClaims: PostgresPromotedCausalClaimRepository;
   causalCalibrationCandidates: PostgresDecisionModelCalibrationCandidateRepository;
+  decisionContexts: PostgresDecisionContextRepository;
+  decisionPolicies: PostgresDecisionPolicyCandidateRepository;
+  decisionRecommendations: PostgresDecisionRecommendationRepository;
+  decisionPolicyService: DecisionPolicyOrchestrationService;
+  decisionPolicyProgression: DecisionPolicyProgressionLoop;
+  decisionPolicyWorkMaterializer: DecisionPolicyWorkMaterializer;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -384,6 +420,11 @@ export async function createPostgresOrchestratorStack(options: {
    * authoritative evidence seeds. Bootstrap and production runtime must not set this.
    */
   testOnlyCausalEvidenceSeeds?: InMemoryAuthoritativeExperimentEvidencePort;
+  /**
+   * @internal TEST ONLY — Phase 19 decision-state resolution seeds.
+   * Production must not set this; authoritative sources are resolved via ports.
+   */
+  testOnlyDecisionStateSources?: InMemoryDecisionStateSourcePort;
 }): Promise<PostgresOrchestratorStack> {
   const instanceId = options.instanceId ?? options.db.instanceId;
   const clock = options.clock ?? new SystemClock();
@@ -1249,6 +1290,115 @@ export async function createPostgresOrchestratorStack(options: {
     databaseReachable: () => db.ping(),
   });
 
+  const decisionContexts = new PostgresDecisionContextRepository(db);
+  const decisionPolicies = new PostgresDecisionPolicyCandidateRepository(db);
+  const decisionPolicyEvaluations = new PostgresDecisionPolicyEvaluationRepository(db);
+  const decisionPolicyComparisons = new PostgresDecisionPolicyComparisonRepository(db);
+  const decisionPolicyApprovalRequests =
+    new PostgresDecisionPolicyApprovalRequestRepository(db);
+  const decisionPolicyApprovalRecords =
+    new PostgresDecisionPolicyApprovalRecordRepository(db);
+  const decisionPolicyShadowRecords =
+    new PostgresDecisionPolicyShadowRecordRepository(db);
+  const decisionPolicyShadowEvaluations =
+    new PostgresDecisionPolicyShadowEvaluationRepository(db);
+  const decisionPolicyActivationRequests =
+    new PostgresDecisionPolicyActivationRequestRepository(db);
+  const decisionPolicyActivationRecords =
+    new PostgresDecisionPolicyActivationRecordRepository(db);
+  const decisionStateSnapshots = new PostgresDecisionStateSnapshotRepository(db);
+  const decisionRecommendations = new PostgresDecisionRecommendationRepository(db);
+  const decisionOverrides = new PostgresDecisionOverrideRecordRepository(db);
+  const decisionPolicyPerformance =
+    new PostgresDecisionPolicyPerformanceRecordRepository(db);
+  const decisionPolicyRevisions =
+    new PostgresDecisionPolicyRevisionCandidateRepository(db);
+  const decisionStateSource =
+    options.testOnlyDecisionStateSources ??
+    new InMemoryDecisionStateSourcePort();
+  const causalMemoryAdapter = new CausalGovernedMemoryAdapter({
+    getPromoted: (id) => promotedCausalClaims.getById(id),
+    getClaim: (id) => causalClaims.getById(id),
+    getSynthesis: async (evidenceSynthesisId) => {
+      const result = await db.query<{ payload: unknown }>(
+        `SELECT payload FROM causal_evidence_syntheses
+         WHERE evidence_synthesis_id = $1`,
+        [evidenceSynthesisId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return CausalEvidenceSynthesisSchema.parse(row.payload);
+    },
+    resolveInterventionOutcome: async (claim) => {
+      const question = await causalQuestions.getById(claim.causalQuestionId);
+      return {
+        intervention: question?.intervention ?? claim.interventionVariableId,
+        outcome: question?.outcome ?? claim.outcomeVariableId,
+      };
+    },
+  });
+  const decisionCausalEvidence = new CausalGovernedMemoryEvidencePort({
+    retrieve: (input) => causalMemoryAdapter.retrieveForPlanning(input),
+    getReviewAndSourceHashes: async (promotedCausalClaimId) => {
+      const promoted = await promotedCausalClaims.getById(promotedCausalClaimId);
+      if (!promoted) return null;
+      const claim = await causalClaims.getById(promoted.claimId);
+      if (!claim) return null;
+      return {
+        reviewRecordId: promoted.reviewRecordId,
+        sourceClaimHash: claim.claimHash,
+      };
+    },
+  });
+  const decisionMaterializationLineages =
+    new InMemoryDecisionRecommendationMaterializationLineageRepository();
+  const decisionPolicyService = new DecisionPolicyOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    contexts: decisionContexts,
+    policies: decisionPolicies,
+    evaluations: decisionPolicyEvaluations,
+    comparisons: decisionPolicyComparisons,
+    approvalRequests: decisionPolicyApprovalRequests,
+    approvalRecords: decisionPolicyApprovalRecords,
+    shadowRecords: decisionPolicyShadowRecords,
+    shadowEvaluations: decisionPolicyShadowEvaluations,
+    activationRequests: decisionPolicyActivationRequests,
+    activationRecords: decisionPolicyActivationRecords,
+    snapshots: decisionStateSnapshots,
+    recommendations: decisionRecommendations,
+    overrides: decisionOverrides,
+    performance: decisionPolicyPerformance,
+    revisions: decisionPolicyRevisions,
+    controlPlane,
+    synthesisModel: new FakeDecisionPolicySynthesisModel(),
+    nonceGenerator: new CryptoDecisionNonceGenerator(),
+    isDecisionPolicyApprover: (principalId, projectIds) =>
+      authorityDirectory.isDecisionPolicyApproverForAllProjects(
+        principalId,
+        projectIds,
+      ),
+    isDecisionPolicyActivator: (principalId, projectIds) =>
+      authorityDirectory.isDecisionPolicyActivatorForAllProjects(
+        principalId,
+        projectIds,
+      ),
+    decisionStateSource,
+    causalEvidence: decisionCausalEvidence,
+    compilerDeps: { allowMaterialization: false },
+    materializationLineages: decisionMaterializationLineages,
+  });
+  const decisionPolicyWorkMaterializer = new DecisionPolicyWorkMaterializer({
+    nowIso: () => clock.nowIso(),
+    policies: decisionPolicies,
+    workItems: schedulerWorkItems,
+    projectConfigs: schedulerProjectConfigs,
+  });
+  const decisionPolicyProgression = new DecisionPolicyProgressionLoop({
+    policies: decisionPolicies,
+    materializer: decisionPolicyWorkMaterializer,
+    databaseReachable: () => db.ping(),
+  });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -1279,6 +1429,8 @@ export async function createPostgresOrchestratorStack(options: {
     experimentService,
     causalQuestions,
     causalService,
+    decisionPolicies,
+    decisionPolicyService,
   });
   const schedulerDispatcher = new SchedulerDispatcher(scheduler, schedulerPorts);
 
@@ -1364,6 +1516,12 @@ export async function createPostgresOrchestratorStack(options: {
     causalWorkMaterializer,
     promotedCausalClaims,
     causalCalibrationCandidates,
+    decisionContexts,
+    decisionPolicies,
+    decisionRecommendations,
+    decisionPolicyService,
+    decisionPolicyProgression,
+    decisionPolicyWorkMaterializer,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

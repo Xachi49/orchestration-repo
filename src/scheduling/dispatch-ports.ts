@@ -16,12 +16,15 @@ import { isPortfolioSchedulerWorkKind } from "./work-kind.js";
 import { isScenarioSchedulerWorkKind } from "./work-kind.js";
 import { isExperimentSchedulerWorkKind } from "./work-kind.js";
 import { isCausalSchedulerWorkKind } from "./work-kind.js";
+import { isDecisionPolicySchedulerWorkKind } from "./work-kind.js";
 import type { ScenarioOrchestrationService } from "../scenarios/service.js";
 import type { DecisionProblemRepository } from "../scenarios/repositories.js";
 import type { ExperimentOrchestrationService } from "../experiments/service.js";
 import type { ExperimentRepository } from "../experiments/repositories.js";
 import type { CausalOrchestrationService } from "../causal/service.js";
 import type { CausalQuestionRepository } from "../causal/repositories.js";
+import type { DecisionPolicyOrchestrationService } from "../decision-policies/service.js";
+import type { DecisionPolicyCandidateRepository } from "../decision-policies/repositories.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -90,6 +93,9 @@ export interface PhaseDispatchPortsDeps {
   /** Phase 18 causal progression ports (optional until wired). */
   causalQuestions?: CausalQuestionRepository;
   causalService?: CausalOrchestrationService;
+  /** Phase 19 decision policy progression ports (optional until wired). */
+  decisionPolicies?: DecisionPolicyCandidateRepository;
+  decisionPolicyService?: DecisionPolicyOrchestrationService;
 }
 
 const DEFAULT_OBSERVABILITY_WINDOW: { kind: MetricWindowKind; lastN: number } =
@@ -159,6 +165,16 @@ function bindingDriftReasonCode(kind: SchedulerWorkKind): string {
     case "PROMOTE_CAUSAL_CLAIM":
     case "PROPOSE_MODEL_CALIBRATION":
       return "CAUSAL_BINDING_CHANGED";
+    case "SYNTHESIZE_DECISION_POLICY":
+    case "VALIDATE_DECISION_POLICY":
+    case "EVALUATE_DECISION_POLICY":
+    case "ROUTE_POLICY_APPROVAL":
+    case "RUN_POLICY_SHADOW":
+    case "EVALUATE_POLICY_SHADOW":
+    case "ROUTE_POLICY_ACTIVATION":
+    case "GENERATE_DECISION_RECOMMENDATION":
+    case "PROPOSE_POLICY_REVISION":
+      return "DECISION_POLICY_BINDING_CHANGED";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -236,6 +252,16 @@ export function createPhaseDispatchPorts(
       case "ROUTE_CAUSAL_REVIEW":
       case "PROMOTE_CAUSAL_CLAIM":
       case "PROPOSE_MODEL_CALIBRATION":
+        return null;
+      case "SYNTHESIZE_DECISION_POLICY":
+      case "VALIDATE_DECISION_POLICY":
+      case "EVALUATE_DECISION_POLICY":
+      case "ROUTE_POLICY_APPROVAL":
+      case "RUN_POLICY_SHADOW":
+      case "EVALUATE_POLICY_SHADOW":
+      case "ROUTE_POLICY_ACTIVATION":
+      case "GENERATE_DECISION_RECOMMENDATION":
+      case "PROPOSE_POLICY_REVISION":
         return null;
       default: {
         const _exhaustive: never = kind;
@@ -634,7 +660,129 @@ export function createPhaseDispatchPorts(
       return { resultRef: question?.status ?? causalQuestionId };
     },
 
+    async synthesizeDecisionPolicy(decisionPolicyId) {
+      if (!deps.decisionPolicies) {
+        throw new Error("Decision policies not configured");
+      }
+      const policy = await deps.decisionPolicies.getById(decisionPolicyId);
+      return { resultRef: policy?.policyHash ?? decisionPolicyId };
+    },
+
+    async validateDecisionPolicy(decisionPolicyId) {
+      if (!deps.decisionPolicyService) {
+        throw new Error("Decision policy service not configured");
+      }
+      const result =
+        await deps.decisionPolicyService.validatePolicy(decisionPolicyId);
+      return { resultRef: result.policy.policyHash };
+    },
+
+    async evaluateDecisionPolicy(decisionPolicyId) {
+      if (!deps.decisionPolicies) {
+        throw new Error("Decision policies not configured");
+      }
+      const policy = await deps.decisionPolicies.getById(decisionPolicyId);
+      return { resultRef: policy?.policyHash ?? decisionPolicyId };
+    },
+
+    async routePolicyApproval(decisionPolicyId) {
+      if (!deps.decisionPolicyService || !deps.decisionPolicies) {
+        throw new Error("Decision policy service not configured");
+      }
+      const policy = await deps.decisionPolicies.getById(decisionPolicyId);
+      if (policy?.status === "AWAITING_APPROVAL") {
+        return { resultRef: policy.policyHash };
+      }
+      const result =
+        await deps.decisionPolicyService.routeApproval(decisionPolicyId);
+      return { resultRef: result.request.decisionPolicyApprovalRequestId };
+    },
+
+    async runPolicyShadow(decisionPolicyId) {
+      if (!deps.decisionPolicies) {
+        throw new Error("Decision policies not configured");
+      }
+      const policy = await deps.decisionPolicies.getById(decisionPolicyId);
+      return { resultRef: policy?.status ?? decisionPolicyId };
+    },
+
+    async evaluatePolicyShadow(decisionPolicyId) {
+      if (!deps.decisionPolicyService) {
+        throw new Error("Decision policy service not configured");
+      }
+      const result =
+        await deps.decisionPolicyService.evaluateShadow(decisionPolicyId);
+      return {
+        resultRef: result.evaluation.decisionPolicyShadowEvaluationId,
+      };
+    },
+
+    async routePolicyActivation(decisionPolicyId) {
+      if (!deps.decisionPolicyService) {
+        throw new Error("Decision policy service not configured");
+      }
+      const result =
+        await deps.decisionPolicyService.routeActivation(decisionPolicyId);
+      return { resultRef: result.request.decisionPolicyActivationRequestId };
+    },
+
+    async generateDecisionRecommendation(decisionPolicyId) {
+      // Live recommend requires snapshot — producer settles identity only.
+      if (!deps.decisionPolicies) {
+        throw new Error("Decision policies not configured");
+      }
+      const policy = await deps.decisionPolicies.getById(decisionPolicyId);
+      return { resultRef: policy?.status ?? decisionPolicyId };
+    },
+
+    async proposePolicyRevision(decisionPolicyId) {
+      if (!deps.decisionPolicies) {
+        throw new Error("Decision policies not configured");
+      }
+      const policy = await deps.decisionPolicies.getById(decisionPolicyId);
+      return { resultRef: policy?.status ?? decisionPolicyId };
+    },
+
     async assertDispatchReady(work: SchedulerWorkItem) {
+      if (isDecisionPolicySchedulerWorkKind(work.workKind)) {
+        if (!deps.decisionPolicies) {
+          return {
+            ok: false as const,
+            reasonCode: "DECISION_POLICY_SERVICE_MISSING",
+            message: "Decision policy repository not configured",
+          };
+        }
+        const policy = await deps.decisionPolicies.getById(work.runId);
+        if (!policy) {
+          return {
+            ok: false as const,
+            reasonCode: "DECISION_POLICY_NOT_FOUND",
+            message: `Decision policy ${work.runId} not found`,
+          };
+        }
+        if (
+          work.workKind === "ROUTE_POLICY_APPROVAL" &&
+          policy.status !== "AWAITING_APPROVAL" &&
+          policy.status !== "VALIDATED"
+        ) {
+          return {
+            ok: false as const,
+            reasonCode: "DECISION_POLICY_STATE_CONFLICT",
+            message: `ROUTE_POLICY_APPROVAL requires VALIDATED/AWAITING_APPROVAL (got ${policy.status})`,
+          };
+        }
+        if (
+          work.workKind === "ROUTE_POLICY_ACTIVATION" &&
+          policy.status !== "AWAITING_ACTIVATION"
+        ) {
+          return {
+            ok: false as const,
+            reasonCode: "DECISION_POLICY_STATE_CONFLICT",
+            message: `ROUTE_POLICY_ACTIVATION requires AWAITING_ACTIVATION (got ${policy.status})`,
+          };
+        }
+        return { ok: true as const };
+      }
       if (isCausalSchedulerWorkKind(work.workKind)) {
         if (!deps.causalQuestions) {
           return {

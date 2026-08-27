@@ -187,6 +187,16 @@ export function bindingHashForWorkKind(
     case "PROPOSE_MODEL_CALIBRATION":
       // Causal work uses causalWorkBindingHash; this path is fail-closed.
       return `causal_misbound:${kind}:${fingerprints.runId}`;
+    case "SYNTHESIZE_DECISION_POLICY":
+    case "VALIDATE_DECISION_POLICY":
+    case "EVALUATE_DECISION_POLICY":
+    case "ROUTE_POLICY_APPROVAL":
+    case "RUN_POLICY_SHADOW":
+    case "EVALUATE_POLICY_SHADOW":
+    case "ROUTE_POLICY_ACTIVATION":
+    case "GENERATE_DECISION_RECOMMENDATION":
+    case "PROPOSE_POLICY_REVISION":
+      return `decision_policy_misbound:${kind}:${fingerprints.runId}`;
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

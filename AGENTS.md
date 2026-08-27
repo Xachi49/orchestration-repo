@@ -101,3 +101,21 @@ Phase 16 re-analysis — never mutate AssumptionSets in place. Evidence gaps may
 feed Phase 17 Active Learning; they do not authorize experiments.
 
 Causal knowledge informs decisions. It does not authorize them.
+
+## Decision policies (Phase 19)
+
+DECISION POLICY SYNTHESIS converts governed strategic, experimental, and causal
+knowledge into bounded Decision Policy Candidates.
+It cannot create execution authority.
+
+DECISION_POLICY_APPROVER ≠ DECISION_POLICY_ACTIVATOR ≠ APPROVER ≠
+CAUSAL_REVIEWER ≠ EXPERIMENT_SPONSOR ≠ STRATEGY_SELECTOR ≠
+PORTFOLIO_ALLOCATOR ≠ PROGRAM_MATERIALIZER.
+
+GOVERNANCE_POLICY ≠ DECISION_POLICY.
+Shadow approval grants observation eligibility only — not live activation.
+Activation creates recommendation authority only — not execution.
+Recommendations enter declared downstream phases; Phase 6 / 14 / 15 / 17
+authority remains required.
+
+A Decision Policy recommends. It does not govern the governor. It does not execute.

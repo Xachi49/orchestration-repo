@@ -23,7 +23,9 @@ export interface AuthorityGrantSeed {
     | "PORTFOLIO_ALLOCATOR"
     | "STRATEGY_SELECTOR"
     | "EXPERIMENT_SPONSOR"
-    | "CAUSAL_REVIEWER";
+    | "CAUSAL_REVIEWER"
+    | "DECISION_POLICY_APPROVER"
+    | "DECISION_POLICY_ACTIVATOR";
   projectId: string;
   environments: readonly string[];
 }
@@ -212,6 +214,78 @@ export class PostgresAuthorityDirectory {
     return true;
   }
 
+  async isDecisionPolicyApproverEnabled(
+    principalId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM authority_grants
+       WHERE principal_id = $1
+         AND principal_type = 'DECISION_POLICY_APPROVER'
+         AND project_id = $2
+         AND enabled = TRUE`,
+      [principalId, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Fail-closed intersection: principal must hold an explicit
+   * DECISION_POLICY_APPROVER grant for EVERY project in scope.
+   */
+  async isDecisionPolicyApproverForAllProjects(
+    principalId: string,
+    projectIds: readonly string[],
+  ): Promise<boolean> {
+    const unique = [...new Set(projectIds.filter((id) => id.length > 0))];
+    if (unique.length === 0) {
+      return false;
+    }
+    for (const projectId of unique) {
+      if (!(await this.isDecisionPolicyApproverEnabled(principalId, projectId))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async isDecisionPolicyActivatorEnabled(
+    principalId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM authority_grants
+       WHERE principal_id = $1
+         AND principal_type = 'DECISION_POLICY_ACTIVATOR'
+         AND project_id = $2
+         AND enabled = TRUE`,
+      [principalId, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Fail-closed intersection: principal must hold an explicit
+   * DECISION_POLICY_ACTIVATOR grant for EVERY project in scope.
+   */
+  async isDecisionPolicyActivatorForAllProjects(
+    principalId: string,
+    projectIds: readonly string[],
+  ): Promise<boolean> {
+    const unique = [...new Set(projectIds.filter((id) => id.length > 0))];
+    if (unique.length === 0) {
+      return false;
+    }
+    for (const projectId of unique) {
+      if (!(await this.isDecisionPolicyActivatorEnabled(principalId, projectId))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /**
    * Fail-closed intersection: principal must hold an explicit
    * PORTFOLIO_ALLOCATOR grant for EVERY project in scope.
@@ -374,6 +448,16 @@ export function buildAuthoritySeeds(input: {
     projectId?: string;
     environments?: readonly string[];
   }[];
+  decisionPolicyApproverGrants?: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[];
+  decisionPolicyActivatorGrants?: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[];
 }): AuthorityGrantSeed[] {
   const seeds: AuthorityGrantSeed[] = input.requesterGrants
     .filter((grant) => grant.projectId === input.projectId)
@@ -455,6 +539,36 @@ export function buildAuthoritySeeds(input: {
     seeds.push({
       principalId: grant.principalId,
       principalType: "CAUSAL_REVIEWER",
+      projectId: grant.projectId ?? input.projectId,
+      environments: grant.environments ?? input.environments,
+    });
+  }
+  const decisionPolicyApproverGrants: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[] =
+    input.decisionPolicyApproverGrants ??
+    input.approverIds.map((principalId) => ({ principalId }));
+  for (const grant of decisionPolicyApproverGrants) {
+    seeds.push({
+      principalId: grant.principalId,
+      principalType: "DECISION_POLICY_APPROVER",
+      projectId: grant.projectId ?? input.projectId,
+      environments: grant.environments ?? input.environments,
+    });
+  }
+  const decisionPolicyActivatorGrants: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[] =
+    input.decisionPolicyActivatorGrants ??
+    input.approverIds.map((principalId) => ({ principalId }));
+  for (const grant of decisionPolicyActivatorGrants) {
+    seeds.push({
+      principalId: grant.principalId,
+      principalType: "DECISION_POLICY_ACTIVATOR",
       projectId: grant.projectId ?? input.projectId,
       environments: grant.environments ?? input.environments,
     });

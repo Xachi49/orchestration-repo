@@ -9,10 +9,13 @@ export {
   isExperimentSchedulerWorkKind,
   CAUSAL_SCHEDULER_WORK_KINDS,
   isCausalSchedulerWorkKind,
+  DECISION_POLICY_SCHEDULER_WORK_KINDS,
+  isDecisionPolicySchedulerWorkKind,
   type SchedulerWorkKind,
   type WorkerCapabilityLabel,
   type ExperimentSchedulerWorkKind,
   type CausalSchedulerWorkKind,
+  type DecisionPolicySchedulerWorkKind,
 } from "./work-kind.js";
 export {
   PRIORITY_CLASSES,

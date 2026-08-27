@@ -154,6 +154,10 @@ export function createOrchestratorRuntime(
                   promotedCausalClaims: postgres.promotedCausalClaims,
                   causalCalibrationCandidates:
                     postgres.causalCalibrationCandidates,
+                  decisionPolicyService: postgres.decisionPolicyService,
+                  decisionContexts: postgres.decisionContexts,
+                  decisionPolicies: postgres.decisionPolicies,
+                  decisionRecommendations: postgres.decisionRecommendations,
                 }
               : {}),
             storageMode: boot.storageMode,

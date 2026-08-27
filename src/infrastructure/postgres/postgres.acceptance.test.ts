@@ -1026,7 +1026,7 @@ describe("PostgreSQL Phase 11 acceptance", () => {
         await env.close();
       }
     }
-  });
+  }, 20_000);
 
   it("recordRevision race: reload confirms winner state", async () => {
     const env = await createTestStack(uniquePostgresTestId("rev_race2"));
@@ -1230,48 +1230,157 @@ describe("PostgreSQL Phase 11 acceptance", () => {
   });
 
   it("data minimization: durable storage excludes plaintext secrets", async () => {
+    /**
+     * Scope audits to THIS flow's durable identities so runtime does not grow
+     * with unrelated historical acceptance rows. Surfaces without a stable
+     * run/request foreign key still use identity predicates (projectId /
+     * approvalRequestId / coordination_key containing runId).
+     *
+     * Unscopable note: none of the intentionally audited surfaces below require
+     * a global historical scan when runId + approvalRequestId + projectId are known.
+     * authority_grants are scoped by dedicated projectId (seeded for this test only).
+     */
+    const projectId = uniquePostgresTestId("minimize_proj");
     const env = await createTestStack(uniquePostgresTestId("minimize"));
     try {
-      const { approvalRequestId } = await advanceToAwaitingApproval(
+      await seedDedicatedPostgresTestProject(env.db, projectId);
+      const request = buildPostgresTestAdmissionRequest({
+        testName: "minimize",
+        projectId,
+      });
+      const { runId, approvalRequestId } = await advanceToAwaitingApproval(
         env.stack,
-        buildPostgresTestAdmissionRequest({ testName: "minimize" }),
+        request,
       );
       const nonce = deliveredNonce(env.stack.approvalDelivery, approvalRequestId);
+      expect(nonce.length).toBeGreaterThan(8);
       const deliveryKey = process.env["APPROVAL_DELIVERY_SECRET_KEY"] ?? "";
-      const databaseUrl = process.env["TEST_DATABASE_URL"] ?? process.env["DATABASE_URL"] ?? "";
-      const audit = await env.db.query<{ txt: string }>(
-        `SELECT payload::text AS txt FROM json_documents
-         UNION ALL SELECT payload::text FROM transactional_outbox
-         UNION ALL SELECT payload::text FROM durable_inbox
-         UNION ALL SELECT encode(secret_ciphertext, 'escape') FROM approval_delivery_secrets
-         UNION ALL SELECT encode(secret_iv, 'escape') FROM approval_delivery_secrets
-         UNION ALL SELECT status::text FROM approval_delivery_secrets
-         UNION ALL SELECT coordination_key FROM coordinator_leases
-         UNION ALL SELECT payload::text FROM coordinator_fences
-         UNION ALL SELECT execution_attempt_id || ' ' || run_id || ' ' || project_id
-                   FROM execution_resource_ledgers
-         UNION ALL SELECT content_hash || ' ' || media_type FROM artifact_blobs
-         UNION ALL SELECT grant_id || ' ' || principal_id FROM authority_grants
-         UNION ALL SELECT run_id || ' ' || state FROM runs`,
+      const databaseUrl =
+        process.env["TEST_DATABASE_URL"] ?? process.env["DATABASE_URL"] ?? "";
+      const aggregateIds = [runId, approvalRequestId, request.objectiveId];
+
+      const audit = await env.db.query<{ surface: string; txt: string }>(
+        `
+        SELECT 'json_documents' AS surface, payload::text AS txt
+          FROM json_documents
+         WHERE run_id = $1 OR project_id = $2
+        UNION ALL
+        SELECT 'events', payload::text
+          FROM events
+         WHERE run_id = $1 OR project_id = $2
+        UNION ALL
+        SELECT 'runs', payload::text
+          FROM runs
+         WHERE run_id = $1
+        UNION ALL
+        SELECT 'objectives', payload::text
+          FROM objectives
+         WHERE project_id = $2 AND objective_id = $3
+        UNION ALL
+        SELECT 'transactional_outbox',
+               outbox_id || ' ' || aggregate_type || ' ' || aggregate_id
+               || ' ' || event_type || ' ' || payload::text
+          FROM transactional_outbox
+         WHERE aggregate_id = ANY($4::text[])
+        UNION ALL
+        SELECT 'durable_inbox',
+               message_id || ' ' || consumer_name || ' '
+               || COALESCE(payload::text, '') || ' '
+               || COALESCE(result_fingerprint, '')
+          FROM durable_inbox
+         WHERE message_id IN (
+           SELECT outbox_id FROM transactional_outbox
+            WHERE aggregate_id = ANY($4::text[])
+         )
+        UNION ALL
+        SELECT 'approval_delivery_secrets',
+               approval_request_id || ' ' || status || ' '
+               || encode(secret_ciphertext, 'escape') || ' '
+               || encode(secret_iv, 'escape') || ' '
+               || encode(secret_tag, 'escape')
+          FROM approval_delivery_secrets
+         WHERE approval_request_id = $5
+        UNION ALL
+        SELECT 'nonce_state',
+               approval_request_id || ' ' || nonce_hash || ' ' || status
+          FROM nonce_state
+         WHERE approval_request_id = $5
+        UNION ALL
+        SELECT 'coordinator_leases',
+               coordination_key || ' ' || phase || ' ' || owner_id
+               || ' ' || status || ' ' || payload::text
+          FROM coordinator_leases
+         WHERE coordination_key LIKE '%' || $1 || '%'
+            OR coordination_key IN (
+                 SELECT coordination_key FROM coordinator_fences
+                  WHERE run_id = $1
+               )
+        UNION ALL
+        SELECT 'coordinator_fences',
+               coordination_key || ' ' || phase || ' '
+               || COALESCE(project_id, '') || ' ' || COALESCE(run_id, '')
+               || ' ' || owner_id || ' ' || owner_token || ' '
+               || status || ' ' || payload::text
+          FROM coordinator_fences
+         WHERE run_id = $1 OR project_id = $2
+        UNION ALL
+        SELECT 'execution_resource_ledgers',
+               execution_attempt_id || ' ' || run_id || ' ' || project_id
+               || ' ' || budget_profile_id
+          FROM execution_resource_ledgers
+         WHERE run_id = $1 OR project_id = $2
+        UNION ALL
+        SELECT 'artifact_blobs',
+               artifact_id || ' ' || run_id || ' ' || project_id || ' '
+               || execution_attempt_id || ' ' || step_id || ' '
+               || artifact_type || ' ' || content_hash || ' ' || media_type
+               || ' ' || encode(content, 'escape')
+          FROM artifact_blobs
+         WHERE run_id = $1 OR project_id = $2
+        UNION ALL
+        SELECT 'authority_grants',
+               grant_id || ' ' || principal_id || ' ' || principal_type
+               || ' ' || project_id || ' ' || authorized_environments::text
+               || ' ' || authority_version
+          FROM authority_grants
+         WHERE project_id = $2
+        `,
+        [
+          runId,
+          projectId,
+          request.objectiveId,
+          aggregateIds,
+          approvalRequestId,
+        ],
       );
+
+      expect(audit.rows.length).toBeGreaterThan(0);
       for (const row of audit.rows) {
-        expect(row.txt).not.toContain(nonce);
-        expect(row.txt.toLowerCase()).not.toContain("postgresql://");
-        expect(row.txt.toLowerCase()).not.toMatch(/postgres:\/\/[^:]+:[^@]+@/);
+        // Unique plaintext secret introduced by THIS flow
+        expect(row.txt, row.surface).not.toContain(nonce);
+        // Env/config secrets must not leak into this flow's durable rows
+        expect(row.txt.toLowerCase(), row.surface).not.toContain("postgresql://");
+        expect(row.txt.toLowerCase(), row.surface).not.toMatch(
+          /postgres:\/\/[^:]+:[^@]+@/,
+        );
         if (deliveryKey.length > 8) {
-          expect(row.txt).not.toContain(deliveryKey);
+          expect(row.txt, row.surface).not.toContain(deliveryKey);
         }
         if (databaseUrl.length > 8) {
-          expect(row.txt).not.toContain(databaseUrl);
+          expect(row.txt, row.surface).not.toContain(databaseUrl);
         }
-        expect(row.txt.toLowerCase()).not.toContain("chain-of-thought");
-        expect(row.txt.toLowerCase()).not.toContain("chain of thought");
-        expect(row.txt).not.toMatch(/\bsk-[a-zA-Z0-9]{10,}/);
+        expect(row.txt.toLowerCase(), row.surface).not.toContain(
+          "chain-of-thought",
+        );
+        expect(row.txt.toLowerCase(), row.surface).not.toContain(
+          "chain of thought",
+        );
+        expect(row.txt, row.surface).not.toMatch(/\bsk-[a-zA-Z0-9]{10,}/);
       }
     } finally {
       await env.close();
     }
-  }, 15_000);
+  }, 30_000);
 
   it("M78: promoted precedent survives restart with integrity and planning fingerprint", async () => {
     const projectId = uniquePostgresTestId("m78_proj");

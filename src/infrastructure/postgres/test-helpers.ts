@@ -5,6 +5,15 @@ import {
   InMemoryAuthoritativeExperimentEvidencePort,
   type ResolvedRandomizedEvidence,
 } from "../../causal/index.js";
+import {
+  InMemoryDecisionStateSourcePort,
+  mintSeededObservation,
+  type ResolvedStateObservation,
+} from "../../decision-policies/index.js";
+import type {
+  QuantityUnit,
+  StateSourceClass,
+} from "../../decision-policies/variables-actions.js";
 import { PostgresDatabase } from "./database.js";
 import { PostgresMigrationRunner } from "./migrate.js";
 import { createPostgresOrchestratorStack } from "./stack.js";
@@ -60,11 +69,13 @@ export async function createTestStack(
   const db = await createTestDatabase(instanceId);
   const testOnlyCausalEvidenceSeeds =
     new InMemoryAuthoritativeExperimentEvidencePort();
+  const testOnlyDecisionStateSources = new InMemoryDecisionStateSourcePort();
   const stack = await createPostgresOrchestratorStack({
     db,
     instanceId,
     seedControlPlane: true,
     testOnlyCausalEvidenceSeeds,
+    testOnlyDecisionStateSources,
     ...(opts?.completionFailpoint !== undefined
       ? { completionFailpoint: opts.completionFailpoint }
       : {}),
@@ -109,6 +120,35 @@ export async function createTestStack(
     /** TEST ONLY — seeds authoritative evidence without a full Phase 17 ladder. */
     seedCausalAuthoritativeEvidence: (resolved: ResolvedRandomizedEvidence) => {
       testOnlyCausalEvidenceSeeds.seed(resolved);
+    },
+    /** TEST ONLY — seeds authoritative decision-state observations. */
+    seedDecisionStateObservation: (observation: ResolvedStateObservation) => {
+      testOnlyDecisionStateSources.seed(observation);
+    },
+    seedDecisionStateDefault: (input: {
+      variableId: string;
+      value: string | number | boolean;
+      unit: QuantityUnit;
+      projectId: string;
+      environment: string;
+      observedAt: string;
+      sourceClass?: StateSourceClass;
+      quality?: ResolvedStateObservation["quality"];
+      sourceHash?: string;
+    }) => {
+      testOnlyDecisionStateSources.seed(
+        mintSeededObservation({
+          variableId: input.variableId,
+          value: input.value,
+          unit: input.unit,
+          sourceClass: input.sourceClass ?? "OBSERVATIONAL_DATA",
+          projectId: input.projectId,
+          environment: input.environment,
+          observedAt: input.observedAt,
+          quality: input.quality ?? "PARTIAL",
+          sourceHash: input.sourceHash ?? `sh_${input.variableId}`,
+        }),
+      );
     },
     async close() {
       await stack.close();
@@ -240,17 +280,22 @@ export async function createTestStackOnUrl(
   }
   const testOnlyCausalEvidenceSeeds =
     new InMemoryAuthoritativeExperimentEvidencePort();
+  const testOnlyDecisionStateSources = new InMemoryDecisionStateSourcePort();
   const stack = await createPostgresOrchestratorStack({
     db,
     instanceId,
     seedControlPlane: true,
     testOnlyCausalEvidenceSeeds,
+    testOnlyDecisionStateSources,
   });
   return {
     db,
     stack,
     seedCausalAuthoritativeEvidence: (resolved: ResolvedRandomizedEvidence) => {
       testOnlyCausalEvidenceSeeds.seed(resolved);
+    },
+    seedDecisionStateObservation: (observation: ResolvedStateObservation) => {
+      testOnlyDecisionStateSources.seed(observation);
     },
     async close() {
       await stack.close();

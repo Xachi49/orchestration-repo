@@ -31,6 +31,7 @@ import { registerPortfolioRoutes } from "./portfolios.js";
 import { registerDecisionRoutes } from "./decisions.js";
 import { registerExperimentRoutes } from "./experiments.js";
 import { registerCausalRoutes } from "./causal.js";
+import { registerDecisionPolicyRoutes } from "./decision-policies.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository, ProgramPlanRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -55,6 +56,12 @@ import type {
   PromotedCausalClaimRepository,
   DecisionModelCalibrationCandidateRepository,
 } from "../causal/repositories.js";
+import type { DecisionPolicyOrchestrationService } from "../decision-policies/service.js";
+import type {
+  DecisionContextRepository,
+  DecisionPolicyCandidateRepository,
+  DecisionRecommendationRepository,
+} from "../decision-policies/repositories.js";
 import { registerPerimeter, type PerimeterDeps } from "../runtime/perimeter.js";
 import { registerHealthRoutes, type HealthDeps } from "../runtime/health.js";
 
@@ -91,6 +98,10 @@ export interface ApiDeps {
   causalQuestions?: CausalQuestionRepository;
   promotedCausalClaims?: PromotedCausalClaimRepository;
   causalCalibrationCandidates?: DecisionModelCalibrationCandidateRepository;
+  decisionPolicyService?: DecisionPolicyOrchestrationService;
+  decisionContexts?: DecisionContextRepository;
+  decisionPolicies?: DecisionPolicyCandidateRepository;
+  decisionRecommendations?: DecisionRecommendationRepository;
   storageMode?: StorageMode;
   runs?: RunRepository;
   readiness?: {
@@ -130,9 +141,11 @@ export async function buildServer(deps: ApiDeps = {}) {
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: deps.causalService
-      ? 18
-      : deps.experimentService
+    phase: deps.decisionPolicyService
+      ? 19
+      : deps.causalService
+        ? 18
+        : deps.experimentService
         ? 17
         : deps.scenarioService
           ? 16
@@ -155,9 +168,11 @@ export async function buildServer(deps: ApiDeps = {}) {
                           : deps.validation
                             ? 5
                             : 6,
-    milestone: deps.causalService
-      ? 18
-      : deps.experimentService
+    milestone: deps.decisionPolicyService
+      ? 19
+      : deps.causalService
+        ? 18
+        : deps.experimentService
         ? 17
         : deps.scenarioService
           ? 16
@@ -168,9 +183,11 @@ export async function buildServer(deps: ApiDeps = {}) {
               : deps.scheduler
                 ? 13
                 : 12,
-    orchestrator: deps.causalService
-      ? "causal"
-      : deps.experimentService
+    orchestrator: deps.decisionPolicyService
+      ? "decision-policies"
+      : deps.causalService
+        ? "causal"
+        : deps.experimentService
         ? "experiments"
         : deps.scenarioService
           ? "scenarios"
@@ -320,6 +337,20 @@ export async function buildServer(deps: ApiDeps = {}) {
       questions: deps.causalQuestions,
       promotedClaims: deps.promotedCausalClaims,
       calibrationCandidates: deps.causalCalibrationCandidates,
+    });
+  }
+
+  if (
+    deps.decisionPolicyService &&
+    deps.decisionContexts &&
+    deps.decisionPolicies &&
+    deps.decisionRecommendations
+  ) {
+    registerDecisionPolicyRoutes(app, {
+      decisionPolicyService: deps.decisionPolicyService,
+      decisionContexts: deps.decisionContexts,
+      decisionPolicies: deps.decisionPolicies,
+      decisionRecommendations: deps.decisionRecommendations,
     });
   }
 

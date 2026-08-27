@@ -5,8 +5,11 @@ export {
   WORKER_CAPABILITY_LABELS,
   workKindToCapability,
   workerSupportsKind,
+  EXPERIMENT_SCHEDULER_WORK_KINDS,
+  isExperimentSchedulerWorkKind,
   type SchedulerWorkKind,
   type WorkerCapabilityLabel,
+  type ExperimentSchedulerWorkKind,
 } from "./work-kind.js";
 export {
   PRIORITY_CLASSES,
@@ -39,6 +42,14 @@ export {
   DISCOVERABLE_RUN_STATES,
   type DiscoveryContext,
 } from "./discovery-map.js";
+export {
+  candidateExperimentWorkKinds,
+  experimentWorkBindingHash,
+} from "./experiment-discovery-map.js";
+export {
+  candidateScenarioWorkKinds,
+  scenarioWorkBindingHash,
+} from "./scenario-discovery-map.js";
 export {
   discoveryMaterializationKinds,
   isDiscoverableRunState,

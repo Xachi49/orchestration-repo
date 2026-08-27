@@ -146,6 +146,9 @@ export function createOrchestratorRuntime(
                   decisionProblems: postgres.decisionProblems,
                   decisionPackages: postgres.decisionPackages,
                   calibrationRecords: postgres.scenarioCalibration,
+                  experimentService: postgres.experimentService,
+                  experiments: postgres.experiments,
+                  experimentEvidenceBundles: postgres.experimentEvidenceBundles,
                 }
               : {}),
             storageMode: boot.storageMode,
@@ -283,6 +286,12 @@ export function createOrchestratorRuntime(
                 name: "scenario-progression",
                 run: async () => {
                   await postgres.scenarioProgression.tick();
+                },
+              },
+              {
+                name: "experiment-progression",
+                run: async () => {
+                  await postgres.experimentProgression.tick();
                 },
               },
             ],

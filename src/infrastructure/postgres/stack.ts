@@ -52,6 +52,7 @@ import {
 } from "../../execution/index.js";
 import { FakeSafeActuator } from "../execution/actuators.js";
 import { createExecutionFriendlyPlanningModel } from "../../execution/friendly-planning-model.js";
+import { createExperimentAwarePlanningModel } from "../../experiments/planning-proposal.js";
 import {
   FakeVerificationModel,
   OutcomeVerificationService,
@@ -222,6 +223,26 @@ import {
   ScenarioWorkMaterializer,
   FakeScenarioSimulationEngine,
 } from "../../scenarios/index.js";
+import {
+  PostgresExperimentRepository,
+  PostgresExperimentPlanRepository,
+  PostgresExperimentAuthorizationRequestRepository,
+  PostgresExperimentAuthorizationRecordRepository,
+  PostgresExperimentResultRepository,
+  PostgresExperimentEvidenceBundleRepository,
+  PostgresAssumptionEvidenceUpdateCandidateRepository,
+  PostgresExperimentCompletionRecordRepository,
+  PostgresExperimentExecutionLineageRepository,
+  PostgresExperimentUsageLedgerRepository,
+} from "./repositories/experiments.js";
+import {
+  FakeExperimentDesignModel,
+  ExperimentOrchestrationService,
+  ExperimentProgressionLoop,
+  ExperimentWorkMaterializer,
+  Phase2ExperimentObjectiveAdmissionPort,
+  Phase8ExperimentOutcomeVerificationPort,
+} from "../../experiments/index.js";
 import { CryptoDecisionNonceGenerator } from "../../authorization/decision-nonce.js";
 
 export interface PostgresOrchestratorStack {
@@ -294,6 +315,12 @@ export interface PostgresOrchestratorStack {
   scenarioService: ScenarioOrchestrationService;
   scenarioProgression: ScenarioProgressionLoop;
   scenarioWorkMaterializer: ScenarioWorkMaterializer;
+  experiments: PostgresExperimentRepository;
+  experimentPlans: PostgresExperimentPlanRepository;
+  experimentEvidenceBundles: PostgresExperimentEvidenceBundleRepository;
+  experimentService: ExperimentOrchestrationService;
+  experimentProgression: ExperimentProgressionLoop;
+  experimentWorkMaterializer: ExperimentWorkMaterializer;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -446,6 +473,11 @@ export async function createPostgresOrchestratorStack(options: {
     clock,
   });
 
+  const experiments = new PostgresExperimentRepository(db);
+  const experimentPlans = new PostgresExperimentPlanRepository(db);
+  const experimentLineage =
+    new PostgresExperimentExecutionLineageRepository(db);
+
   const planningCoordinator = new PostgresPlanningCoordinator(
     db,
     leases,
@@ -453,7 +485,14 @@ export async function createPostgresOrchestratorStack(options: {
   );
   const plans = new PostgresPlanRepository(db);
   const planningUsage = new PostgresPlanningUsageLedger(db);
-  const planningModel = createExecutionFriendlyPlanningModel();
+  const planningModel = createExperimentAwarePlanningModel(
+    createExecutionFriendlyPlanningModel(),
+    {
+      lineage: experimentLineage,
+      plans: experimentPlans,
+      experiments,
+    },
+  );
   const planningReadiness = new PlanningReadinessService({
     runs,
     contexts,
@@ -554,6 +593,7 @@ export async function createPostgresOrchestratorStack(options: {
     decisions: validationDecisions,
     locks: lockedRepos,
   });
+  const decisionNonceGenerator = new SequenceDecisionNonceGenerator();
   const authorizationRouting = new AuthorizationRoutingService({
     readiness: authorizationReadiness,
     runs,
@@ -568,7 +608,7 @@ export async function createPostgresOrchestratorStack(options: {
     delivery: approvalDelivery,
     clock,
     identities: authorizationIdentities,
-    nonceGenerator: new SequenceDecisionNonceGenerator(),
+    nonceGenerator: decisionNonceGenerator,
     transactions,
     outbox,
     deliverySecrets,
@@ -591,6 +631,8 @@ export async function createPostgresOrchestratorStack(options: {
     clock,
     identities: authorizationIdentities,
     transactions,
+    delivery: approvalDelivery,
+    nonceGenerator: decisionNonceGenerator,
   });
   const approvalExpiry = new ApprovalExpiryService({
     requests: approvalRequests,
@@ -1032,6 +1074,75 @@ export async function createPostgresOrchestratorStack(options: {
     databaseReachable: () => db.ping(),
   });
 
+  const experimentAuthRequests =
+    new PostgresExperimentAuthorizationRequestRepository(db);
+  const experimentAuthRecords =
+    new PostgresExperimentAuthorizationRecordRepository(db);
+  const experimentResults = new PostgresExperimentResultRepository(db);
+  const experimentEvidenceBundles =
+    new PostgresExperimentEvidenceBundleRepository(db);
+  const assumptionUpdateCandidates =
+    new PostgresAssumptionEvidenceUpdateCandidateRepository(db);
+  const experimentCompletions =
+    new PostgresExperimentCompletionRecordRepository(db);
+  const experimentUsage = new PostgresExperimentUsageLedgerRepository(db);
+  const experimentAuthNonceStore = {
+    map: new Map<string, string>(),
+    async put(id: string, plaintext: string) {
+      this.map.set(id, plaintext);
+    },
+    async take(id: string) {
+      const v = this.map.get(id) ?? null;
+      this.map.delete(id);
+      return v;
+    },
+  };
+  const experimentService = new ExperimentOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    experiments,
+    plans: experimentPlans,
+    authRequests: experimentAuthRequests,
+    authRecords: experimentAuthRecords,
+    results: experimentResults,
+    evidenceBundles: experimentEvidenceBundles,
+    updateCandidates: assumptionUpdateCandidates,
+    completions: experimentCompletions,
+    lineage: experimentLineage,
+    usageLedger: experimentUsage,
+    controlPlane,
+    designModel: new FakeExperimentDesignModel(),
+    nonceGenerator: new CryptoDecisionNonceGenerator(),
+    authNonceStore: experimentAuthNonceStore,
+    isExperimentSponsor: (principalId, projectIds) =>
+      authorityDirectory.isExperimentSponsorForAllProjects(
+        principalId,
+        projectIds,
+      ),
+    objectiveAdmissionPort: new Phase2ExperimentObjectiveAdmissionPort(
+      admission,
+    ),
+    outcomeVerificationPort: new Phase8ExperimentOutcomeVerificationPort(
+      outcomeVerifications,
+    ),
+    resolveRunProjectId: async (runId) => {
+      const run = await runs.getById(runId);
+      return run?.projectId ?? null;
+    },
+    transactions,
+  });
+  const experimentWorkMaterializer = new ExperimentWorkMaterializer({
+    nowIso: () => clock.nowIso(),
+    experiments,
+    plans: experimentPlans,
+    workItems: schedulerWorkItems,
+    projectConfigs: schedulerProjectConfigs,
+  });
+  const experimentProgression = new ExperimentProgressionLoop({
+    experiments,
+    materializer: experimentWorkMaterializer,
+    databaseReachable: () => db.ping(),
+  });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -1058,6 +1169,8 @@ export async function createPostgresOrchestratorStack(options: {
     portfolioService,
     decisionProblems,
     scenarioService,
+    experiments,
+    experimentService,
   });
   const schedulerDispatcher = new SchedulerDispatcher(scheduler, schedulerPorts);
 
@@ -1131,6 +1244,12 @@ export async function createPostgresOrchestratorStack(options: {
     scenarioService,
     scenarioProgression,
     scenarioWorkMaterializer,
+    experiments,
+    experimentPlans,
+    experimentEvidenceBundles,
+    experimentService,
+    experimentProgression,
+    experimentWorkMaterializer,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

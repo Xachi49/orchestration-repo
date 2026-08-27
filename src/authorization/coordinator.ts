@@ -38,6 +38,22 @@ export interface AuthorizationCoordinator {
   ): Promise<readonly ApprovalRequest[]>;
   /** Invalidate nonce usability when a request becomes terminal without decide. */
   invalidateNonce(approvalRequestId: string): Promise<void>;
+  /**
+   * Claim exclusive replacement creation for a burned/terminal ApprovalRequest.
+   * Concurrent claimants either PROCEED once or observe ALREADY with the live B.
+   */
+  beginReissue(replacedApprovalRequestId: string): Promise<
+    | { outcome: "PROCEED" }
+    | { outcome: "ALREADY"; approvalRequestId: string }
+  >;
+  completeReissue(
+    replacedApprovalRequestId: string,
+    replacementApprovalRequestId: string,
+  ): Promise<void>;
+  failReissue(replacedApprovalRequestId: string): Promise<void>;
+  getReissueReplacementId(
+    replacedApprovalRequestId: string,
+  ): Promise<string | null>;
 }
 
 export class InMemoryAuthorizationCoordinator
@@ -47,6 +63,12 @@ export class InMemoryAuthorizationCoordinator
   private readonly decisionLocks = new Set<string>();
   private readonly consumedNonces = new Set<string>();
   private readonly invalidatedNonces = new Set<string>();
+  private readonly reissueInFlight = new Map<string, Promise<string>>();
+  private readonly reissueResolvers = new Map<
+    string,
+    { resolve: (id: string) => void; reject: (error: unknown) => void }
+  >();
+  private readonly reissueReplacementByReplaced = new Map<string, string>();
 
   constructor(private readonly requests: ApprovalRequestRepository) {}
 
@@ -205,5 +227,68 @@ export class InMemoryAuthorizationCoordinator
       superseded.push(updated);
     }
     return superseded;
+  }
+
+  async beginReissue(
+    replacedApprovalRequestId: string,
+  ): Promise<
+    | { outcome: "PROCEED" }
+    | { outcome: "ALREADY"; approvalRequestId: string }
+  > {
+    const existing = this.reissueReplacementByReplaced.get(
+      replacedApprovalRequestId,
+    );
+    if (existing) {
+      return { outcome: "ALREADY", approvalRequestId: existing };
+    }
+    const inFlight = this.reissueInFlight.get(replacedApprovalRequestId);
+    if (inFlight) {
+      const approvalRequestId = await inFlight;
+      return { outcome: "ALREADY", approvalRequestId };
+    }
+    let resolve!: (id: string) => void;
+    let reject!: (error: unknown) => void;
+    const deferred = new Promise<string>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    this.reissueResolvers.set(replacedApprovalRequestId, { resolve, reject });
+    this.reissueInFlight.set(replacedApprovalRequestId, deferred);
+    return { outcome: "PROCEED" };
+  }
+
+  async completeReissue(
+    replacedApprovalRequestId: string,
+    replacementApprovalRequestId: string,
+  ): Promise<void> {
+    this.reissueReplacementByReplaced.set(
+      replacedApprovalRequestId,
+      replacementApprovalRequestId,
+    );
+    this.reissueResolvers
+      .get(replacedApprovalRequestId)
+      ?.resolve(replacementApprovalRequestId);
+    this.reissueResolvers.delete(replacedApprovalRequestId);
+    this.reissueInFlight.delete(replacedApprovalRequestId);
+  }
+
+  async failReissue(replacedApprovalRequestId: string): Promise<void> {
+    this.reissueResolvers.get(replacedApprovalRequestId)?.reject(
+      new AuthorizationError(
+        "APPROVAL_REISSUE_NOT_ELIGIBLE",
+        "Approval request reissue failed",
+        { replacedApprovalRequestId },
+      ),
+    );
+    this.reissueResolvers.delete(replacedApprovalRequestId);
+    this.reissueInFlight.delete(replacedApprovalRequestId);
+  }
+
+  async getReissueReplacementId(
+    replacedApprovalRequestId: string,
+  ): Promise<string | null> {
+    return (
+      this.reissueReplacementByReplaced.get(replacedApprovalRequestId) ?? null
+    );
   }
 }

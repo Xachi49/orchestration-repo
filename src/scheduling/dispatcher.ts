@@ -79,6 +79,20 @@ export interface PhaseDispatchPorts {
   materializePortfolioProposal: (
     decisionProblemId: string,
   ) => Promise<{ resultRef?: string }>;
+  designExperiment: (experimentId: string) => Promise<{ resultRef?: string }>;
+  validateExperiment: (experimentId: string) => Promise<{ resultRef?: string }>;
+  routeExperimentAuthorization: (
+    experimentId: string,
+  ) => Promise<{ resultRef?: string }>;
+  compileExperimentExecution: (
+    experimentId: string,
+  ) => Promise<{ resultRef?: string }>;
+  reconcileExperiment: (experimentId: string) => Promise<{ resultRef?: string }>;
+  verifyExperiment: (experimentId: string) => Promise<{ resultRef?: string }>;
+  buildEvidenceBundle: (experimentId: string) => Promise<{ resultRef?: string }>;
+  proposeAssumptionUpdate: (
+    experimentId: string,
+  ) => Promise<{ resultRef?: string }>;
   /**
    * Pre-dispatch readiness / binding recheck. Must fail closed on drift.
    */
@@ -204,6 +218,22 @@ export class SchedulerDispatcher {
         return this.ports.routeStrategySelection(work.runId);
       case "MATERIALIZE_PORTFOLIO_PROPOSAL":
         return this.ports.materializePortfolioProposal(work.runId);
+      case "DESIGN_EXPERIMENT":
+        return this.ports.designExperiment(work.runId);
+      case "VALIDATE_EXPERIMENT":
+        return this.ports.validateExperiment(work.runId);
+      case "ROUTE_EXPERIMENT_AUTHORIZATION":
+        return this.ports.routeExperimentAuthorization(work.runId);
+      case "COMPILE_EXPERIMENT_EXECUTION":
+        return this.ports.compileExperimentExecution(work.runId);
+      case "RECONCILE_EXPERIMENT":
+        return this.ports.reconcileExperiment(work.runId);
+      case "VERIFY_EXPERIMENT":
+        return this.ports.verifyExperiment(work.runId);
+      case "BUILD_EVIDENCE_BUNDLE":
+        return this.ports.buildEvidenceBundle(work.runId);
+      case "PROPOSE_ASSUMPTION_UPDATE":
+        return this.ports.proposeAssumptionUpdate(work.runId);
       default: {
         const _exhaustive: never = work.workKind;
         return _exhaustive;

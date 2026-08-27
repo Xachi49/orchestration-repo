@@ -143,6 +143,11 @@ export function createLocalAuthorizationStack(options?: {
     approvers: approverAuthorization,
     clock: base.clock,
     identities,
+    delivery: approvalDelivery,
+    nonceGenerator: decisionNonceGenerator,
+    ...(options?.approvalWindowMs !== undefined
+      ? { approvalWindowMs: options.approvalWindowMs }
+      : {}),
   });
 
   const approvalExpiry = new ApprovalExpiryService({

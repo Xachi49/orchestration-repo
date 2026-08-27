@@ -39,6 +39,7 @@ export function httpStatusForAuthorization(
     case "INVALID_AUTHORIZATION_STATE":
     case "AUTHORIZATION_DECISION_NOT_TERMINAL":
     case "MODIFICATION_REQUEST_INVALID":
+    case "APPROVAL_REISSUE_NOT_ELIGIBLE":
       return 409;
     case "APPROVER_UNAUTHORIZED":
     case "UNKNOWN_APPROVER":

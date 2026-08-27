@@ -70,6 +70,7 @@ export {
 export {
   HumanAuthorizationService,
   type HumanAuthorizationServiceDeps,
+  type ApprovalReissueResult,
 } from "./service.js";
 
 export {

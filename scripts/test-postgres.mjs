@@ -35,7 +35,7 @@ process.env["APPROVAL_DELIVERY_SECRET_KEY"] =
 
 try {
   execSync(
-    "npx vitest run --fileParallelism=false src/infrastructure/postgres/postgres.durability.test.ts src/infrastructure/postgres/postgres.integration.test.ts src/infrastructure/postgres/postgres.resource-ledger.test.ts src/infrastructure/postgres/postgres.acceptance.test.ts src/infrastructure/postgres/postgres.phase12.test.ts src/infrastructure/postgres/postgres.phase13.test.ts src/infrastructure/postgres/postgres.phase14.test.ts src/infrastructure/postgres/postgres.phase15.test.ts src/infrastructure/postgres/postgres.phase16.test.ts",
+    "npx vitest run --fileParallelism=false src/infrastructure/postgres/postgres.durability.test.ts src/infrastructure/postgres/postgres.integration.test.ts src/infrastructure/postgres/postgres.resource-ledger.test.ts src/infrastructure/postgres/postgres.acceptance.test.ts src/infrastructure/postgres/postgres.phase12.test.ts src/infrastructure/postgres/postgres.phase13.test.ts src/infrastructure/postgres/postgres.phase14.test.ts src/infrastructure/postgres/postgres.phase15.test.ts src/infrastructure/postgres/postgres.phase16.test.ts src/infrastructure/postgres/postgres.phase17.test.ts",
     {
       stdio: "inherit",
       env: process.env,

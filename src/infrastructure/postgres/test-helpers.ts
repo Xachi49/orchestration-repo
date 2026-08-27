@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { exampleAdmissionRequest } from "../../admission/fixtures.js";
 import type { AdmissionRequest } from "../../admission/request.js";
+import {
+  InMemoryAuthoritativeExperimentEvidencePort,
+  type ResolvedRandomizedEvidence,
+} from "../../causal/index.js";
 import { PostgresDatabase } from "./database.js";
 import { PostgresMigrationRunner } from "./migrate.js";
 import { createPostgresOrchestratorStack } from "./stack.js";
@@ -54,10 +58,13 @@ export async function createTestStack(
     process.env["APPROVAL_DELIVERY_SECRET_KEY"] ??
     Buffer.alloc(32, 11).toString("base64");
   const db = await createTestDatabase(instanceId);
+  const testOnlyCausalEvidenceSeeds =
+    new InMemoryAuthoritativeExperimentEvidencePort();
   const stack = await createPostgresOrchestratorStack({
     db,
     instanceId,
     seedControlPlane: true,
+    testOnlyCausalEvidenceSeeds,
     ...(opts?.completionFailpoint !== undefined
       ? { completionFailpoint: opts.completionFailpoint }
       : {}),
@@ -99,6 +106,10 @@ export async function createTestStack(
   return {
     db,
     stack,
+    /** TEST ONLY — seeds authoritative evidence without a full Phase 17 ladder. */
+    seedCausalAuthoritativeEvidence: (resolved: ResolvedRandomizedEvidence) => {
+      testOnlyCausalEvidenceSeeds.seed(resolved);
+    },
     async close() {
       await stack.close();
     },
@@ -227,14 +238,20 @@ export async function createTestStackOnUrl(
     const runner = new PostgresMigrationRunner(db);
     await runner.assertCompatible();
   }
+  const testOnlyCausalEvidenceSeeds =
+    new InMemoryAuthoritativeExperimentEvidencePort();
   const stack = await createPostgresOrchestratorStack({
     db,
     instanceId,
     seedControlPlane: true,
+    testOnlyCausalEvidenceSeeds,
   });
   return {
     db,
     stack,
+    seedCausalAuthoritativeEvidence: (resolved: ResolvedRandomizedEvidence) => {
+      testOnlyCausalEvidenceSeeds.seed(resolved);
+    },
     async close() {
       await stack.close();
     },

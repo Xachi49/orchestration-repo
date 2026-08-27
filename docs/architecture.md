@@ -1623,3 +1623,14 @@ Governed experiments design bounded measurements of assumptions and route
 execution. Compilation produces lineage only; verified evidence and assumption
 update candidates never create authority.
 
+## Phase 18 — Causal intelligence
+
+See [docs/phase-18-causal-intelligence.md](phase-18-causal-intelligence.md).
+
+Causal questions bind interventions to outcomes, propose graphs, identify
+effects, estimate and synthesize evidence, and route **CAUSAL_REVIEWER**
+promotion of bounded claims. Promoted claims and calibration candidates are
+advisory knowledge only — never policy or execution authority. Phase 9 uses
+dedicated causal storage with advisory retrieval; there is no second memory
+authority. **Causal knowledge informs decisions. It does not authorize them.**
+

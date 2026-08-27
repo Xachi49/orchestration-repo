@@ -15,10 +15,13 @@ import { isProgramSchedulerWorkKind } from "./work-kind.js";
 import { isPortfolioSchedulerWorkKind } from "./work-kind.js";
 import { isScenarioSchedulerWorkKind } from "./work-kind.js";
 import { isExperimentSchedulerWorkKind } from "./work-kind.js";
+import { isCausalSchedulerWorkKind } from "./work-kind.js";
 import type { ScenarioOrchestrationService } from "../scenarios/service.js";
 import type { DecisionProblemRepository } from "../scenarios/repositories.js";
 import type { ExperimentOrchestrationService } from "../experiments/service.js";
 import type { ExperimentRepository } from "../experiments/repositories.js";
+import type { CausalOrchestrationService } from "../causal/service.js";
+import type { CausalQuestionRepository } from "../causal/repositories.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -84,6 +87,9 @@ export interface PhaseDispatchPortsDeps {
   /** Phase 17 experiment progression ports (optional until wired). */
   experiments?: ExperimentRepository;
   experimentService?: ExperimentOrchestrationService;
+  /** Phase 18 causal progression ports (optional until wired). */
+  causalQuestions?: CausalQuestionRepository;
+  causalService?: CausalOrchestrationService;
 }
 
 const DEFAULT_OBSERVABILITY_WINDOW: { kind: MetricWindowKind; lastN: number } =
@@ -144,6 +150,15 @@ function bindingDriftReasonCode(kind: SchedulerWorkKind): string {
     case "BUILD_EVIDENCE_BUNDLE":
     case "PROPOSE_ASSUMPTION_UPDATE":
       return "EXPERIMENT_BINDING_CHANGED";
+    case "PROPOSE_CAUSAL_GRAPH":
+    case "ANALYZE_IDENTIFICATION":
+    case "ESTIMATE_CAUSAL_EFFECT":
+    case "SYNTHESIZE_CAUSAL_EVIDENCE":
+    case "VALIDATE_CAUSAL_CLAIM":
+    case "ROUTE_CAUSAL_REVIEW":
+    case "PROMOTE_CAUSAL_CLAIM":
+    case "PROPOSE_MODEL_CALIBRATION":
+      return "CAUSAL_BINDING_CHANGED";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -212,6 +227,15 @@ export function createPhaseDispatchPorts(
       case "VERIFY_EXPERIMENT":
       case "BUILD_EVIDENCE_BUNDLE":
       case "PROPOSE_ASSUMPTION_UPDATE":
+        return null;
+      case "PROPOSE_CAUSAL_GRAPH":
+      case "ANALYZE_IDENTIFICATION":
+      case "ESTIMATE_CAUSAL_EFFECT":
+      case "SYNTHESIZE_CAUSAL_EVIDENCE":
+      case "VALIDATE_CAUSAL_CLAIM":
+      case "ROUTE_CAUSAL_REVIEW":
+      case "PROMOTE_CAUSAL_CLAIM":
+      case "PROPOSE_MODEL_CALIBRATION":
         return null;
       default: {
         const _exhaustive: never = kind;
@@ -545,7 +569,108 @@ export function createPhaseDispatchPorts(
       };
     },
 
+    async proposeCausalGraph(causalQuestionId) {
+      if (!deps.causalService) {
+        throw new Error("Causal service not configured");
+      }
+      const result = await deps.causalService.proposeGraph(causalQuestionId);
+      return { resultRef: result.graph.graphHash };
+    },
+
+    async analyzeIdentification(causalQuestionId) {
+      if (!deps.causalService) {
+        throw new Error("Causal service not configured");
+      }
+      const result = await deps.causalService.identify(causalQuestionId);
+      return { resultRef: result.analysis.identificationAnalysisId };
+    },
+
+    async estimateCausalEffect(causalQuestionId) {
+      if (!deps.causalService) {
+        throw new Error("Causal service not configured");
+      }
+      const result = await deps.causalService.estimate(causalQuestionId);
+      return { resultRef: result.estimate.causalEstimateId };
+    },
+
+    async synthesizeCausalEvidence(causalQuestionId) {
+      if (!deps.causalService) {
+        throw new Error("Causal service not configured");
+      }
+      const result = await deps.causalService.synthesize(causalQuestionId);
+      return { resultRef: result.synthesis.evidenceSynthesisId };
+    },
+
+    async validateCausalClaim(causalQuestionId) {
+      if (!deps.causalService) {
+        throw new Error("Causal service not configured");
+      }
+      const result = await deps.causalService.validate(causalQuestionId);
+      return { resultRef: result.claim.claimHash };
+    },
+
+    async routeCausalReview(causalQuestionId) {
+      if (!deps.causalService) {
+        throw new Error("Causal service not configured");
+      }
+      const result = await deps.causalService.routeReview(causalQuestionId);
+      return { resultRef: result.request.reviewRequestId };
+    },
+
+    async promoteCausalClaim(causalQuestionId) {
+      // Human gate: promotion only via decideReview — dispatch is a no-op settle.
+      if (!deps.causalQuestions) {
+        throw new Error("Causal questions not configured");
+      }
+      const question = await deps.causalQuestions.getById(causalQuestionId);
+      return { resultRef: question?.status ?? causalQuestionId };
+    },
+
+    async proposeModelCalibration(causalQuestionId) {
+      if (!deps.causalQuestions) {
+        throw new Error("Causal questions not configured");
+      }
+      const question = await deps.causalQuestions.getById(causalQuestionId);
+      return { resultRef: question?.status ?? causalQuestionId };
+    },
+
     async assertDispatchReady(work: SchedulerWorkItem) {
+      if (isCausalSchedulerWorkKind(work.workKind)) {
+        if (!deps.causalQuestions) {
+          return {
+            ok: false as const,
+            reasonCode: "CAUSAL_SERVICE_MISSING",
+            message: "Causal question repository not configured for dispatch",
+          };
+        }
+        const question = await deps.causalQuestions.getById(work.runId);
+        if (!question) {
+          return {
+            ok: false as const,
+            reasonCode: "CAUSAL_QUESTION_NOT_FOUND",
+            message: `Causal question ${work.runId} no longer exists`,
+          };
+        }
+        if (!question.projectIds.includes(work.projectId)) {
+          return {
+            ok: false as const,
+            reasonCode: "CAUSAL_PROJECT_MISMATCH",
+            message: `Causal question ${work.runId} does not include project ${work.projectId}`,
+          };
+        }
+        if (
+          work.workKind === "ROUTE_CAUSAL_REVIEW" &&
+          question.status !== "AWAITING_CAUSAL_REVIEW"
+        ) {
+          return {
+            ok: false as const,
+            reasonCode: "CAUSAL_STATE_CONFLICT",
+            message: `Causal question ${work.runId} not awaiting causal review`,
+          };
+        }
+        return { ok: true as const };
+      }
+
       if (isExperimentSchedulerWorkKind(work.workKind)) {
         if (!deps.experiments) {
           return {

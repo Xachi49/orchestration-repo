@@ -86,3 +86,18 @@ still require Phase 6 authorization before any ExecutionAttempt.
 
 Experiments produce evidence. They do not produce authority. Assumption update
 candidates require Phase 16 re-analysis — never mutate AssumptionSets in place.
+
+## Causal intelligence (Phase 18)
+
+CAUSAL INTELLIGENCE proposes bounded causal knowledge from verified evidence.
+It cannot create execution authority.
+
+CAUSAL_REVIEWER ≠ APPROVER ≠ EXPERIMENT_SPONSOR ≠ STRATEGY_SELECTOR ≠
+PORTFOLIO_ALLOCATOR ≠ PROGRAM_MATERIALIZER.
+
+Causal review promotes bounded claims only — not policy, Phase 6 execution,
+scenario selection, or capital allocation. Calibration candidates require
+Phase 16 re-analysis — never mutate AssumptionSets in place. Evidence gaps may
+feed Phase 17 Active Learning; they do not authorize experiments.
+
+Causal knowledge informs decisions. It does not authorize them.

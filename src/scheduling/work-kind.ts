@@ -42,6 +42,14 @@ export const SCHEDULER_WORK_KINDS = [
   "VERIFY_EXPERIMENT",
   "BUILD_EVIDENCE_BUNDLE",
   "PROPOSE_ASSUMPTION_UPDATE",
+  "PROPOSE_CAUSAL_GRAPH",
+  "ANALYZE_IDENTIFICATION",
+  "ESTIMATE_CAUSAL_EFFECT",
+  "SYNTHESIZE_CAUSAL_EVIDENCE",
+  "VALIDATE_CAUSAL_CLAIM",
+  "ROUTE_CAUSAL_REVIEW",
+  "PROMOTE_CAUSAL_CLAIM",
+  "PROPOSE_MODEL_CALIBRATION",
 ] as const;
 
 export type SchedulerWorkKind = (typeof SCHEDULER_WORK_KINDS)[number];
@@ -123,6 +131,26 @@ export function isExperimentSchedulerWorkKind(
   return (EXPERIMENT_SCHEDULER_WORK_KINDS as readonly string[]).includes(kind);
 }
 
+export const CAUSAL_SCHEDULER_WORK_KINDS = [
+  "PROPOSE_CAUSAL_GRAPH",
+  "ANALYZE_IDENTIFICATION",
+  "ESTIMATE_CAUSAL_EFFECT",
+  "SYNTHESIZE_CAUSAL_EVIDENCE",
+  "VALIDATE_CAUSAL_CLAIM",
+  "ROUTE_CAUSAL_REVIEW",
+  "PROMOTE_CAUSAL_CLAIM",
+  "PROPOSE_MODEL_CALIBRATION",
+] as const satisfies readonly SchedulerWorkKind[];
+
+export type CausalSchedulerWorkKind =
+  (typeof CAUSAL_SCHEDULER_WORK_KINDS)[number];
+
+export function isCausalSchedulerWorkKind(
+  kind: SchedulerWorkKind,
+): kind is CausalSchedulerWorkKind {
+  return (CAUSAL_SCHEDULER_WORK_KINDS as readonly string[]).includes(kind);
+}
+
 export const WORKER_CAPABILITY_LABELS = [
   "INGESTION",
   "PLANNING",
@@ -136,6 +164,7 @@ export const WORKER_CAPABILITY_LABELS = [
   "PORTFOLIO_ORCHESTRATION",
   "SCENARIO_ORCHESTRATION",
   "EXPERIMENT_ORCHESTRATION",
+  "CAUSAL_ORCHESTRATION",
   "ALL",
 ] as const;
 
@@ -194,6 +223,15 @@ export function workKindToCapability(
     case "BUILD_EVIDENCE_BUNDLE":
     case "PROPOSE_ASSUMPTION_UPDATE":
       return "EXPERIMENT_ORCHESTRATION";
+    case "PROPOSE_CAUSAL_GRAPH":
+    case "ANALYZE_IDENTIFICATION":
+    case "ESTIMATE_CAUSAL_EFFECT":
+    case "SYNTHESIZE_CAUSAL_EVIDENCE":
+    case "VALIDATE_CAUSAL_CLAIM":
+    case "ROUTE_CAUSAL_REVIEW":
+    case "PROMOTE_CAUSAL_CLAIM":
+    case "PROPOSE_MODEL_CALIBRATION":
+      return "CAUSAL_ORCHESTRATION";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

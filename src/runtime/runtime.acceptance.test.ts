@@ -203,7 +203,7 @@ describe("Phase 12 runtime acceptance (unit)", () => {
           storageMode: "postgres",
           databaseReachable: reachable,
           schemaCompatible: reachable,
-          supportedSchemaVersion: "012_phase17_governed_experiments",
+          supportedSchemaVersion: "013_phase18_causal_intelligence",
         }),
       },
     });

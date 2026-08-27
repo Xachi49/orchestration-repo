@@ -149,6 +149,11 @@ export function createOrchestratorRuntime(
                   experimentService: postgres.experimentService,
                   experiments: postgres.experiments,
                   experimentEvidenceBundles: postgres.experimentEvidenceBundles,
+                  causalService: postgres.causalService,
+                  causalQuestions: postgres.causalQuestions,
+                  promotedCausalClaims: postgres.promotedCausalClaims,
+                  causalCalibrationCandidates:
+                    postgres.causalCalibrationCandidates,
                 }
               : {}),
             storageMode: boot.storageMode,

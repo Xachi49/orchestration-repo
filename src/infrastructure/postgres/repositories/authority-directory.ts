@@ -22,7 +22,8 @@ export interface AuthorityGrantSeed {
     | "PROGRAM_MATERIALIZER"
     | "PORTFOLIO_ALLOCATOR"
     | "STRATEGY_SELECTOR"
-    | "EXPERIMENT_SPONSOR";
+    | "EXPERIMENT_SPONSOR"
+    | "CAUSAL_REVIEWER";
   projectId: string;
   environments: readonly string[];
 }
@@ -169,6 +170,42 @@ export class PostgresAuthorityDirectory {
     }
     for (const projectId of unique) {
       if (!(await this.isExperimentSponsorEnabled(principalId, projectId))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async isCausalReviewerEnabled(
+    principalId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM authority_grants
+       WHERE principal_id = $1
+         AND principal_type = 'CAUSAL_REVIEWER'
+         AND project_id = $2
+         AND enabled = TRUE`,
+      [principalId, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Fail-closed intersection: principal must hold an explicit
+   * CAUSAL_REVIEWER grant for EVERY project in scope.
+   */
+  async isCausalReviewerForAllProjects(
+    principalId: string,
+    projectIds: readonly string[],
+  ): Promise<boolean> {
+    const unique = [...new Set(projectIds.filter((id) => id.length > 0))];
+    if (unique.length === 0) {
+      return false;
+    }
+    for (const projectId of unique) {
+      if (!(await this.isCausalReviewerEnabled(principalId, projectId))) {
         return false;
       }
     }
@@ -332,6 +369,11 @@ export function buildAuthoritySeeds(input: {
     projectId?: string;
     environments?: readonly string[];
   }[];
+  causalReviewerGrants?: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[];
 }): AuthorityGrantSeed[] {
   const seeds: AuthorityGrantSeed[] = input.requesterGrants
     .filter((grant) => grant.projectId === input.projectId)
@@ -398,6 +440,21 @@ export function buildAuthoritySeeds(input: {
     seeds.push({
       principalId: grant.principalId,
       principalType: "EXPERIMENT_SPONSOR",
+      projectId: grant.projectId ?? input.projectId,
+      environments: grant.environments ?? input.environments,
+    });
+  }
+  const causalReviewerGrants: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[] =
+    input.causalReviewerGrants ??
+    input.approverIds.map((principalId) => ({ principalId }));
+  for (const grant of causalReviewerGrants) {
+    seeds.push({
+      principalId: grant.principalId,
+      principalType: "CAUSAL_REVIEWER",
       projectId: grant.projectId ?? input.projectId,
       environments: grant.environments ?? input.environments,
     });

@@ -25,7 +25,11 @@ export interface AuthorityGrantSeed {
     | "EXPERIMENT_SPONSOR"
     | "CAUSAL_REVIEWER"
     | "DECISION_POLICY_APPROVER"
-    | "DECISION_POLICY_ACTIVATOR";
+    | "DECISION_POLICY_ACTIVATOR"
+    | "GOVERNANCE_ADMIN"
+    | "GOVERNANCE_HOLD_OPERATOR"
+    | "RISK_REVIEWER"
+    | "SECURITY_REVIEWER";
   projectId: string;
   environments: readonly string[];
 }
@@ -286,6 +290,150 @@ export class PostgresAuthorityDirectory {
     return true;
   }
 
+  async isGovernanceAdminEnabled(
+    principalId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM authority_grants
+       WHERE principal_id = $1
+         AND principal_type = 'GOVERNANCE_ADMIN'
+         AND project_id = $2
+         AND enabled = TRUE`,
+      [principalId, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Fail-closed intersection: principal must hold an explicit
+   * GOVERNANCE_ADMIN grant for EVERY project in scope.
+   */
+  async isGovernanceAdminForAllProjects(
+    principalId: string,
+    projectIds: readonly string[],
+  ): Promise<boolean> {
+    const unique = [...new Set(projectIds.filter((id) => id.length > 0))];
+    if (unique.length === 0) {
+      return false;
+    }
+    for (const projectId of unique) {
+      if (!(await this.isGovernanceAdminEnabled(principalId, projectId))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async isGovernanceHoldOperatorEnabled(
+    principalId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM authority_grants
+       WHERE principal_id = $1
+         AND principal_type = 'GOVERNANCE_HOLD_OPERATOR'
+         AND project_id = $2
+         AND enabled = TRUE`,
+      [principalId, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Fail-closed intersection: principal must hold an explicit
+   * GOVERNANCE_HOLD_OPERATOR grant for EVERY project in scope.
+   */
+  async isGovernanceHoldOperatorForAllProjects(
+    principalId: string,
+    projectIds: readonly string[],
+  ): Promise<boolean> {
+    const unique = [...new Set(projectIds.filter((id) => id.length > 0))];
+    if (unique.length === 0) {
+      return false;
+    }
+    for (const projectId of unique) {
+      if (!(await this.isGovernanceHoldOperatorEnabled(principalId, projectId))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async isRiskReviewerEnabled(
+    principalId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM authority_grants
+       WHERE principal_id = $1
+         AND principal_type = 'RISK_REVIEWER'
+         AND project_id = $2
+         AND enabled = TRUE`,
+      [principalId, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Fail-closed intersection: principal must hold an explicit
+   * RISK_REVIEWER grant for EVERY project in scope.
+   */
+  async isRiskReviewerForAllProjects(
+    principalId: string,
+    projectIds: readonly string[],
+  ): Promise<boolean> {
+    const unique = [...new Set(projectIds.filter((id) => id.length > 0))];
+    if (unique.length === 0) {
+      return false;
+    }
+    for (const projectId of unique) {
+      if (!(await this.isRiskReviewerEnabled(principalId, projectId))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async isSecurityReviewerEnabled(
+    principalId: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM authority_grants
+       WHERE principal_id = $1
+         AND principal_type = 'SECURITY_REVIEWER'
+         AND project_id = $2
+         AND enabled = TRUE`,
+      [principalId, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Fail-closed intersection: principal must hold an explicit
+   * SECURITY_REVIEWER grant for EVERY project in scope.
+   */
+  async isSecurityReviewerForAllProjects(
+    principalId: string,
+    projectIds: readonly string[],
+  ): Promise<boolean> {
+    const unique = [...new Set(projectIds.filter((id) => id.length > 0))];
+    if (unique.length === 0) {
+      return false;
+    }
+    for (const projectId of unique) {
+      if (!(await this.isSecurityReviewerEnabled(principalId, projectId))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /**
    * Fail-closed intersection: principal must hold an explicit
    * PORTFOLIO_ALLOCATOR grant for EVERY project in scope.
@@ -458,6 +606,26 @@ export function buildAuthoritySeeds(input: {
     projectId?: string;
     environments?: readonly string[];
   }[];
+  governanceAdminGrants?: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[];
+  holdOperatorGrants?: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[];
+  riskReviewerGrants?: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[];
+  securityReviewerGrants?: readonly {
+    principalId: string;
+    projectId?: string;
+    environments?: readonly string[];
+  }[];
 }): AuthorityGrantSeed[] {
   const seeds: AuthorityGrantSeed[] = input.requesterGrants
     .filter((grant) => grant.projectId === input.projectId)
@@ -569,6 +737,39 @@ export function buildAuthoritySeeds(input: {
     seeds.push({
       principalId: grant.principalId,
       principalType: "DECISION_POLICY_ACTIVATOR",
+      projectId: grant.projectId ?? input.projectId,
+      environments: grant.environments ?? input.environments,
+    });
+  }
+  // Phase 20 institutional roles — fail closed (default empty; never infer).
+  for (const grant of input.governanceAdminGrants ?? []) {
+    seeds.push({
+      principalId: grant.principalId,
+      principalType: "GOVERNANCE_ADMIN",
+      projectId: grant.projectId ?? input.projectId,
+      environments: grant.environments ?? input.environments,
+    });
+  }
+  for (const grant of input.holdOperatorGrants ?? []) {
+    seeds.push({
+      principalId: grant.principalId,
+      principalType: "GOVERNANCE_HOLD_OPERATOR",
+      projectId: grant.projectId ?? input.projectId,
+      environments: grant.environments ?? input.environments,
+    });
+  }
+  for (const grant of input.riskReviewerGrants ?? []) {
+    seeds.push({
+      principalId: grant.principalId,
+      principalType: "RISK_REVIEWER",
+      projectId: grant.projectId ?? input.projectId,
+      environments: grant.environments ?? input.environments,
+    });
+  }
+  for (const grant of input.securityReviewerGrants ?? []) {
+    seeds.push({
+      principalId: grant.principalId,
+      principalType: "SECURITY_REVIEWER",
       projectId: grant.projectId ?? input.projectId,
       environments: grant.environments ?? input.environments,
     });

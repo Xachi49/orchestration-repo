@@ -6,6 +6,7 @@ import {
   SequenceDecisionNonceGenerator,
 } from "../authorization/decision-nonce.js";
 import { hashDecisionNonce } from "../authorization/decision-card-hasher.js";
+import { assertInstitutionalRequirements } from "../governance/phase-gate.js";
 import { DecisionPolicyError } from "./errors.js";
 import {
   computeDecisionContextHash,
@@ -145,6 +146,8 @@ export interface DecisionPolicyOrchestrationDeps {
   causalEvidence?: CausalGovernedEvidencePort;
   compilerDeps?: DecisionRecommendationCompilerDeps;
   materializationLineages?: DecisionRecommendationMaterializationLineageRepository;
+  /** Phase 20 optional institutional hold gate. */
+  institutionalGovernance?: import("../governance/port.js").InstitutionalGovernancePort;
 }
 
 export interface AdmitDecisionContextInput {
@@ -476,6 +479,7 @@ export class DecisionPolicyOrchestrationService {
     decision: DecisionPolicyApprovalDecision;
     decisionNonce: string;
     submittedAt?: string;
+    institutionalProofId?: string;
   }): Promise<{
     policy: DecisionPolicyCandidate;
     record: {
@@ -514,6 +518,23 @@ export class DecisionPolicyOrchestrationService {
         "DECISION_POLICY_APPROVAL_INVALID",
         "Decision nonce mismatch / replay",
       );
+    }
+    if (input.decision === "APPROVE_SHADOW") {
+      await assertInstitutionalRequirements({
+        port: this.deps.institutionalGovernance,
+        requiredRole: "DECISION_POLICY_APPROVER",
+        projectId: request.projectIds[0]!,
+        environment: request.environmentScope[0] ?? "local",
+        subjectClass: "DECISION_POLICY_APPROVAL",
+        subjectType: "DECISION_POLICY_APPROVAL",
+        subjectId: request.decisionPolicyId,
+        subjectHash: request.subjectHash,
+        subjectVersion: request.decisionPolicyVersion,
+        ...(input.institutionalProofId !== undefined
+          ? { institutionalProofId: input.institutionalProofId }
+          : {}),
+        atIso: submittedAt,
+      });
     }
     if (!this.deps.isDecisionPolicyApprover) {
       throw new DecisionPolicyError(
@@ -778,6 +799,7 @@ export class DecisionPolicyOrchestrationService {
     decision: DecisionPolicyActivationDecision;
     decisionNonce: string;
     submittedAt?: string;
+    institutionalProofId?: string;
   }): Promise<{
     policy: DecisionPolicyCandidate;
     activation?: DecisionPolicyActivationRecord;
@@ -803,6 +825,23 @@ export class DecisionPolicyOrchestrationService {
         "DECISION_POLICY_ACTIVATION_INVALID",
         "Decision nonce mismatch / replay",
       );
+    }
+    if (input.decision === "ACTIVATE") {
+      await assertInstitutionalRequirements({
+        port: this.deps.institutionalGovernance,
+        requiredRole: "DECISION_POLICY_ACTIVATOR",
+        projectId: request.approvedScopeProjectIds[0]!,
+        environment: request.approvedScopeEnvironments[0] ?? "local",
+        subjectClass: "DECISION_POLICY_ACTIVATION",
+        subjectType: "DECISION_POLICY_ACTIVATION",
+        subjectId: request.decisionPolicyId,
+        subjectHash: request.policyHash,
+        subjectVersion: request.decisionPolicyVersion,
+        ...(input.institutionalProofId !== undefined
+          ? { institutionalProofId: input.institutionalProofId }
+          : {}),
+        atIso: submittedAt,
+      });
     }
     if (!this.deps.isDecisionPolicyActivator) {
       throw new DecisionPolicyError(

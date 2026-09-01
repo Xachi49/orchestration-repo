@@ -6,6 +6,7 @@ import type { ControlPlaneService } from "../control-plane/service.js";
 import type { PlanRepository } from "../planning/plan-repository.js";
 import type { ValidationDecisionRepository } from "../validation/decision-repository.js";
 import type { LockedRepositoryStore } from "../ingestion/locked-state.js";
+import { assertInstitutionalRequirements } from "../governance/phase-gate.js";
 import {
   parseAuthorizationRecord,
   parseHumanAuthorizationDecision,
@@ -80,6 +81,11 @@ export interface HumanAuthorizationServiceDeps {
   transactions?: TransactionManager;
   nonceGenerator?: DecisionNonceGenerator;
   approvalWindowMs?: number;
+  /**
+   * Phase 20 — optional institutional hold/proof gate.
+   * When absent or no active mandate/hold: Phase 6 behavior unchanged.
+   */
+  institutionalGovernance?: import("../governance/port.js").InstitutionalGovernancePort;
 }
 
 export interface ApprovalReissueResult {
@@ -150,6 +156,26 @@ export class HumanAuthorizationService {
           (await this.deps.runs.getById(request.runId))?.state ??
           "AWAITING_APPROVAL",
       };
+    }
+
+    if (this.deps.institutionalGovernance && decision.decision === "APPROVE") {
+      const run = await this.deps.runs.getById(request.runId);
+      if (run) {
+        await assertInstitutionalRequirements({
+          port: this.deps.institutionalGovernance,
+          requiredRole: "APPROVER",
+          projectId: run.projectId,
+          environment: run.requestedEnvironment,
+          subjectClass: "PHASE6_APPROVAL",
+          subjectType: "PHASE6_APPROVAL",
+          subjectId: request.approvalRequestId,
+          subjectHash: request.planHash,
+          ...(decision.institutionalProofId !== undefined
+            ? { institutionalProofId: decision.institutionalProofId }
+            : {}),
+          atIso: this.deps.clock.nowIso(),
+        });
+      }
     }
 
     if (request.status === "EXPIRED") {

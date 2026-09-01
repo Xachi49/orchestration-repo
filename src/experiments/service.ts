@@ -11,6 +11,7 @@ import {
   withOptionalTransaction,
   type TransactionManager,
 } from "../durability/transaction.js";
+import { assertInstitutionalRequirements } from "../governance/phase-gate.js";
 import {
   assertExperimentAuthorizationDoesNotExecute,
   assertExperimentSponsorDistinctFromApprover,
@@ -163,6 +164,8 @@ export interface ExperimentOrchestrationServiceDeps {
     principalId: string,
     projectIds: readonly string[],
   ) => Promise<boolean>;
+  /** Phase 20 optional institutional hold gate. */
+  institutionalGovernance?: import("../governance/port.js").InstitutionalGovernancePort;
   /** Production: Phase2ExperimentObjectiveAdmissionPort. Missing → fail closed. */
   objectiveAdmissionPort?: ExperimentObjectiveAdmissionPort;
   /** Production: Phase8ExperimentOutcomeVerificationPort. Missing → fail closed for conclusive evidence. */
@@ -548,6 +551,7 @@ export class ExperimentOrchestrationService {
     decision: ExperimentAuthorizationDecision;
     decisionNonce: string;
     submittedAt: string;
+    institutionalProofId?: string;
   }): Promise<{
     request: ExperimentAuthorizationRequest;
     record?: ExperimentAuthorizationRecord;
@@ -578,6 +582,23 @@ export class ExperimentOrchestrationService {
     }
 
     const experiment = await this.requireExperiment(request.experimentId);
+    if (input.decision === "APPROVE_EXPERIMENT") {
+      await assertInstitutionalRequirements({
+        port: this.deps.institutionalGovernance,
+        requiredRole: "EXPERIMENT_SPONSOR",
+        projectId: experiment.projectId,
+        environment: experiment.requestedEnvironment,
+        subjectClass: "EXPERIMENT_AUTHORIZATION",
+        subjectType: "EXPERIMENT_AUTHORIZATION",
+        subjectId: experiment.experimentId,
+        subjectHash: request.subjectHash,
+        ...(input.institutionalProofId !== undefined
+          ? { institutionalProofId: input.institutionalProofId }
+          : {}),
+        atIso: input.submittedAt,
+      });
+    }
+
     if (!this.deps.isExperimentSponsor) {
       throw new ExperimentError(
         "EXPERIMENT_AUTHORIZATION_INVALID",

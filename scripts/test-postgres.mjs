@@ -38,6 +38,7 @@ try {
     [
       "npx vitest run --fileParallelism=false",
       "src/infrastructure/postgres/postgres.durability.test.ts",
+      "src/infrastructure/postgres/postgres.migrate.test.ts",
       "src/infrastructure/postgres/postgres.integration.test.ts",
       "src/infrastructure/postgres/postgres.resource-ledger.test.ts",
       "src/infrastructure/postgres/postgres.acceptance.test.ts",
@@ -49,6 +50,7 @@ try {
       "src/infrastructure/postgres/postgres.phase17.test.ts",
       "src/infrastructure/postgres/postgres.phase18.test.ts",
       "src/infrastructure/postgres/postgres.phase19.test.ts",
+      "src/infrastructure/postgres/postgres.phase20.test.ts",
     ].join(" "),
     {
       stdio: "inherit",

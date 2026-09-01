@@ -19,6 +19,8 @@ export const HumanAuthorizationDecisionSchema = z
     submittedAt: z.string().datetime(),
     decisionNonce: z.string().min(1),
     note: z.string().max(4000).optional(),
+    /** Required only when an active institutional mandate applies (Phase 20). */
+    institutionalProofId: z.string().min(1).optional(),
   })
   .strict();
 

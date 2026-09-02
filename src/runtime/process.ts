@@ -158,6 +158,8 @@ export function createOrchestratorRuntime(
                   decisionContexts: postgres.decisionContexts,
                   decisionPolicies: postgres.decisionPolicies,
                   decisionRecommendations: postgres.decisionRecommendations,
+                  governanceService: postgres.governanceService,
+                  governanceProofs: postgres.governanceProofs,
                 }
               : {}),
             storageMode: boot.storageMode,

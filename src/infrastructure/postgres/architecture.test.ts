@@ -32,8 +32,30 @@ describe("durability architecture documentation", () => {
       .sort();
     expect(phaseTests.length).toBeGreaterThan(0);
     expect(phaseTests).toContain("postgres.phase19.test.ts");
+    expect(phaseTests).toContain("postgres.phase20.test.ts");
     for (const name of phaseTests) {
       expect(harness).toContain(`src/infrastructure/postgres/${name}`);
     }
+  });
+
+  it("postgres production stack does not expose test-only canonical authority seeding or internal authority repos", () => {
+    const stack = readFileSync("src/infrastructure/postgres/stack.ts", "utf8");
+    const interfaceMatch = stack.match(
+      /export interface PostgresOrchestratorStack \{([\s\S]*?)\n\}/,
+    );
+    expect(interfaceMatch).toBeDefined();
+    const interfaceBody = interfaceMatch![1]!;
+    expect(interfaceBody).not.toContain("governanceCanonicalAuthority");
+    expect(interfaceBody).not.toContain("governanceDirectGrants");
+    expect(interfaceBody).not.toContain("governanceRevocations");
+    expect(interfaceBody).not.toContain("authorityRevocations");
+    expect(interfaceBody).not.toContain("authorityGrants");
+    expect(interfaceBody).not.toContain("seedCanonicalAuthority");
+    expect(interfaceBody).toContain("governanceService: GovernanceOrchestrationService");
+    expect(interfaceBody).toContain("governanceInstitutions: PostgresInstitutionRepository");
+    expect(interfaceBody).toContain("governanceMandates: PostgresGovernanceMandateRepository");
+    expect(interfaceBody).toContain("governanceCases: PostgresGovernanceCaseRepository");
+    expect(interfaceBody).toContain("governanceProofs: PostgresInstitutionalAuthorizationProofRepository");
+    expect(interfaceBody).toContain("governanceHolds: PostgresGovernanceHoldRepository");
   });
 });

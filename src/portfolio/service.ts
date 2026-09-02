@@ -26,6 +26,7 @@ import {
   withOptionalTransaction,
   type TransactionManager,
 } from "../durability/transaction.js";
+import { assertInstitutionalRequirements } from "../governance/phase-gate.js";
 import { labelEvidence, type PortfolioAnalysisContext } from "./analysis-context.js";
 import {
   portfolioAuthorizationEnvelopeHash,
@@ -160,6 +161,10 @@ export interface PortfolioServiceDeps {
   authorizedRepositoryIdentities?: (
     projectId: string,
   ) => Promise<readonly string[]>;
+  /**
+   * Phase 20 — optional institutional hold gate (no mandate ⇒ unchanged).
+   */
+  institutionalGovernance?: import("../governance/port.js").InstitutionalGovernancePort;
 }
 
 /** Portfolio allocator ≠ Phase 6 execution approver ≠ program materializer. */
@@ -504,6 +509,7 @@ export class PortfolioOrchestrationService {
     decision: "APPROVE" | "REJECT";
     decisionNonce: string;
     submittedAt: string;
+    institutionalProofId?: string;
   }): Promise<{
     request: PortfolioAuthorizationRequest;
     record?: PortfolioAuthorizationRecord;
@@ -534,6 +540,27 @@ export class PortfolioOrchestrationService {
       );
     }
     const portfolio = await this.requirePortfolio(request.portfolioId);
+    if (input.decision === "APPROVE") {
+      const projectId =
+        portfolio.authorizationEnvelope.allowedProjectIds[0] ??
+        portfolio.primaryProjectId;
+      await assertInstitutionalRequirements({
+        port: this.deps.institutionalGovernance,
+        requiredRole: "PORTFOLIO_ALLOCATOR",
+        projectId,
+        environment:
+          portfolio.authorizationEnvelope.allowedEnvironments[0] ?? "local",
+        subjectClass: "PORTFOLIO_AUTHORIZATION",
+        subjectType: "PORTFOLIO_AUTHORIZATION",
+        subjectId: portfolio.portfolioId,
+        subjectHash: request.subjectHash,
+        subjectVersion: portfolio.portfolioVersion,
+        ...(input.institutionalProofId !== undefined
+          ? { institutionalProofId: input.institutionalProofId }
+          : {}),
+        atIso: input.submittedAt,
+      });
+    }
     if (!this.deps.isPortfolioAllocator) {
       throw new PortfolioError(
         "PORTFOLIO_AUTHORIZATION_INVALID",

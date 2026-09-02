@@ -1647,3 +1647,34 @@ Live recommendations are not execution — they enter declared Phase 2/14/15/17
 paths and still require those phases' human authorization.
 **A Decision Policy recommends. It does not govern the governor. It does not execute.**
 
+## Phase 20 — Institutional governance
+
+See [docs/phase-20-institutional-governance.md](phase-20-institutional-governance.md).
+
+Institutional governance adds scoped mandates, attenuated delegation, quorum,
+separation of duties, institutional proofs, revocation, and holds around
+existing phase authorities.
+
+```text
+DIRECT AUTHORITY
+        ↓
+OPTIONAL BOUNDED DELEGATION
+        ↓
+INSTITUTIONAL AUTHORITY RESOLUTION
+        ↓
+MANDATE CONDITIONS
+        ↓
+QUORUM + SEPARATION OF DUTIES
+        ↓
+INSTITUTIONAL AUTHORIZATION PROOF
+        ↓
+EXISTING PHASE-SPECIFIC AUTHORITY
+        ↓
+CANONICAL BUSINESS DECISION
+```
+
+**Institutional governance can constrain authority. It cannot manufacture
+operational authority.** GOVERNANCE_ADMIN is not a superuser. Proof ≠
+AuthorizationRecord ≠ Portfolio/Experiment/Strategy/Causal/Decision-Policy/
+execution authority. When no mandate applies, Phases 0–19 behave as before.
+

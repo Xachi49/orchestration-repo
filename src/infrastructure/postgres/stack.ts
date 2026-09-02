@@ -300,6 +300,22 @@ import {
   InMemoryDecisionRecommendationMaterializationLineageRepository,
   InMemoryDecisionStateSourcePort,
 } from "../../decision-policies/index.js";
+import {
+  PostgresInstitutionRepository,
+  PostgresOrganizationalUnitRepository,
+  PostgresGovernanceMandateRepository,
+  PostgresAuthorityDelegationRepository,
+  PostgresDirectAuthorityGrantRepository,
+  PostgresCanonicalAuthorityGrantAdapter,
+  PostgresGovernanceCaseRepository,
+  PostgresGovernanceAttestationRepository,
+  PostgresInstitutionalAuthorizationProofRepository,
+  PostgresAuthorityRevocationRepository,
+  PostgresGovernanceHoldRepository,
+  PostgresInstitutionalAuthoritySnapshotRepository,
+  PostgresGovernanceAuditRepository,
+} from "./repositories/governance.js";
+import { GovernanceOrchestrationService } from "../../governance/index.js";
 
 export interface PostgresOrchestratorStack {
   storageMode: "postgres";
@@ -389,6 +405,12 @@ export interface PostgresOrchestratorStack {
   decisionPolicyService: DecisionPolicyOrchestrationService;
   decisionPolicyProgression: DecisionPolicyProgressionLoop;
   decisionPolicyWorkMaterializer: DecisionPolicyWorkMaterializer;
+  governanceService: GovernanceOrchestrationService;
+  governanceInstitutions: PostgresInstitutionRepository;
+  governanceMandates: PostgresGovernanceMandateRepository;
+  governanceCases: PostgresGovernanceCaseRepository;
+  governanceProofs: PostgresInstitutionalAuthorizationProofRepository;
+  governanceHolds: PostgresGovernanceHoldRepository;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -480,6 +502,41 @@ export async function createPostgresOrchestratorStack(options: {
     budgets,
     clock,
   });
+
+  /** Assigned after GovernanceOrchestrationService construction (Phase 20). */
+  const institutionalGovernanceBridge: {
+    current: import("../../governance/port.js").InstitutionalGovernancePort | null;
+  } = { current: null };
+  const institutionalGovernancePort: import("../../governance/port.js").InstitutionalGovernancePort =
+    {
+      resolveAuthority: (input) => {
+        if (!institutionalGovernanceBridge.current) {
+          throw new Error("Institutional governance not initialized");
+        }
+        return institutionalGovernanceBridge.current.resolveAuthority(input);
+      },
+      resolveApplicableMandates: (input) => {
+        if (!institutionalGovernanceBridge.current) {
+          return Promise.resolve({
+            kind: "MANDATE_RESOLUTION_FAILED" as const,
+            reason: "Institutional governance not initialized",
+          });
+        }
+        return institutionalGovernanceBridge.current.resolveApplicableMandates(
+          input,
+        );
+      },
+      validateProof: (input) => {
+        if (!institutionalGovernanceBridge.current) {
+          throw new Error("Institutional governance not initialized");
+        }
+        return institutionalGovernanceBridge.current.validateProof(input);
+      },
+      assertNoActiveHold: async (input) => {
+        if (!institutionalGovernanceBridge.current) return;
+        await institutionalGovernanceBridge.current.assertNoActiveHold(input);
+      },
+    };
 
   const runs = new PostgresRunRepository(db);
   const events = new PostgresEventStore(db);
@@ -711,6 +768,7 @@ export async function createPostgresOrchestratorStack(options: {
     transactions,
     delivery: approvalDelivery,
     nonceGenerator: decisionNonceGenerator,
+    institutionalGovernance: institutionalGovernancePort,
   });
   const approvalExpiry = new ApprovalExpiryService({
     requests: approvalRequests,
@@ -1073,6 +1131,7 @@ export async function createPostgresOrchestratorStack(options: {
     ...(options.portfolioMaterializationFailpoint !== undefined
       ? { materializationFailpoint: options.portfolioMaterializationFailpoint }
       : {}),
+    institutionalGovernance: institutionalGovernancePort,
   });
   const portfolioWorkMaterializer = new PortfolioWorkMaterializer({
     nowIso: () => clock.nowIso(),
@@ -1196,6 +1255,7 @@ export async function createPostgresOrchestratorStack(options: {
         principalId,
         projectIds,
       ),
+    institutionalGovernance: institutionalGovernancePort,
     objectiveAdmissionPort: new Phase2ExperimentObjectiveAdmissionPort(
       admission,
     ),
@@ -1386,6 +1446,7 @@ export async function createPostgresOrchestratorStack(options: {
     causalEvidence: decisionCausalEvidence,
     compilerDeps: { allowMaterialization: false },
     materializationLineages: decisionMaterializationLineages,
+    institutionalGovernance: institutionalGovernancePort,
   });
   const decisionPolicyWorkMaterializer = new DecisionPolicyWorkMaterializer({
     nowIso: () => clock.nowIso(),
@@ -1398,6 +1459,50 @@ export async function createPostgresOrchestratorStack(options: {
     materializer: decisionPolicyWorkMaterializer,
     databaseReachable: () => db.ping(),
   });
+
+  const governanceInstitutions = new PostgresInstitutionRepository(db);
+  const governanceUnits = new PostgresOrganizationalUnitRepository(db);
+  const governanceMandates = new PostgresGovernanceMandateRepository(db);
+  const governanceDelegations = new PostgresAuthorityDelegationRepository(db);
+  const governanceDirectGrants = new PostgresDirectAuthorityGrantRepository(db);
+  const governanceCanonicalAuthority =
+    new PostgresCanonicalAuthorityGrantAdapter(db);
+  const governanceCases = new PostgresGovernanceCaseRepository(db);
+  const governanceAttestations = new PostgresGovernanceAttestationRepository(db);
+  const governanceProofs =
+    new PostgresInstitutionalAuthorizationProofRepository(db);
+  const governanceRevocations = new PostgresAuthorityRevocationRepository(db);
+  const governanceHolds = new PostgresGovernanceHoldRepository(db);
+  const governanceSnapshots =
+    new PostgresInstitutionalAuthoritySnapshotRepository(db);
+  const governanceAudits = new PostgresGovernanceAuditRepository(db);
+  const governanceService = new GovernanceOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    institutions: governanceInstitutions,
+    units: governanceUnits,
+    mandates: governanceMandates,
+    delegations: governanceDelegations,
+    canonicalAuthority: governanceCanonicalAuthority,
+    directGrants: governanceDirectGrants,
+    cases: governanceCases,
+    attestations: governanceAttestations,
+    proofs: governanceProofs,
+    revocations: governanceRevocations,
+    holds: governanceHolds,
+    snapshots: governanceSnapshots,
+    audits: governanceAudits,
+    isGovernanceAdmin: (principalId, _institutionId, projectIds) =>
+      authorityDirectory.isGovernanceAdminForAllProjects(
+        principalId,
+        projectIds,
+      ),
+    isGovernanceHoldOperator: (principalId, projectIds) =>
+      authorityDirectory.isGovernanceHoldOperatorForAllProjects(
+        principalId,
+        projectIds,
+      ),
+  });
+  institutionalGovernanceBridge.current = governanceService;
 
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
@@ -1522,6 +1627,12 @@ export async function createPostgresOrchestratorStack(options: {
     decisionPolicyService,
     decisionPolicyProgression,
     decisionPolicyWorkMaterializer,
+    governanceService,
+    governanceInstitutions,
+    governanceMandates,
+    governanceCases,
+    governanceProofs,
+    governanceHolds,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

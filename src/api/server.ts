@@ -32,6 +32,7 @@ import { registerDecisionRoutes } from "./decisions.js";
 import { registerExperimentRoutes } from "./experiments.js";
 import { registerCausalRoutes } from "./causal.js";
 import { registerDecisionPolicyRoutes } from "./decision-policies.js";
+import { registerGovernanceRoutes } from "./governance.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository, ProgramPlanRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -62,6 +63,8 @@ import type {
   DecisionPolicyCandidateRepository,
   DecisionRecommendationRepository,
 } from "../decision-policies/repositories.js";
+import type { GovernanceOrchestrationService } from "../governance/service.js";
+import type { InstitutionalAuthorizationProofRepository } from "../governance/repositories.js";
 import { registerPerimeter, type PerimeterDeps } from "../runtime/perimeter.js";
 import { registerHealthRoutes, type HealthDeps } from "../runtime/health.js";
 
@@ -102,6 +105,8 @@ export interface ApiDeps {
   decisionContexts?: DecisionContextRepository;
   decisionPolicies?: DecisionPolicyCandidateRepository;
   decisionRecommendations?: DecisionRecommendationRepository;
+  governanceService?: GovernanceOrchestrationService;
+  governanceProofs?: InstitutionalAuthorizationProofRepository;
   storageMode?: StorageMode;
   runs?: RunRepository;
   readiness?: {
@@ -141,7 +146,9 @@ export async function buildServer(deps: ApiDeps = {}) {
 
   app.get("/health", async () => ({
     status: "ok",
-    phase: deps.decisionPolicyService
+    phase: deps.governanceService
+      ? 20
+      : deps.decisionPolicyService
       ? 19
       : deps.causalService
         ? 18
@@ -168,7 +175,9 @@ export async function buildServer(deps: ApiDeps = {}) {
                           : deps.validation
                             ? 5
                             : 6,
-    milestone: deps.decisionPolicyService
+    milestone: deps.governanceService
+      ? 20
+      : deps.decisionPolicyService
       ? 19
       : deps.causalService
         ? 18
@@ -183,7 +192,9 @@ export async function buildServer(deps: ApiDeps = {}) {
               : deps.scheduler
                 ? 13
                 : 12,
-    orchestrator: deps.decisionPolicyService
+    orchestrator: deps.governanceService
+      ? "governance"
+      : deps.decisionPolicyService
       ? "decision-policies"
       : deps.causalService
         ? "causal"
@@ -351,6 +362,13 @@ export async function buildServer(deps: ApiDeps = {}) {
       decisionContexts: deps.decisionContexts,
       decisionPolicies: deps.decisionPolicies,
       decisionRecommendations: deps.decisionRecommendations,
+    });
+  }
+
+  if (deps.governanceService && deps.governanceProofs) {
+    registerGovernanceRoutes(app, {
+      governanceService: deps.governanceService,
+      governanceProofs: deps.governanceProofs,
     });
   }
 

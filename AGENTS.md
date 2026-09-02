@@ -119,3 +119,28 @@ Recommendations enter declared downstream phases; Phase 6 / 14 / 15 / 17
 authority remains required.
 
 A Decision Policy recommends. It does not govern the governor. It does not execute.
+
+## Institutional governance (Phase 20)
+
+INSTITUTIONAL GOVERNANCE constrains authority. It cannot manufacture operational
+authority.
+
+IDENTITY ≠ AUTHORITY. ROLE ≠ AUTHORIZATION. DELEGATION ≠ AUTHORITY EXPANSION.
+QUORUM ≠ BUSINESS APPROVAL. ATTESTATION ≠ EXECUTION AUTHORIZATION.
+GOVERNANCE PROOF ≠ PHASE-SPECIFIC DECISION. GOVERNANCE ADMIN ≠ SUPERUSER.
+REVOCATION ≠ HISTORY DELETION. EMERGENCY HOLD ≠ NEW AUTHORITY.
+
+Required formula:
+
+PHASE_SPECIFIC_ROLE_AUTHORITY
+AND
+INSTITUTIONAL_REQUIREMENTS_SATISFIED
+
+Never OR. When no active mandate applies, existing phase behavior is unchanged.
+
+Direct authority → optional bounded delegation → institutional resolution →
+mandate conditions → quorum + separation of duties → InstitutionalAuthorizationProof
+→ existing phase-specific authority → canonical business decision.
+
+Delegation only attenuates. Same principal cannot double-count a quorum seat.
+Holds may only BLOCK/PAUSE/CONTAIN — never grant.

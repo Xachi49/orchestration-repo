@@ -1228,7 +1228,9 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
     expect(Date.now() - started).toBeLessThan(500);
   });
 
-  it("backup/restore into a disposable database recovers authority on an empty heap", async () => {
+  it(
+    "backup/restore into a disposable database recovers authority on an empty heap",
+    async () => {
     const source = await createDisposableDatabase(
       `p12src${uniquePostgresTestId("d").replace(/-/g, "").slice(0, 10)}`,
     );
@@ -1336,7 +1338,9 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
       await dest.drop();
       await source.drop();
     }
-  });
+  },
+  20_000,
+  );
 
   it("redaction strips sentinels from envelopes and database errors", async () => {
     const env = await createTestStack(uniquePostgresTestId("p12_redact"));

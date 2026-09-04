@@ -84,6 +84,8 @@ export function withCaseHash(
 
 export function mintGovernanceCaseId(input: {
   subjectId: string;
+  subjectType: string;
+  requiredRole: string;
   createdAt: string;
 }): string {
   return `gcase_${createHash("sha256")

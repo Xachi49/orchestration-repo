@@ -1678,3 +1678,33 @@ operational authority.** GOVERNANCE_ADMIN is not a superuser. Proof ≠
 AuthorizationRecord ≠ Portfolio/Experiment/Strategy/Causal/Decision-Policy/
 execution authority. When no mandate applies, Phases 0–19 behave as before.
 
+## Phase 21 — Constitutional change control
+
+See [docs/phase-21-constitutional-change-control.md](phase-21-constitutional-change-control.md).
+
+Phase 21 governs changes to Phase 20 governance rules via immutable proposals,
+deterministic impact analysis, separate review and activation authority, staged
+transactional activation, and base-governance fingerprint binding.
+
+```text
+CURRENT GOVERNANCE STATE (fingerprint F1)
+        ↓
+CONSTITUTIONAL CHANGE PROPOSAL (binds F1)
+        ↓
+DETERMINISTIC IMPACT ANALYSIS
+        ↓
+CONSTITUTIONAL_REVIEWER + INSTITUTIONAL PROOF
+        ↓
+CONSTITUTIONAL REVIEW DECISION
+        ↓
+CONSTITUTIONAL_ACTIVATOR + INSTITUTIONAL PROOF
+        ↓
+STAGED ACTIVATION (re-check F1 == current)
+        ↓
+TRANSACTIONAL ACTIVATION → NEW GOVERNANCE STATE (F2)
+```
+
+**Current constitution authorizes proposed constitution — never the reverse.**
+Protected mandate/org mutations require ConstitutionalActivationContext when
+constitutional control is enabled. Safety-floor violations fail closed.
+

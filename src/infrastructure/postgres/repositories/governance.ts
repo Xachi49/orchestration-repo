@@ -1301,4 +1301,33 @@ export class PostgresCanonicalAuthorityGrantAdapter
       enabled: row.enabled,
     });
   }
+
+  async listByProject(
+    projectId: string,
+  ): Promise<readonly CanonicalAuthorityGrant[]> {
+    const result = await this.db.query<{
+      grant_id: string;
+      principal_id: string;
+      principal_type: string;
+      project_id: string;
+      authorized_environments: string[];
+      enabled: boolean;
+    }>(
+      `SELECT grant_id, principal_id, principal_type, project_id,
+              authorized_environments, enabled
+       FROM authority_grants
+       WHERE project_id = $1 AND enabled = TRUE`,
+      [projectId],
+    );
+    return result.rows.map((row) =>
+      CanonicalAuthorityGrantSchema.parse({
+        grantId: row.grant_id,
+        principalId: row.principal_id,
+        authorityRole: row.principal_type,
+        projectId: row.project_id,
+        environmentScope: row.authorized_environments,
+        enabled: row.enabled,
+      }),
+    );
+  }
 }

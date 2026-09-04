@@ -33,6 +33,7 @@ describe("durability architecture documentation", () => {
     expect(phaseTests.length).toBeGreaterThan(0);
     expect(phaseTests).toContain("postgres.phase19.test.ts");
     expect(phaseTests).toContain("postgres.phase20.test.ts");
+    expect(phaseTests).toContain("postgres.phase21.test.ts");
     for (const name of phaseTests) {
       expect(harness).toContain(`src/infrastructure/postgres/${name}`);
     }

@@ -60,6 +60,9 @@ export async function createTestStack(
     scenarioSimulationFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["scenarioSimulationFailpoint"];
     scenarioGenerationModel?: Parameters<typeof createPostgresOrchestratorStack>[0]["scenarioGenerationModel"];
     promotionFailpoint?: Parameters<typeof createPostgresOrchestratorStack>[0]["promotionFailpoint"];
+    constitutionalActivationFailpoint?: Parameters<
+      typeof createPostgresOrchestratorStack
+    >[0]["constitutionalActivationFailpoint"];
     schedulerGlobalMaxConcurrency?: number;
   },
 ) {
@@ -107,6 +110,12 @@ export async function createTestStack(
       : {}),
     ...(opts?.promotionFailpoint !== undefined
       ? { promotionFailpoint: opts.promotionFailpoint }
+      : {}),
+    ...(opts?.constitutionalActivationFailpoint !== undefined
+      ? {
+          constitutionalActivationFailpoint:
+            opts.constitutionalActivationFailpoint,
+        }
       : {}),
     ...(opts?.schedulerGlobalMaxConcurrency !== undefined
       ? {

@@ -144,3 +144,20 @@ mandate conditions → quorum + separation of duties → InstitutionalAuthorizat
 
 Delegation only attenuates. Same principal cannot double-count a quorum seat.
 Holds may only BLOCK/PAUSE/CONTAIN — never grant.
+
+## Constitutional change control (Phase 21)
+
+CONSTITUTIONAL CHANGE CONTROL governs changes to institutional governance rules.
+It cannot manufacture operational authority.
+
+CURRENT_CONSTITUTION AUTHORIZES PROPOSED_CONSTITUTION — never the reverse.
+Proposed relaxed rules cannot authorize their own adoption.
+
+CONSTITUTIONAL_REVIEWER ≠ CONSTITUTIONAL_ACTIVATOR.
+INSTITUTIONAL_PROOF ≠ CONSTITUTIONAL_APPROVAL.
+CONSTITUTIONAL_APPROVAL ≠ ACTIVATION.
+GOVERNANCE_ADMIN ≠ SUPERUSER.
+
+Safety-floor invariants are non-amendable in code. Protected governance mutations
+require an unforgeable ConstitutionalActivationContext when constitutional control
+is enabled for an institution. Reversal is a new proposal — never history rewrite.

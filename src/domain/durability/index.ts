@@ -97,4 +97,4 @@ export interface InboxRecord {
 export const MAX_ARTIFACT_BYTES = 1_048_576;
 export const DEFAULT_LEASE_TTL_SECONDS = 60;
 export const MAX_TRANSACTION_RETRIES = 3;
-export const SUPPORTED_SCHEMA_VERSION = "015_phase20_institutional_governance";
+export const SUPPORTED_SCHEMA_VERSION = "016_phase21_constitutional_change_control";

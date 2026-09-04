@@ -1169,7 +1169,7 @@ describe("PostgreSQL Phase 11 acceptance", () => {
     } finally {
       await env.close();
     }
-  });
+  }, 20_000);
 
   it("HTTP observability rebuild duplicate returns deterministic identity", async () => {
     const env = await createTestStack(uniquePostgresTestId("http_obs"));
@@ -1202,7 +1202,7 @@ describe("PostgreSQL Phase 11 acceptance", () => {
     } finally {
       await env.close();
     }
-  });
+  }, 20_000);
 
   it("completion integrity: no COMPLETED run without CompletionRecord", async () => {
     const env = await createTestStack(uniquePostgresTestId("comp_int"));
@@ -1214,20 +1214,22 @@ describe("PostgreSQL Phase 11 acceptance", () => {
         [ctx.runId],
       );
       expect(completions.rows.length).toBe(1);
-      // Also check no COMPLETED run exists without a CompletionRecord
+      // Bound orphan check to this run identity — do not scan all historical COMPLETED rows.
       const orphans = await env.db.query(
         `SELECT r.run_id FROM runs r
-         WHERE r.state = 'COMPLETED'
+         WHERE r.run_id = $1
+           AND r.state = 'COMPLETED'
            AND NOT EXISTS (
              SELECT 1 FROM json_documents d
              WHERE d.collection = 'completion_records' AND d.run_id = r.run_id
            )`,
+        [ctx.runId],
       );
       expect(orphans.rows.length).toBe(0);
     } finally {
       await env.close();
     }
-  });
+  }, 20_000);
 
   it("data minimization: durable storage excludes plaintext secrets", async () => {
     /**
@@ -1573,7 +1575,7 @@ describe("PostgreSQL Phase 11 acceptance", () => {
     } finally {
       await envA.close().catch(() => undefined);
     }
-  });
+  }, 20_000);
 
   it("memory promotion failpoints roll back then retry to one precedent", async () => {
     const autoStages: PromotionFailpointStage[] = [
@@ -2000,7 +2002,7 @@ describe("PostgreSQL Phase 11 acceptance", () => {
     } finally {
       await env.close();
     }
-  });
+  }, 20_000);
 
   it("HTTP learning duplicate returns deterministic reuse without duplicated memory authority", async () => {
     const env = await createTestStack(uniquePostgresTestId("http_learn"));

@@ -51,6 +51,7 @@ try {
       "src/infrastructure/postgres/postgres.phase18.test.ts",
       "src/infrastructure/postgres/postgres.phase19.test.ts",
       "src/infrastructure/postgres/postgres.phase20.test.ts",
+      "src/infrastructure/postgres/postgres.phase21.test.ts",
     ].join(" "),
     {
       stdio: "inherit",

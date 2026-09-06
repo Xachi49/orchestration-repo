@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import type { ConstitutionalActivationCapability } from "../constitutional/activation-capability.js";
+import { ConstitutionalActivationCapability as CapabilityClass } from "../constitutional/activation-capability.js";
+import type { ProtectedGovernanceMutation } from "../constitutional/protected-mutations.js";
 import { GovernanceError } from "./errors.js";
 import type { InstitutionalGovernancePort } from "./port.js";
 import {
@@ -735,6 +738,7 @@ export class GovernanceOrchestrationService
       name: input.name,
       projectIds: input.projectIds ?? [],
       organizationalUnitIds: [],
+      constitutionalControlEnabled: false,
       createdAt: now,
       status: "ACTIVE",
       recordRevision: 1,
@@ -748,13 +752,67 @@ export class GovernanceOrchestrationService
     return saved;
   }
 
-  async createOrganizationalUnit(input: {
+  async getInstitution(institutionId: string): Promise<Institution | null> {
+    return this.deps.institutions.getById(institutionId);
+  }
+
+  async updateInstitution(input: {
     institutionId: string;
-    name: string;
-    description?: string;
-    projectScope?: string[];
-    parentUnitId?: string;
-  }): Promise<OrganizationalUnit> {
+    patch: Partial<Pick<Institution, "constitutionalControlEnabled" | "name" | "projectIds">>;
+    expectedRevision: number;
+  }): Promise<Institution> {
+    const institution = await this.deps.institutions.getById(input.institutionId);
+    if (!institution) {
+      throw new GovernanceError(
+        "INSTITUTION_NOT_FOUND",
+        `Institution ${input.institutionId} not found`,
+      );
+    }
+    if (institution.recordRevision !== input.expectedRevision) {
+      throw new GovernanceError(
+        "GOVERNANCE_VERSION_CONFLICT",
+        `Institution ${input.institutionId} revision mismatch`,
+      );
+    }
+    const updated: Institution = {
+      ...institution,
+      ...input.patch,
+      recordRevision: institution.recordRevision + 1,
+    };
+    return this.deps.institutions.save(updated);
+  }
+
+  async getMandate(mandateId: string): Promise<GovernanceMandate | null> {
+    return this.deps.mandates.getById(mandateId);
+  }
+
+  async listActiveMandatesByProject(
+    projectId: string,
+  ): Promise<GovernanceMandate[]> {
+    return this.deps.mandates.listActiveByProject(projectId);
+  }
+
+  async listOrganizationalUnits(
+    institutionId: string,
+  ): Promise<OrganizationalUnit[]> {
+    return this.deps.units.listByInstitution(institutionId);
+  }
+
+  async createOrganizationalUnit(
+    input: {
+      institutionId: string;
+      name: string;
+      description?: string;
+      projectScope?: string[];
+      parentUnitId?: string;
+    },
+    options?: { activationCapability?: ConstitutionalActivationCapability },
+  ): Promise<OrganizationalUnit> {
+    await this.assertConstitutionalMutationAllowed(
+      input.institutionId,
+      options?.activationCapability,
+      "createOrganizationalUnit",
+    );
     const institution = await this.deps.institutions.getById(input.institutionId);
     if (!institution) {
       throw new GovernanceError(
@@ -794,29 +852,129 @@ export class GovernanceOrchestrationService
     return saved;
   }
 
-  async createMandate(input: {
-    institutionId: string;
-    createdBy: string;
-    subjectClasses: string[];
-    requiredAuthorities: string[];
-    projectScope: string[];
-    environmentScope: string[];
-    quorumRequirement?: GovernanceQuorumRequirement;
-    separationOfDutyRules?: SeparationOfDutyRule[];
-    delegationPolicy?: GovernanceMandate["delegationPolicy"];
-    maximumAuthorityDurationMs?: number;
-    maximumDelegationDepth?: number;
-    riskScope?: string[];
-    resourceScope?: Record<string, number>;
-    effectiveFrom?: string;
-    effectiveUntil?: string;
-    mandateVersion?: number;
-  }): Promise<GovernanceMandate> {
-    await this.requireGovernanceAdmin(
-      input.createdBy,
+  async updateInstitutionProjectScope(
+    input: {
+      institutionId: string;
+      projectScope: string[];
+      actorPrincipalId: string;
+    },
+    options?: { activationCapability?: ConstitutionalActivationCapability },
+  ): Promise<Institution> {
+    await this.assertConstitutionalMutationAllowed(
       input.institutionId,
-      input.projectScope,
+      options?.activationCapability,
+      "updateInstitutionProjectScope",
     );
+    const institution = await this.deps.institutions.getById(input.institutionId);
+    if (!institution) {
+      throw new GovernanceError(
+        "INSTITUTION_NOT_FOUND",
+        `Institution ${input.institutionId} not found`,
+      );
+    }
+    const updated: Institution = {
+      ...institution,
+      projectIds: [...input.projectScope],
+      recordRevision: institution.recordRevision + 1,
+    };
+    const saved = await this.deps.institutions.save(updated);
+    await this.audit("INSTITUTION_PROJECT_SCOPE_UPDATED", {
+      institutionId: input.institutionId,
+      principalId: input.actorPrincipalId,
+      payload: { projectIds: input.projectScope },
+    });
+    return saved;
+  }
+
+  async updateOrganizationalUnit(
+    input: {
+      organizationalUnitId: string;
+      parentUnitId?: string;
+      actorPrincipalId: string;
+    },
+    options?: { activationCapability?: ConstitutionalActivationCapability },
+  ): Promise<OrganizationalUnit> {
+    const unit = await this.deps.units.getById(input.organizationalUnitId);
+    if (!unit) {
+      throw new GovernanceError(
+        "ORGANIZATIONAL_UNIT_INVALID",
+        `Unit ${input.organizationalUnitId} not found`,
+      );
+    }
+    await this.assertConstitutionalMutationAllowed(
+      unit.institutionId,
+      options?.activationCapability,
+      "updateOrganizationalUnit",
+    );
+    const updated: OrganizationalUnit = {
+      ...unit,
+      ...(input.parentUnitId !== undefined
+        ? { parentUnitId: input.parentUnitId }
+        : {}),
+    };
+    return this.deps.units.save(updated);
+  }
+
+  async retireOrganizationalUnit(
+    input: {
+      organizationalUnitId: string;
+      actorPrincipalId: string;
+    },
+    options?: { activationCapability?: ConstitutionalActivationCapability },
+  ): Promise<OrganizationalUnit> {
+    const unit = await this.deps.units.getById(input.organizationalUnitId);
+    if (!unit) {
+      throw new GovernanceError(
+        "ORGANIZATIONAL_UNIT_INVALID",
+        `Unit ${input.organizationalUnitId} not found`,
+      );
+    }
+    await this.assertConstitutionalMutationAllowed(
+      unit.institutionId,
+      options?.activationCapability,
+      "retireOrganizationalUnit",
+    );
+    return this.deps.units.save({ ...unit, status: "RETIRED" });
+  }
+
+  async createMandate(
+    input: {
+      institutionId: string;
+      createdBy: string;
+      subjectClasses: string[];
+      requiredAuthorities: string[];
+      projectScope: string[];
+      environmentScope: string[];
+      quorumRequirement?: GovernanceQuorumRequirement;
+      separationOfDutyRules?: SeparationOfDutyRule[];
+      delegationPolicy?: GovernanceMandate["delegationPolicy"];
+      maximumAuthorityDurationMs?: number;
+      maximumDelegationDepth?: number;
+      riskScope?: string[];
+      resourceScope?: Record<string, number>;
+      effectiveFrom?: string;
+      effectiveUntil?: string;
+      mandateVersion?: number;
+    },
+    options?: { activationCapability?: ConstitutionalActivationCapability },
+  ): Promise<GovernanceMandate> {
+    await this.assertConstitutionalMutationAllowed(
+      input.institutionId,
+      options?.activationCapability,
+      "createMandate",
+    );
+    if (
+      !this.hasValidActivationCapability(
+        input.institutionId,
+        options?.activationCapability,
+      )
+    ) {
+      await this.requireGovernanceAdmin(
+        input.createdBy,
+        input.institutionId,
+        input.projectScope,
+      );
+    }
     await this.assertMandateNotSelfEscalation(input);
 
     const now = this.deps.nowIso();
@@ -860,16 +1018,31 @@ export class GovernanceOrchestrationService
     return saved;
   }
 
-  async activateMandate(input: {
-    mandateId: string;
-    actorPrincipalId: string;
-  }): Promise<GovernanceMandate> {
+  async activateMandate(
+    input: {
+      mandateId: string;
+      actorPrincipalId: string;
+    },
+    options?: { activationCapability?: ConstitutionalActivationCapability },
+  ): Promise<GovernanceMandate> {
     const mandate = await this.requireMandate(input.mandateId);
-    await this.requireGovernanceAdmin(
-      input.actorPrincipalId,
+    await this.assertConstitutionalMutationAllowed(
       mandate.institutionId,
-      mandate.projectScope,
+      options?.activationCapability,
+      "activateMandate",
     );
+    if (
+      !this.hasValidActivationCapability(
+        mandate.institutionId,
+        options?.activationCapability,
+      )
+    ) {
+      await this.requireGovernanceAdmin(
+        input.actorPrincipalId,
+        mandate.institutionId,
+        mandate.projectScope,
+      );
+    }
     if (mandate.status !== "DRAFT" && mandate.status !== "SUSPENDED") {
       throw new GovernanceError(
         "GOVERNANCE_MANDATE_STATE_CONFLICT",
@@ -889,6 +1062,52 @@ export class GovernanceOrchestrationService
       subjectIds: [input.mandateId],
     });
     return activated;
+  }
+
+  async supersedeMandate(
+    input: {
+      mandateId: string;
+      actorPrincipalId: string;
+    },
+    options?: { activationCapability?: ConstitutionalActivationCapability },
+  ): Promise<GovernanceMandate> {
+    const mandate = await this.requireMandate(input.mandateId);
+    await this.assertConstitutionalMutationAllowed(
+      mandate.institutionId,
+      options?.activationCapability,
+      "supersedeMandate",
+    );
+    if (
+      !this.hasValidActivationCapability(
+        mandate.institutionId,
+        options?.activationCapability,
+      )
+    ) {
+      await this.requireGovernanceAdmin(
+        input.actorPrincipalId,
+        mandate.institutionId,
+        mandate.projectScope,
+      );
+    }
+    if (mandate.status !== "ACTIVE") {
+      throw new GovernanceError(
+        "GOVERNANCE_MANDATE_STATE_CONFLICT",
+        `Mandate ${input.mandateId} cannot supersede from ${mandate.status}`,
+      );
+    }
+    const superseded = await this.deps.mandates.transition(
+      input.mandateId,
+      "ACTIVE",
+      mandate.recordRevision,
+      "SUPERSEDED",
+      this.deps.nowIso(),
+    );
+    await this.audit("MANDATE_SUPERSEDED", {
+      institutionId: mandate.institutionId,
+      principalId: input.actorPrincipalId,
+      subjectIds: [input.mandateId],
+    });
+    return superseded;
   }
 
   async createDirectGrant(input: {
@@ -1249,6 +1468,8 @@ export class GovernanceOrchestrationService
 
     const governanceCaseId = mintGovernanceCaseId({
       subjectId: input.subjectId,
+      subjectType: input.subjectType,
+      requiredRole: input.requiredRole,
       createdAt: now,
     });
     const governanceCase = withCaseHash({
@@ -2224,6 +2445,57 @@ export class GovernanceOrchestrationService
         {
           principalId: input.principalId,
           authorityRole: input.authorityRole,
+        },
+      );
+    }
+  }
+
+  private hasValidActivationCapability(
+    institutionId: string,
+    activationCapability?: ConstitutionalActivationCapability,
+  ): boolean {
+    return (
+      CapabilityClass.isCapability(activationCapability) &&
+      activationCapability.payload.institutionId === institutionId
+    );
+  }
+
+  private async assertConstitutionalMutationAllowed(
+    institutionId: string,
+    activationCapability: ConstitutionalActivationCapability | undefined,
+    mutation: ProtectedGovernanceMutation,
+  ): Promise<void> {
+    const institution = await this.deps.institutions.getById(institutionId);
+    if (!institution?.constitutionalControlEnabled) return;
+    if (!CapabilityClass.isCapability(activationCapability)) {
+      throw new GovernanceError(
+        "CONSTITUTIONAL_MUTATION_BYPASS_DENIED",
+        `Protected governance mutation on ${institutionId} requires constitutional activation capability`,
+        { institutionId, mutation },
+      );
+    }
+    if (activationCapability.payload.institutionId !== institutionId) {
+      throw new GovernanceError(
+        "CONSTITUTIONAL_MUTATION_BYPASS_DENIED",
+        "Activation capability institution mismatch",
+        {
+          institutionId,
+          contextInstitutionId: activationCapability.payload.institutionId,
+          mutation,
+        },
+      );
+    }
+    if (!activationCapability.authorizesProtectedMutation(mutation)) {
+      throw new GovernanceError(
+        "CONSTITUTIONAL_MUTATION_BYPASS_DENIED",
+        `Activation capability does not authorize protected mutation ${mutation}`,
+        {
+          institutionId,
+          mutation,
+          mutationPlanHash: activationCapability.payload.mutationPlanHash,
+          authorizedProtectedMutations: [
+            ...activationCapability.payload.authorizedProtectedMutations,
+          ],
         },
       );
     }

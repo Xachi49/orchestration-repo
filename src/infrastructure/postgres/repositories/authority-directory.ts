@@ -29,7 +29,9 @@ export interface AuthorityGrantSeed {
     | "GOVERNANCE_ADMIN"
     | "GOVERNANCE_HOLD_OPERATOR"
     | "RISK_REVIEWER"
-    | "SECURITY_REVIEWER";
+    | "SECURITY_REVIEWER"
+    | "CONSTITUTIONAL_REVIEWER"
+    | "CONSTITUTIONAL_ACTIVATOR";
   projectId: string;
   environments: readonly string[];
 }

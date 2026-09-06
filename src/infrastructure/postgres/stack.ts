@@ -315,7 +315,15 @@ import {
   PostgresInstitutionalAuthoritySnapshotRepository,
   PostgresGovernanceAuditRepository,
 } from "./repositories/governance.js";
+import {
+  PostgresConstitutionalProposalRepository,
+  PostgresConstitutionalImpactAnalysisRepository,
+  PostgresConstitutionalReviewDecisionRepository,
+  PostgresConstitutionalActivationRecordRepository,
+  PostgresConstitutionalAuditRepository,
+} from "./repositories/constitutional.js";
 import { GovernanceOrchestrationService } from "../../governance/index.js";
+import { ConstitutionalChangeOrchestrationService } from "../../constitutional/index.js";
 
 export interface PostgresOrchestratorStack {
   storageMode: "postgres";
@@ -411,6 +419,8 @@ export interface PostgresOrchestratorStack {
   governanceCases: PostgresGovernanceCaseRepository;
   governanceProofs: PostgresInstitutionalAuthorizationProofRepository;
   governanceHolds: PostgresGovernanceHoldRepository;
+  constitutionalService: ConstitutionalChangeOrchestrationService;
+  constitutionalProposals: PostgresConstitutionalProposalRepository;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -435,6 +445,11 @@ export async function createPostgresOrchestratorStack(options: {
   scenarioSimulationFailpoint?: import("../../scenarios/service.js").ScenarioSimulationFailpoint;
   scenarioGenerationModel?: import("../../scenarios/generation-model.js").ScenarioGenerationModel;
   promotionFailpoint?: import("../../memory/promotion.js").PromotionFailpoint;
+  /** @internal TEST ONLY — constitutional activation failpoint seam. */
+  constitutionalActivationFailpoint?: {
+    name: string;
+    trigger: () => void;
+  };
   schedulerGlobalMaxConcurrency?: number;
   defaultEnvironment?: string;
   /**
@@ -1504,6 +1519,46 @@ export async function createPostgresOrchestratorStack(options: {
   });
   institutionalGovernanceBridge.current = governanceService;
 
+  const constitutionalProposals = new PostgresConstitutionalProposalRepository(db);
+  const constitutionalImpactAnalyses =
+    new PostgresConstitutionalImpactAnalysisRepository(db);
+  const constitutionalReviewDecisions =
+    new PostgresConstitutionalReviewDecisionRepository(db);
+  const constitutionalActivationRecords =
+    new PostgresConstitutionalActivationRecordRepository(db);
+  const constitutionalAudits = new PostgresConstitutionalAuditRepository(db);
+  const constitutionalService = new ConstitutionalChangeOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    proposals: constitutionalProposals,
+    impactAnalyses: constitutionalImpactAnalyses,
+    reviewDecisions: constitutionalReviewDecisions,
+    activationRecords: constitutionalActivationRecords,
+    audits: constitutionalAudits,
+    governance: governanceService,
+    canonicalAuthority: governanceCanonicalAuthority,
+    isGovernanceAdmin: (principalId, _institutionId, projectIds) =>
+      authorityDirectory.isGovernanceAdminForAllProjects(
+        principalId,
+        projectIds,
+      ),
+    runInstitutionActivation: (institutionId, fn) =>
+      db.withTransaction(async () => {
+        await db.query(
+          `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+          [`constitutional-activation:${institutionId}`],
+        );
+        await db.query(
+          `SELECT institution_id FROM institutions WHERE institution_id = $1 FOR UPDATE`,
+          [institutionId],
+        );
+        return fn();
+      }),
+    withTransaction: (fn) => transactions.withTransaction(fn),
+    ...(options.constitutionalActivationFailpoint !== undefined
+      ? { activationFailpoint: options.constitutionalActivationFailpoint }
+      : {}),
+  });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -1633,6 +1688,8 @@ export async function createPostgresOrchestratorStack(options: {
     governanceCases,
     governanceProofs,
     governanceHolds,
+    constitutionalService,
+    constitutionalProposals,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

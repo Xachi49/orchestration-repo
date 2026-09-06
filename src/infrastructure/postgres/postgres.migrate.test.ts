@@ -9,7 +9,7 @@ import {
 } from "./test-helpers.js";
 
 describe("PostgreSQL migration compatibility", () => {
-  it("createTestDatabase migrate + assertCompatible accepts 015", async () => {
+  it("createTestDatabase migrate + assertCompatible accepts 016", async () => {
     const db = await createTestDatabase(
       uniquePostgresTestId("schema_015_compatible"),
     );
@@ -25,13 +25,13 @@ describe("PostgreSQL migration compatibility", () => {
     }
   });
 
-  it("database at 014 migrates forward to 015 then becomes compatible", async () => {
+  it("database at 015 migrates forward to 016 then becomes compatible", async () => {
     const db = new PostgresDatabase({
       connectionString: requireTestDatabaseUrl(),
       max: 4,
       connectionTimeoutMillis: 5_000,
       idleTimeoutMillis: 10_000,
-      instanceId: uniquePostgresTestId("schema_014_forward"),
+      instanceId: uniquePostgresTestId("schema_015_forward"),
     });
     try {
       const runner = new PostgresMigrationRunner(db);
@@ -41,7 +41,7 @@ describe("PostgreSQL migration compatibility", () => {
         [SUPPORTED_SCHEMA_VERSION],
       );
       const before = await runner.status();
-      expect(before.current).toBe("014_phase19_decision_policy_optimization");
+      expect(before.current).toBe("015_phase20_institutional_governance");
       expect(before.pending).toContain(SUPPORTED_SCHEMA_VERSION);
 
       await expect(runner.assertCompatible()).rejects.toMatchObject({
@@ -68,7 +68,7 @@ describe("PostgreSQL migration compatibility", () => {
       idleTimeoutMillis: 10_000,
       instanceId: uniquePostgresTestId("schema_future_reject"),
     });
-    const futureVersion = "016_phase21_unknown_future";
+    const futureVersion = "017_phase22_unknown_future";
     try {
       const runner = new PostgresMigrationRunner(db);
       await runner.migrate();

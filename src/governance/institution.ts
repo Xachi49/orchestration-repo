@@ -15,6 +15,8 @@ export const InstitutionSchema = z
     name: z.string().min(1).max(500),
     projectIds: z.array(z.string().min(1)).default([]),
     organizationalUnitIds: z.array(z.string().min(1)).default([]),
+    /** When true, protected governance mutations require Phase 21 activation context. */
+    constitutionalControlEnabled: z.boolean().default(false),
     createdAt: z.string().datetime(),
     status: z.enum(INSTITUTION_STATES),
     recordRevision: z.number().int().min(1),

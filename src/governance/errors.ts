@@ -41,7 +41,8 @@ export type GovernanceErrorCode =
   | "GOVERNANCE_HOLD_SCOPE_INSUFFICIENT"
   | "GOVERNANCE_HOLD_OPERATOR_SCOPE_INSUFFICIENT"
   | "GOVERNANCE_VERSION_CONFLICT"
-  | "GOVERNANCE_CAS_CONFLICT";
+  | "GOVERNANCE_CAS_CONFLICT"
+  | "CONSTITUTIONAL_MUTATION_BYPASS_DENIED";
 
 export class GovernanceError extends Error {
   readonly code: GovernanceErrorCode;

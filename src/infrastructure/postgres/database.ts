@@ -1,5 +1,7 @@
 import pg from "pg";
 import { DurabilityError } from "../../durability/errors.js";
+import { ConstitutionalError } from "../../constitutional/errors.js";
+import { GovernanceError } from "../../governance/errors.js";
 import {
   runInTransactionScope,
 } from "../../durability/transaction.js";
@@ -14,8 +16,10 @@ function isNormalizedApplicationError(error: unknown): boolean {
   // Preserve SchedulingError (and similar) thrown intentionally inside TX
   // callbacks — do not re-wrap as DATABASE_TRANSACTION_FAILED.
   return (
-    error instanceof Error &&
-    (error.name === "SchedulingError" || error.name === "AdmissionError")
+    error instanceof GovernanceError ||
+    error instanceof ConstitutionalError ||
+    (error instanceof Error &&
+      (error.name === "SchedulingError" || error.name === "AdmissionError"))
   );
 }
 

@@ -27,6 +27,7 @@ export type CanonicalAuthorityGrant = z.infer<
 export interface CanonicalAuthorityGrantPort {
   listByPrincipal(principalId: string): Promise<readonly CanonicalAuthorityGrant[]>;
   getById(grantId: string): Promise<CanonicalAuthorityGrant | null>;
+  listByProject?(projectId: string): Promise<readonly CanonicalAuthorityGrant[]>;
 }
 
 export const OPERATIONAL_PHASE_ROLES = [
@@ -102,6 +103,14 @@ export class InMemoryCanonicalAuthorityGrantRepository
     const grant = this.byId.get(grantId);
     if (!grant || !grant.enabled) return null;
     return grant;
+  }
+
+  async listByProject(
+    projectId: string,
+  ): Promise<readonly CanonicalAuthorityGrant[]> {
+    return [...this.byId.values()].filter(
+      (g) => g.projectId === projectId && g.enabled,
+    );
   }
 
   async markDisabled(grantId: string): Promise<CanonicalAuthorityGrant | null> {

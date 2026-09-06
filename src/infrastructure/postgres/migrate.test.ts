@@ -10,7 +10,7 @@ describe("schema migration catalog", () => {
     expect(latest).toBeDefined();
     expect(latest!.version).toBe(SUPPORTED_SCHEMA_VERSION);
     expect(SUPPORTED_SCHEMA_VERSION).toBe(
-      "015_phase20_institutional_governance",
+      "016_phase21_constitutional_change_control",
     );
   });
 
@@ -21,6 +21,7 @@ describe("schema migration catalog", () => {
       "013_phase18_causal_intelligence",
       "014_phase19_decision_policy_optimization",
       "015_phase20_institutional_governance",
+      "016_phase21_constitutional_change_control",
     ];
     for (let i = 0; i < phaseTail.length; i++) {
       const expected = phaseTail[i]!;

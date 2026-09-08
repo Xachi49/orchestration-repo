@@ -9,13 +9,16 @@ import {
 } from "./test-helpers.js";
 
 describe("PostgreSQL migration compatibility", () => {
-  it("createTestDatabase migrate + assertCompatible accepts 016", async () => {
+  it("createTestDatabase migrate + assertCompatible accepts 017", async () => {
     const db = await createTestDatabase(
-      uniquePostgresTestId("schema_015_compatible"),
+      uniquePostgresTestId("schema_017_compatible"),
     );
     try {
       const runner = new PostgresMigrationRunner(db);
       const status = await runner.status();
+      expect(SUPPORTED_SCHEMA_VERSION).toBe(
+        "017_phase22_governed_federation",
+      );
       expect(status.supported).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(status.current).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(status.pending).toEqual([]);
@@ -25,13 +28,13 @@ describe("PostgreSQL migration compatibility", () => {
     }
   });
 
-  it("database at 015 migrates forward to 016 then becomes compatible", async () => {
+  it("database at 016 migrates forward to 017 then becomes compatible", async () => {
     const db = new PostgresDatabase({
       connectionString: requireTestDatabaseUrl(),
       max: 4,
       connectionTimeoutMillis: 5_000,
       idleTimeoutMillis: 10_000,
-      instanceId: uniquePostgresTestId("schema_015_forward"),
+      instanceId: uniquePostgresTestId("schema_016_forward"),
     });
     try {
       const runner = new PostgresMigrationRunner(db);
@@ -41,8 +44,12 @@ describe("PostgreSQL migration compatibility", () => {
         [SUPPORTED_SCHEMA_VERSION],
       );
       const before = await runner.status();
-      expect(before.current).toBe("015_phase20_institutional_governance");
-      expect(before.pending).toContain(SUPPORTED_SCHEMA_VERSION);
+      expect(before.current).toBe(
+        "016_phase21_constitutional_change_control",
+      );
+      expect(before.pending).toContain(
+        "017_phase22_governed_federation",
+      );
 
       await expect(runner.assertCompatible()).rejects.toMatchObject({
         code: "DATABASE_SCHEMA_OUT_OF_DATE",
@@ -52,7 +59,13 @@ describe("PostgreSQL migration compatibility", () => {
       expect(applied).toContain(SUPPORTED_SCHEMA_VERSION);
 
       const after = await runner.status();
+      expect(SUPPORTED_SCHEMA_VERSION).toBe(
+        "017_phase22_governed_federation",
+      );
       expect(after.current).toBe(SUPPORTED_SCHEMA_VERSION);
+      expect(after.pending).not.toContain(
+        "017_phase22_governed_federation",
+      );
       expect(after.pending).toEqual([]);
       await runner.assertCompatible();
     } finally {
@@ -68,7 +81,7 @@ describe("PostgreSQL migration compatibility", () => {
       idleTimeoutMillis: 10_000,
       instanceId: uniquePostgresTestId("schema_future_reject"),
     });
-    const futureVersion = "017_phase22_unknown_future";
+    const futureVersion = "018_phase23_unknown_future";
     try {
       const runner = new PostgresMigrationRunner(db);
       await runner.migrate();
@@ -94,6 +107,9 @@ describe("PostgreSQL migration compatibility", () => {
     );
     try {
       const health = await new PostgresHealthService(db, "postgres").readiness();
+      expect(health.supportedSchemaVersion).toBe(
+        "017_phase22_governed_federation",
+      );
       expect(health.supportedSchemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(health.schemaCompatible).toBe(true);
     } finally {

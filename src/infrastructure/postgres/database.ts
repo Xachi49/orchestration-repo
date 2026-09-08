@@ -1,6 +1,7 @@
 import pg from "pg";
 import { DurabilityError } from "../../durability/errors.js";
 import { ConstitutionalError } from "../../constitutional/errors.js";
+import { FederationError } from "../../federation/errors.js";
 import { GovernanceError } from "../../governance/errors.js";
 import {
   runInTransactionScope,
@@ -13,11 +14,12 @@ function isNormalizedApplicationError(error: unknown): boolean {
   if (error instanceof DurabilityError) {
     return true;
   }
-  // Preserve SchedulingError (and similar) thrown intentionally inside TX
-  // callbacks — do not re-wrap as DATABASE_TRANSACTION_FAILED.
+  // Preserve known deterministic domain errors thrown inside TX callbacks —
+  // do not re-wrap as DATABASE_TRANSACTION_FAILED (Phase 20/21/22).
   return (
     error instanceof GovernanceError ||
     error instanceof ConstitutionalError ||
+    error instanceof FederationError ||
     (error instanceof Error &&
       (error.name === "SchedulingError" || error.name === "AdmissionError"))
   );

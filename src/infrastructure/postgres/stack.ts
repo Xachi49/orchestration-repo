@@ -324,6 +324,18 @@ import {
 } from "./repositories/constitutional.js";
 import { GovernanceOrchestrationService } from "../../governance/index.js";
 import { ConstitutionalChangeOrchestrationService } from "../../constitutional/index.js";
+import {
+  PostgresFederationAgreementRepository,
+  PostgresFederationRatificationRepository,
+  PostgresFederationActivationRecordRepository,
+  PostgresFederationParticipationChangeRepository,
+  PostgresFederatedWorkIntentRepository,
+  PostgresFederatedWorkAcceptanceRepository,
+  PostgresFederatedMaterializationRepository,
+  PostgresFederatedEvidenceEnvelopeRepository,
+  PostgresFederationAuditRepository,
+} from "./repositories/federation.js";
+import { FederationOrchestrationService } from "../../federation/index.js";
 
 export interface PostgresOrchestratorStack {
   storageMode: "postgres";
@@ -421,6 +433,8 @@ export interface PostgresOrchestratorStack {
   governanceHolds: PostgresGovernanceHoldRepository;
   constitutionalService: ConstitutionalChangeOrchestrationService;
   constitutionalProposals: PostgresConstitutionalProposalRepository;
+  federationService: FederationOrchestrationService;
+  federationAgreements: PostgresFederationAgreementRepository;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -447,6 +461,11 @@ export async function createPostgresOrchestratorStack(options: {
   promotionFailpoint?: import("../../memory/promotion.js").PromotionFailpoint;
   /** @internal TEST ONLY — constitutional activation failpoint seam. */
   constitutionalActivationFailpoint?: {
+    name: string;
+    trigger: () => void;
+  };
+  /** @internal TEST ONLY — federation activation failpoint seam. */
+  federationActivationFailpoint?: {
     name: string;
     trigger: () => void;
   };
@@ -1559,6 +1578,56 @@ export async function createPostgresOrchestratorStack(options: {
       : {}),
   });
 
+  const federationAgreements = new PostgresFederationAgreementRepository(db);
+  const federationRatifications = new PostgresFederationRatificationRepository(db);
+  const federationActivationRecords =
+    new PostgresFederationActivationRecordRepository(db);
+  const federationParticipationChanges =
+    new PostgresFederationParticipationChangeRepository(db);
+  const federatedWorkIntents = new PostgresFederatedWorkIntentRepository(db);
+  const federatedWorkAcceptances =
+    new PostgresFederatedWorkAcceptanceRepository(db);
+  const federatedMaterializations =
+    new PostgresFederatedMaterializationRepository(db);
+  const federatedEvidenceEnvelopes =
+    new PostgresFederatedEvidenceEnvelopeRepository(db);
+  const federationAudits = new PostgresFederationAuditRepository(db);
+  const federationService = new FederationOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    agreements: federationAgreements,
+    ratifications: federationRatifications,
+    activationRecords: federationActivationRecords,
+    participationChanges: federationParticipationChanges,
+    intents: federatedWorkIntents,
+    acceptances: federatedWorkAcceptances,
+    materializations: federatedMaterializations,
+    evidence: federatedEvidenceEnvelopes,
+    audits: federationAudits,
+    governance: governanceService,
+    canonicalAuthority: governanceCanonicalAuthority,
+    admission,
+    runFederationActivation: (participantInstitutionIds, fn) =>
+      db.withTransaction(async () => {
+        const sorted = [...participantInstitutionIds].sort((a, b) =>
+          a.localeCompare(b),
+        );
+        for (const institutionId of sorted) {
+          await db.query(
+            `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+            [`federation-activation:${institutionId}`],
+          );
+          await db.query(
+            `SELECT institution_id FROM institutions WHERE institution_id = $1 FOR UPDATE`,
+            [institutionId],
+          );
+        }
+        return fn();
+      }),
+    ...(options.federationActivationFailpoint !== undefined
+      ? { activationFailpoint: options.federationActivationFailpoint }
+      : {}),
+  });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -1690,6 +1759,8 @@ export async function createPostgresOrchestratorStack(options: {
     governanceHolds,
     constitutionalService,
     constitutionalProposals,
+    federationService,
+    federationAgreements,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

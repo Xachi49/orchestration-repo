@@ -1708,3 +1708,41 @@ TRANSACTIONAL ACTIVATION → NEW GOVERNANCE STATE (F2)
 Protected mandate/org mutations require ConstitutionalActivationContext when
 constitutional control is enabled. Safety-floor violations fail closed.
 
+## Phase 22 — Governed federation
+
+See [docs/phase-22-governed-federation.md](phase-22-governed-federation.md).
+
+Phase 22 introduces bounded cooperation BETWEEN institutions without merging
+authority. Agreements require independent local ratification; activation creates
+no operational authority; accepted work still requires target-local Phase 2
+admission; foreign evidence remains `EXTERNAL_UNVERIFIED`; trust is not
+transitive.
+
+```text
+               LOCAL CONSTITUTION
+                       ↓
+             LOCAL INSTITUTIONAL
+                 GOVERNANCE
+                       ↓
+              LOCAL AUTHORITY
+                       ↓
+                RATIFICATION
+                       ↓
+                 FEDERATION
+                 AGREEMENT
+                       ↓
+                  REQUEST
+                       ↓
+        OTHER INSTITUTION'S LOCAL
+                 GOVERNANCE
+                       ↓
+                  ACCEPT
+                       ↓
+              LOCAL ADMISSION
+                       ↓
+          EXISTING EXECUTION PIPELINE
+```
+
+**Federation determines what may be requested or exchanged — never what is
+locally authorized, admitted, executable, verified, or remembered.**
+

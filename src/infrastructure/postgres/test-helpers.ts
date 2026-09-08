@@ -63,6 +63,9 @@ export async function createTestStack(
     constitutionalActivationFailpoint?: Parameters<
       typeof createPostgresOrchestratorStack
     >[0]["constitutionalActivationFailpoint"];
+    federationActivationFailpoint?: Parameters<
+      typeof createPostgresOrchestratorStack
+    >[0]["federationActivationFailpoint"];
     schedulerGlobalMaxConcurrency?: number;
   },
 ) {
@@ -115,6 +118,11 @@ export async function createTestStack(
       ? {
           constitutionalActivationFailpoint:
             opts.constitutionalActivationFailpoint,
+        }
+      : {}),
+    ...(opts?.federationActivationFailpoint !== undefined
+      ? {
+          federationActivationFailpoint: opts.federationActivationFailpoint,
         }
       : {}),
     ...(opts?.schedulerGlobalMaxConcurrency !== undefined

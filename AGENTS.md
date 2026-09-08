@@ -161,3 +161,27 @@ GOVERNANCE_ADMIN ≠ SUPERUSER.
 Safety-floor invariants are non-amendable in code. Protected governance mutations
 require an unforgeable ConstitutionalActivationContext when constitutional control
 is enabled for an institution. Reversal is a new proposal — never history rewrite.
+
+## Governed federation (Phase 22)
+
+GOVERNED FEDERATION coordinates cooperation between independent institutions.
+It cannot manufacture local operational authority.
+
+FEDERATION_AGREEMENT ≠ LOCAL_AUTHORITY.
+REMOTE_APPROVAL ≠ LOCAL_AUTHORIZATION.
+FEDERATED_ACCEPTANCE ≠ PHASE2_ADMISSION.
+FEDERATION_RESOURCE_LIMIT ≠ LOCAL_BUDGET_RESERVATION.
+FOREIGN_EVIDENCE ≠ LOCAL_TRUTH.
+A↔B + B↔C ≠ A↔C.
+FEDERATION ≠ TRANSITIVE_TRUST.
+FEDERATION ≠ SHARED_SUPERUSER.
+FEDERATION_REVOCATION ≠ HISTORY_DELETION.
+
+LOCAL_CONSTITUTION > FEDERATION_AGREEMENT.
+LOCAL_INSTITUTIONAL_GOVERNANCE > FEDERATION_AGREEMENT.
+LOCAL_EXECUTION_PIPELINE REMAINS AUTHORITATIVE.
+
+Federation determines what may be REQUESTED or EXCHANGED. Each institution
+independently determines what is locally AUTHORIZED, ADMITTED, EXECUTABLE,
+VERIFIED, and REMEMBERED. Target-local requester authority remains mandatory
+for Phase 2 admission. Agreement activation creates zero Runs.

@@ -5,6 +5,7 @@ import { EXAMPLE_ENVIRONMENT } from "../../control-plane/fixtures.js";
 import { compileReviewSubjectBinding } from "../../constitutional/review.js";
 import { ConstitutionalActivationCapability } from "../../constitutional/activation-capability.js";
 import { PostgresHealthService } from "./health.js";
+import { PostgresMigrationRunner } from "./migrate.js";
 import {
   createTestStack,
   uniquePostgresTestId,
@@ -30,15 +31,18 @@ import {
 } from "./postgres.phase21.helpers.js";
 
 describe("Phase 21 constitutional change control (postgres)", () => {
-  it("reports migration 016 schema compatibility on fresh database", async () => {
+  it("reports current schema compatibility with Phase21 migration present", async () => {
     const env = await createTestStack(uniquePostgresTestId("p21-schema"));
     try {
       const health = await new PostgresHealthService(env.db, "postgres").readiness();
-      expect(health.supportedSchemaVersion).toBe(
+      expect(health.supportedSchemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
+      expect(health.schemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
+      expect(health.schemaCompatible).toBe(true);
+
+      const status = await new PostgresMigrationRunner(env.db).status();
+      expect(status.applied.map((row) => row.version)).toContain(
         "016_phase21_constitutional_change_control",
       );
-      expect(health.supportedSchemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
-      expect(health.schemaCompatible).toBe(true);
     } finally {
       await env.close();
     }

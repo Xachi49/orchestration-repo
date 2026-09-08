@@ -31,7 +31,11 @@ export interface AuthorityGrantSeed {
     | "RISK_REVIEWER"
     | "SECURITY_REVIEWER"
     | "CONSTITUTIONAL_REVIEWER"
-    | "CONSTITUTIONAL_ACTIVATOR";
+    | "CONSTITUTIONAL_ACTIVATOR"
+    | "FEDERATION_NEGOTIATOR"
+    | "FEDERATION_RATIFIER"
+    | "FEDERATION_WORK_ACCEPTOR"
+    | "FEDERATION_EVIDENCE_SHARER";
   projectId: string;
   environments: readonly string[];
 }

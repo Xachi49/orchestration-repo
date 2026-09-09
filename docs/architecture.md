@@ -1746,3 +1746,29 @@ transitive.
 **Federation determines what may be requested or exchanged — never what is
 locally authorized, admitted, executable, verified, or remembered.**
 
+## Phase 23 — Independent assurance
+
+See [docs/phase-23-independent-assurance.md](phase-23-independent-assurance.md).
+
+Phase 23 introduces an assurance plane that independently evaluates the
+orchestrator. It produces assessments and system certificates but never
+operational authority.
+
+```text
+SYSTEM OPERATES
+      ↓
+SYSTEM PRODUCES EVIDENCE
+      ↓
+INDEPENDENT ASSURANCE EVALUATES
+      ↓
+SYSTEM CERTIFICATION
+
+CERTIFICATION ─X→ OPERATIONAL AUTHORITY
+```
+
+Assurance target identity is immutable and fingerprint-bound. Target drift
+invalidates old certificates. Critical failures cannot be averaged away.
+Assessment QUALIFIED does not auto-issue a certificate; independent
+ASSURANCE_CERTIFIER authority is required. Fault injection is denied in
+PRODUCTION.
+

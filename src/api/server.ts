@@ -35,8 +35,10 @@ import { registerDecisionPolicyRoutes } from "./decision-policies.js";
 import { registerGovernanceRoutes } from "./governance.js";
 import { registerConstitutionalRoutes } from "./constitutional.js";
 import { registerFederationRoutes } from "./federation.js";
+import { registerAssuranceRoutes } from "./assurance.js";
 import type { ConstitutionalChangeOrchestrationService } from "../constitutional/service.js";
 import type { FederationOrchestrationService } from "../federation/service.js";
+import type { AssuranceOrchestrationService } from "../assurance/service.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository, ProgramPlanRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -113,6 +115,7 @@ export interface ApiDeps {
   governanceProofs?: InstitutionalAuthorizationProofRepository;
   constitutionalService?: ConstitutionalChangeOrchestrationService;
   federationService?: FederationOrchestrationService;
+  assuranceService?: AssuranceOrchestrationService;
   storageMode?: StorageMode;
   runs?: RunRepository;
   readiness?: {
@@ -387,6 +390,12 @@ export async function buildServer(deps: ApiDeps = {}) {
   if (deps.federationService) {
     registerFederationRoutes(app, {
       federationService: deps.federationService,
+    });
+  }
+
+  if (deps.assuranceService) {
+    registerAssuranceRoutes(app, {
+      assuranceService: deps.assuranceService,
     });
   }
 

@@ -162,6 +162,7 @@ export function createOrchestratorRuntime(
                   governanceProofs: postgres.governanceProofs,
                   constitutionalService: postgres.constitutionalService,
                   federationService: postgres.federationService,
+                  assuranceService: postgres.assuranceService,
                 }
               : {}),
             storageMode: boot.storageMode,

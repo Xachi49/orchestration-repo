@@ -2579,5 +2579,191 @@ describe("Phase 20 institutional governance", () => {
         });
       expect(snapTamperedFreshness.outcome).toBe("STALE");
     });
+
+    it("exact regrant after revocation: G2 ≠ G1; S1 stays stale; S2 fresh", async () => {
+      const stack = buildGovernanceService();
+      const { service, canonicalAuthority, snapshots, revocations } = stack;
+      const institution = await seedInstitution(service);
+      const atIso = "2026-06-01T00:00:00.000Z";
+
+      const g1 = await seedDirectGrant(canonicalAuthority, {
+        principalId: PRINCIPALS.allocA,
+        authorityRole: "PORTFOLIO_ALLOCATOR",
+        institutionId: institution.institutionId,
+        projectScope: [GOV_PROJECT_ID],
+        environmentScope: [GOV_ENV_STAGING],
+        effectiveFrom: "2026-01-01T00:00:00.000Z",
+        effectiveUntil: "2026-12-31T00:00:00.000Z",
+      });
+      const g1Copy = structuredClone(
+        (await canonicalAuthority.getById(g1.grantId))!,
+      );
+
+      const mandate = await createActiveMandate(service, {
+        institutionId: institution.institutionId,
+        requiredAuthorities: ["PORTFOLIO_ALLOCATOR"],
+        effectiveFrom: "2026-01-01T00:00:00.000Z",
+        effectiveUntil: "2026-12-31T00:00:00.000Z",
+      });
+      const case1 = await service.openGovernanceCase({
+        subjectType: "PORTFOLIO_PLAN",
+        subjectId: "subj_regrant_1",
+        subjectHash: "hash_regrant_1",
+        requiredRole: "PORTFOLIO_ALLOCATOR",
+        projectIds: [GOV_PROJECT_ID],
+        environmentScope: [GOV_ENV_STAGING],
+        mandateIds: [mandate.mandateId],
+        expiresAt: "2026-12-31T00:00:00.000Z",
+      });
+      const att1 = await service.attest({
+        governanceCaseId: case1.governanceCaseId,
+        principalId: PRINCIPALS.allocA,
+        authorityRole: "PORTFOLIO_ALLOCATOR",
+        decision: "APPROVE",
+        nonce: "nonce-regrant-1",
+      });
+      const s1 = await snapshots.getById(att1.attestation.authoritySnapshotId);
+      expect(s1?.directGrantIds).toEqual([g1.grantId]);
+      expect(att1.proof).toBeDefined();
+      const p1 = att1.proof!.institutionalAuthorizationProofId;
+
+      await service.revokeTarget({
+        targetType: "DIRECT_GRANT",
+        targetId: g1.grantId,
+        reason: "revoke G1 for exact regrant",
+        principalId: PRINCIPALS.govAdmin,
+      });
+
+      const g1After = await canonicalAuthority.getById(g1.grantId);
+      expect(g1After).toEqual(g1Copy);
+      const overlays = await revocations.listByTarget("DIRECT_GRANT", g1.grantId);
+      expect(overlays.length).toBe(1);
+      expect(overlays[0]!.targetId).toBe(g1.grantId);
+
+      await expect(
+        service.validateProof({
+          proofId: p1,
+          subjectType: "PORTFOLIO_PLAN",
+          subjectId: "subj_regrant_1",
+          subjectHash: "hash_regrant_1",
+          requiredRole: "PORTFOLIO_ALLOCATOR",
+          projectId: GOV_PROJECT_ID,
+          environment: GOV_ENV_STAGING,
+          atIso,
+        }),
+      ).rejects.toMatchObject({ code: "GOVERNANCE_PROOF_STALE" });
+
+      const g2 = await seedDirectGrant(canonicalAuthority, {
+        principalId: PRINCIPALS.allocA,
+        authorityRole: "PORTFOLIO_ALLOCATOR",
+        institutionId: institution.institutionId,
+        projectScope: [GOV_PROJECT_ID],
+        environmentScope: [GOV_ENV_STAGING],
+        effectiveFrom: "2026-01-01T00:00:00.000Z",
+        effectiveUntil: "2026-12-31T00:00:00.000Z",
+      });
+      expect(g2.grantId).not.toBe(g1.grantId);
+
+      const resolved = await service.resolveAuthority({
+        principalId: PRINCIPALS.allocA,
+        requiredRole: "PORTFOLIO_ALLOCATOR",
+        projectId: GOV_PROJECT_ID,
+        environment: GOV_ENV_STAGING,
+        atIso,
+      });
+      expect(resolved.outcome).toBe("AUTHORIZED");
+      expect(resolved.directGrantIds).toEqual([g2.grantId]);
+      expect(resolved.directGrantIds).not.toContain(g1.grantId);
+
+      const s1Fresh = await service.validateAuthoritySnapshotFreshness({
+        authoritySnapshotId: att1.attestation.authoritySnapshotId,
+        authoritySnapshotHash: att1.attestation.authoritySnapshotHash,
+        projectId: GOV_PROJECT_ID,
+        environment: GOV_ENV_STAGING,
+        requiredRole: "PORTFOLIO_ALLOCATOR",
+        atIso,
+      });
+      expect(s1Fresh.outcome).toBe("STALE");
+
+      const case2 = await service.openGovernanceCase({
+        subjectType: "PORTFOLIO_PLAN",
+        subjectId: "subj_regrant_2",
+        subjectHash: "hash_regrant_2",
+        requiredRole: "PORTFOLIO_ALLOCATOR",
+        projectIds: [GOV_PROJECT_ID],
+        environmentScope: [GOV_ENV_STAGING],
+        mandateIds: [mandate.mandateId],
+        expiresAt: "2026-12-31T00:00:00.000Z",
+      });
+      const att2 = await service.attest({
+        governanceCaseId: case2.governanceCaseId,
+        principalId: PRINCIPALS.allocA,
+        authorityRole: "PORTFOLIO_ALLOCATOR",
+        decision: "APPROVE",
+        nonce: "nonce-regrant-2",
+      });
+      const s2 = await snapshots.getById(att2.attestation.authoritySnapshotId);
+      expect(s2?.directGrantIds).toEqual([g2.grantId]);
+      expect(s2!.snapshotHash).not.toBe(s1!.snapshotHash);
+
+      const s2Fresh = await service.validateAuthoritySnapshotFreshness({
+        authoritySnapshotId: att2.attestation.authoritySnapshotId,
+        authoritySnapshotHash: att2.attestation.authoritySnapshotHash,
+        projectId: GOV_PROJECT_ID,
+        environment: GOV_ENV_STAGING,
+        requiredRole: "PORTFOLIO_ALLOCATOR",
+        atIso,
+      });
+      expect(s2Fresh.outcome).toBe("FRESH");
+
+      await expect(
+        service.validateProof({
+          proofId: p1,
+          subjectType: "PORTFOLIO_PLAN",
+          subjectId: "subj_regrant_1",
+          subjectHash: "hash_regrant_1",
+          requiredRole: "PORTFOLIO_ALLOCATOR",
+          projectId: GOV_PROJECT_ID,
+          environment: GOV_ENV_STAGING,
+          atIso,
+        }),
+      ).rejects.toMatchObject({ code: "GOVERNANCE_PROOF_STALE" });
+
+      expect(att2.proof).toBeDefined();
+      const p2 = await service.validateProof({
+        proofId: att2.proof!.institutionalAuthorizationProofId,
+        subjectType: "PORTFOLIO_PLAN",
+        subjectId: "subj_regrant_2",
+        subjectHash: "hash_regrant_2",
+        requiredRole: "PORTFOLIO_ALLOCATOR",
+        projectId: GOV_PROJECT_ID,
+        environment: GOV_ENV_STAGING,
+        atIso,
+      });
+      expect(p2.institutionalAuthorizationProofId).toBe(
+        att2.proof!.institutionalAuthorizationProofId,
+      );
+    });
+
+    it("production authority paths have no markDisabled / grant-row mutation seam", () => {
+      const canonical = readFileSync(
+        "src/governance/canonical-authority.ts",
+        "utf8",
+      );
+      const postgresGov = readFileSync(
+        "src/infrastructure/postgres/repositories/governance.ts",
+        "utf8",
+      );
+      const service = readFileSync("src/governance/service.ts", "utf8");
+      expect(canonical).not.toContain("markDisabled");
+      expect(postgresGov).not.toContain("markDisabled");
+      expect(postgresGov).not.toMatch(
+        /UPDATE\s+authority_grants[\s\S]*enabled\s*=\s*FALSE/i,
+      );
+      expect(service).toContain("revokeTarget");
+      expect(service).toContain("listByTarget");
+      expect(service).toContain('"DIRECT_GRANT"');
+      expect(service).not.toContain("markDisabled");
+    });
   });
 });

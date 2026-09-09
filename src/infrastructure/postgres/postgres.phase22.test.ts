@@ -61,14 +61,22 @@ describe("Phase 22 postgres governed federation", () => {
     }
   });
 
-  it("schema readiness reports 017", async () => {
+  it("reports current schema compatibility with Phase22 migration present", async () => {
     const env = await createP22Env("schema");
     try {
-      const health = await env.stack.db.query<{ version: string }>(
-        `SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1`,
+      const health = await new (
+        await import("./health.js")
+      ).PostgresHealthService(env.db, "postgres").readiness();
+      expect(health.supportedSchemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
+      expect(health.schemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
+      expect(health.schemaCompatible).toBe(true);
+
+      const status = await new (
+        await import("./migrate.js")
+      ).PostgresMigrationRunner(env.db).status();
+      expect(status.applied.map((row) => row.version)).toContain(
+        "017_phase22_governed_federation",
       );
-      expect(health.rows[0]?.version).toBe(SUPPORTED_SCHEMA_VERSION);
-      expect(SUPPORTED_SCHEMA_VERSION).toBe("017_phase22_governed_federation");
     } finally {
       await env.close();
     }

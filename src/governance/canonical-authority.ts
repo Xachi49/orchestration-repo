@@ -28,6 +28,14 @@ export interface CanonicalAuthorityGrantPort {
   listByPrincipal(principalId: string): Promise<readonly CanonicalAuthorityGrant[]>;
   getById(grantId: string): Promise<CanonicalAuthorityGrant | null>;
   listByProject?(projectId: string): Promise<readonly CanonicalAuthorityGrant[]>;
+  /** Test/bootstrap helper only — not a production regrant API. */
+  seed?(input: {
+    principalId: string;
+    authorityRole: string;
+    projectId: string;
+    environmentScope: readonly string[];
+    grantId?: string;
+  }): Promise<CanonicalAuthorityGrant>;
 }
 
 export const OPERATIONAL_PHASE_ROLES = [
@@ -101,7 +109,8 @@ export class InMemoryCanonicalAuthorityGrantRepository
 
   async getById(grantId: string): Promise<CanonicalAuthorityGrant | null> {
     const grant = this.byId.get(grantId);
-    if (!grant || !grant.enabled) return null;
+    if (!grant) return null;
+    // Historical issuance remains loadable; effectiveness is derived elsewhere.
     return grant;
   }
 
@@ -111,13 +120,5 @@ export class InMemoryCanonicalAuthorityGrantRepository
     return [...this.byId.values()].filter(
       (g) => g.projectId === projectId && g.enabled,
     );
-  }
-
-  async markDisabled(grantId: string): Promise<CanonicalAuthorityGrant | null> {
-    const grant = this.byId.get(grantId);
-    if (!grant) return null;
-    const next = CanonicalAuthorityGrantSchema.parse({ ...grant, enabled: false });
-    this.byId.set(grantId, next);
-    return next;
   }
 }

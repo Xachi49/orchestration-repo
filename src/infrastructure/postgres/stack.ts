@@ -336,6 +336,19 @@ import {
   PostgresFederationAuditRepository,
 } from "./repositories/federation.js";
 import { FederationOrchestrationService } from "../../federation/index.js";
+import {
+  PostgresAssuranceProfileRepository,
+  PostgresAssuranceRunRepository,
+  PostgresAssuranceChallengePlanRepository,
+  PostgresAssuranceEvidenceRepository,
+  PostgresAssuranceControlEvaluationRepository,
+  PostgresAssuranceFindingRepository,
+  PostgresAssuranceAssessmentRepository,
+  PostgresSystemCertificateRepository,
+  PostgresSystemCertificateRevocationRepository,
+  PostgresAssuranceAuditRepository,
+} from "./repositories/assurance.js";
+import { AssuranceOrchestrationService } from "../../assurance/index.js";
 
 export interface PostgresOrchestratorStack {
   storageMode: "postgres";
@@ -435,6 +448,8 @@ export interface PostgresOrchestratorStack {
   constitutionalProposals: PostgresConstitutionalProposalRepository;
   federationService: FederationOrchestrationService;
   federationAgreements: PostgresFederationAgreementRepository;
+  assuranceService: AssuranceOrchestrationService;
+  canonicalAuthority: import("../../governance/canonical-authority.js").CanonicalAuthorityGrantPort;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
     limit: number,
@@ -466,6 +481,11 @@ export async function createPostgresOrchestratorStack(options: {
   };
   /** @internal TEST ONLY — federation activation failpoint seam. */
   federationActivationFailpoint?: {
+    name: string;
+    trigger: () => void;
+  };
+  /** @internal TEST ONLY — assurance certification failpoint seam. */
+  assuranceCertificationFailpoint?: {
     name: string;
     trigger: () => void;
   };
@@ -1628,6 +1648,45 @@ export async function createPostgresOrchestratorStack(options: {
       : {}),
   });
 
+  const assuranceProfiles = new PostgresAssuranceProfileRepository(db);
+  const assuranceRuns = new PostgresAssuranceRunRepository(db);
+  const assuranceChallengePlans = new PostgresAssuranceChallengePlanRepository(db);
+  const assuranceEvidence = new PostgresAssuranceEvidenceRepository(db);
+  const assuranceEvaluations =
+    new PostgresAssuranceControlEvaluationRepository(db);
+  const assuranceFindings = new PostgresAssuranceFindingRepository(db);
+  const assuranceAssessments = new PostgresAssuranceAssessmentRepository(db);
+  const systemCertificates = new PostgresSystemCertificateRepository(db);
+  const systemCertificateRevocations =
+    new PostgresSystemCertificateRevocationRepository(db);
+  const assuranceAudits = new PostgresAssuranceAuditRepository(db);
+  const assuranceService = new AssuranceOrchestrationService({
+    nowIso: () => clock.nowIso(),
+    profiles: assuranceProfiles,
+    runs: assuranceRuns,
+    challengePlans: assuranceChallengePlans,
+    evidence: assuranceEvidence,
+    evaluations: assuranceEvaluations,
+    findings: assuranceFindings,
+    assessments: assuranceAssessments,
+    certificates: systemCertificates,
+    revocations: systemCertificateRevocations,
+    audits: assuranceAudits,
+    governance: governanceService,
+    canonicalAuthority: governanceCanonicalAuthority,
+    runCertification: (fn) =>
+      db.withTransaction(async () => {
+        await db.query(
+          `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+          ["assurance-certification"],
+        );
+        return fn();
+      }),
+    ...(options.assuranceCertificationFailpoint !== undefined
+      ? { certificationFailpoint: options.assuranceCertificationFailpoint }
+      : {}),
+  });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -1761,6 +1820,8 @@ export async function createPostgresOrchestratorStack(options: {
     constitutionalProposals,
     federationService,
     federationAgreements,
+    assuranceService,
+    canonicalAuthority: governanceCanonicalAuthority,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(
         DISCOVERABLE_RUN_STATES,

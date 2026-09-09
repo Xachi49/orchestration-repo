@@ -1893,6 +1893,7 @@ export class GovernanceOrchestrationService
     }
 
     if (matchingGrants.length > 0) {
+      matchingGrants.sort((a, b) => a.grantId.localeCompare(b.grantId));
       const directGrantIds = matchingGrants.map((g) => g.grantId);
       const scope = {
         projectIds: [...new Set(matchingGrants.map((g) => g.projectId))],

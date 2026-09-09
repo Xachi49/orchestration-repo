@@ -170,8 +170,13 @@ describe("Phase 22 federation", () => {
         ratifierPrincipalId: FED_PRINCIPALS.ratifierB,
       });
 
-      // Revoke G1, create equivalent G2
-      await stack.canonicalAuthority.markDisabled(g1!.grantId);
+      // Revoke G1 via canonical Phase20 overlay; issue equivalent G2.
+      await stack.service.revokeTarget({
+        targetType: "DIRECT_GRANT",
+        targetId: g1!.grantId,
+        reason: "federation provenance — G1 revoked; G2 must not repair",
+        principalId: PRINCIPALS.govAdmin,
+      });
       await stack.canonicalAuthority.seed({
         principalId: FED_PRINCIPALS.ratifierB,
         authorityRole: "FEDERATION_RATIFIER",

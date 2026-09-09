@@ -10,7 +10,7 @@ describe("schema migration catalog", () => {
     expect(latest).toBeDefined();
     expect(latest!.version).toBe(SUPPORTED_SCHEMA_VERSION);
     expect(SUPPORTED_SCHEMA_VERSION).toBe(
-      "017_phase22_governed_federation",
+      "018_phase23_independent_assurance",
     );
   });
 
@@ -23,6 +23,7 @@ describe("schema migration catalog", () => {
       "015_phase20_institutional_governance",
       "016_phase21_constitutional_change_control",
       "017_phase22_governed_federation",
+      "018_phase23_independent_assurance",
     ];
     for (let i = 0; i < phaseTail.length; i++) {
       const expected = phaseTail[i]!;

@@ -185,3 +185,24 @@ Federation determines what may be REQUESTED or EXCHANGED. Each institution
 independently determines what is locally AUTHORIZED, ADMITTED, EXECUTABLE,
 VERIFIED, and REMEMBERED. Target-local requester authority remains mandatory
 for Phase 2 admission. Agreement activation creates zero Runs.
+
+## Independent assurance (Phase 23)
+
+INDEPENDENT ASSURANCE evaluates whether the orchestrator obeys its own laws.
+It cannot manufacture operational authority.
+
+ASSURANCE ≠ OPERATIONAL AUTHORITY.
+TEST PASS ≠ CERTIFICATE.
+CERTIFICATE ≠ EXECUTION AUTHORIZATION.
+CERTIFICATE ≠ POLICY.
+CERTIFICATION ≠ DEPLOYMENT.
+ASSURANCE OPERATOR ≠ CERTIFIER.
+SYSTEM UNDER TEST ≠ ASSURANCE AUTHORITY.
+INCONCLUSIVE ≠ PASS.
+ASSURANCE RECORD ≠ AUTHORITY GRANT.
+CERTIFICATE REVOCATION ≠ HISTORY DELETION.
+
+Assurance may determine whether evidence supports a claim of conformance.
+Assurance may not create the authority, policy, execution, truth, or
+governance that it evaluates. System certificates create zero Runs,
+approvals, execution attempts, or authority grants.

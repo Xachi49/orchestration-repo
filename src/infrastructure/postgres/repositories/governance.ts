@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { PostgresDatabase } from "../database.js";
 import { wrapDatabaseError } from "../database.js";
 import { hydrateRecord } from "../hydrate.js";
@@ -1260,7 +1261,8 @@ export class PostgresCanonicalAuthorityGrantAdapter
       `SELECT grant_id, principal_id, principal_type, project_id,
               authorized_environments, enabled
        FROM authority_grants
-       WHERE principal_id = $1 AND enabled = TRUE`,
+       WHERE principal_id = $1 AND enabled = TRUE
+       ORDER BY created_at ASC, grant_id ASC`,
       [principalId],
     );
     return result.rows.map((row) =>
@@ -1291,7 +1293,9 @@ export class PostgresCanonicalAuthorityGrantAdapter
       [grantId],
     );
     const row = result.rows[0];
-    if (!row || !row.enabled) return null;
+    if (!row) return null;
+    // Historical issuance is immutable and loadable even when enabled=false.
+    // Current effectiveness is derived from authority_revocations + enabled.
     return CanonicalAuthorityGrantSchema.parse({
       grantId: row.grant_id,
       principalId: row.principal_id,
@@ -1316,7 +1320,8 @@ export class PostgresCanonicalAuthorityGrantAdapter
       `SELECT grant_id, principal_id, principal_type, project_id,
               authorized_environments, enabled
        FROM authority_grants
-       WHERE project_id = $1 AND enabled = TRUE`,
+       WHERE project_id = $1 AND enabled = TRUE
+       ORDER BY created_at ASC, grant_id ASC`,
       [projectId],
     );
     return result.rows.map((row) =>
@@ -1329,5 +1334,88 @@ export class PostgresCanonicalAuthorityGrantAdapter
         enabled: row.enabled,
       }),
     );
+  }
+
+  /**
+   * Test/bootstrap helper — not a production regrant API.
+   *
+   * Idempotent retry: reuse the current unrevoked equivalent grant.
+   * Regrant after revocation: insert a distinct grant_id (G2); never mutate G1.
+   */
+  async seed(input: {
+    principalId: string;
+    authorityRole: string;
+    projectId: string;
+    environmentScope: readonly string[];
+    grantId?: string;
+  }): Promise<CanonicalAuthorityGrant> {
+    if (input.grantId === undefined) {
+      const current = await this.findCurrentUnrevokedEquivalent(input);
+      if (current) {
+        return current;
+      }
+    }
+
+    const grantId = input.grantId ?? randomUUID();
+    await this.db.query(
+      `INSERT INTO authority_grants (
+         grant_id, principal_id, principal_type, project_id,
+         authorized_environments, enabled, authority_version
+       ) VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, '1')`,
+      [
+        grantId,
+        input.principalId,
+        input.authorityRole,
+        input.projectId,
+        JSON.stringify([...input.environmentScope]),
+      ],
+    );
+    const loaded = await this.getById(grantId);
+    if (!loaded) {
+      throw new Error("Failed to seed canonical authority grant");
+    }
+    return loaded;
+  }
+
+  private async findCurrentUnrevokedEquivalent(input: {
+    principalId: string;
+    authorityRole: string;
+    projectId: string;
+  }): Promise<CanonicalAuthorityGrant | null> {
+    const result = await this.db.query<{
+      grant_id: string;
+      principal_id: string;
+      principal_type: string;
+      project_id: string;
+      authorized_environments: string[];
+      enabled: boolean;
+    }>(
+      `SELECT g.grant_id, g.principal_id, g.principal_type, g.project_id,
+              g.authorized_environments, g.enabled
+       FROM authority_grants g
+       WHERE g.principal_id = $1
+         AND g.principal_type = $2
+         AND g.project_id = $3
+         AND g.enabled = TRUE
+         AND NOT EXISTS (
+           SELECT 1 FROM authority_revocations r
+           WHERE r.target_type = 'DIRECT_GRANT'
+             AND r.target_id = g.grant_id
+             AND r.effective_at <= NOW()
+         )
+       ORDER BY g.created_at ASC, g.grant_id ASC
+       LIMIT 1`,
+      [input.principalId, input.authorityRole, input.projectId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return CanonicalAuthorityGrantSchema.parse({
+      grantId: row.grant_id,
+      principalId: row.principal_id,
+      authorityRole: row.principal_type,
+      projectId: row.project_id,
+      environmentScope: row.authorized_environments,
+      enabled: row.enabled,
+    });
   }
 }

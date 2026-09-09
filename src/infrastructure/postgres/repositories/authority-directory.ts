@@ -35,7 +35,9 @@ export interface AuthorityGrantSeed {
     | "FEDERATION_NEGOTIATOR"
     | "FEDERATION_RATIFIER"
     | "FEDERATION_WORK_ACCEPTOR"
-    | "FEDERATION_EVIDENCE_SHARER";
+    | "FEDERATION_EVIDENCE_SHARER"
+    | "ASSURANCE_OPERATOR"
+    | "ASSURANCE_CERTIFIER";
   projectId: string;
   environments: readonly string[];
 }
@@ -43,17 +45,29 @@ export interface AuthorityGrantSeed {
 export class PostgresAuthorityDirectory {
   constructor(private readonly db: PostgresDatabase) {}
 
+  /**
+   * Test/bootstrap seed only — not a production regrant API.
+   *
+   * Retry of the same bootstrap material reuses the current unrevoked grant.
+   * After authority_revocations overlay on that grant, a later seed inserts a
+   * distinct grant_id. Never mutates historical grant rows; never resurrects
+   * a revoked grant by ON CONFLICT UPDATE.
+   */
   async seed(grants: readonly AuthorityGrantSeed[]): Promise<void> {
     for (const grant of grants) {
+      const current = await this.findCurrentUnrevokedGrant(
+        grant.principalId,
+        grant.principalType,
+        grant.projectId,
+      );
+      if (current) {
+        continue;
+      }
       await this.db.query(
         `INSERT INTO authority_grants (
            grant_id, principal_id, principal_type, project_id,
            authorized_environments, enabled, authority_version
-         ) VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, '1')
-         ON CONFLICT (principal_id, principal_type, project_id) DO UPDATE
-           SET authorized_environments = EXCLUDED.authorized_environments,
-               enabled = TRUE,
-               updated_at = NOW()`,
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, '1')`,
         [
           randomUUID(),
           grant.principalId,
@@ -65,6 +79,42 @@ export class PostgresAuthorityDirectory {
     }
   }
 
+  private async findCurrentUnrevokedGrant(
+    principalId: string,
+    principalType: string,
+    projectId: string,
+  ): Promise<boolean> {
+    const result = await this.db.query<{ grant_id: string }>(
+      `SELECT g.grant_id
+       FROM authority_grants g
+       WHERE g.principal_id = $1
+         AND g.principal_type = $2
+         AND g.project_id = $3
+         AND g.enabled = TRUE
+         AND NOT EXISTS (
+           SELECT 1 FROM authority_revocations r
+           WHERE r.target_type = 'DIRECT_GRANT'
+             AND r.target_id = g.grant_id
+             AND r.effective_at <= NOW()
+         )
+       LIMIT 1`,
+      [principalId, principalType, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  private async hasUnrevokedGrant(
+    principalId: string,
+    principalType: string,
+    projectId: string,
+  ): Promise<boolean> {
+    return this.findCurrentUnrevokedGrant(
+      principalId,
+      principalType,
+      projectId,
+    );
+  }
+
   async listRequesterGrants(
     requesterId: string,
     projectId: string,
@@ -72,64 +122,53 @@ export class PostgresAuthorityDirectory {
     const result = await this.db.query<{
       authorized_environments: string[];
     }>(
-      `SELECT authorized_environments
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'REQUESTER'
-         AND project_id = $2
-         AND enabled = TRUE`,
+      `SELECT g.authorized_environments
+       FROM authority_grants g
+       WHERE g.principal_id = $1
+         AND g.principal_type = 'REQUESTER'
+         AND g.project_id = $2
+         AND g.enabled = TRUE
+         AND NOT EXISTS (
+           SELECT 1 FROM authority_revocations r
+           WHERE r.target_type = 'DIRECT_GRANT'
+             AND r.target_id = g.grant_id
+             AND r.effective_at <= NOW()
+         )
+       ORDER BY g.created_at ASC, g.grant_id ASC`,
       [requesterId, projectId],
     );
-    const row = result.rows[0];
-    return row?.authorized_environments ?? [];
+    const envs = new Set<string>();
+    for (const row of result.rows) {
+      for (const env of row.authorized_environments) {
+        envs.add(env);
+      }
+    }
+    return [...envs].sort();
   }
 
   async isProgramMaterializerEnabled(
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'PROGRAM_MATERIALIZER'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
+    return this.hasUnrevokedGrant(
+      principalId,
+      "PROGRAM_MATERIALIZER",
+      projectId,
     );
-    return result.rows.length > 0;
   }
 
   async isPortfolioAllocatorEnabled(
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'PORTFOLIO_ALLOCATOR'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "PORTFOLIO_ALLOCATOR", projectId);
   }
 
   async isStrategySelectorEnabled(
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'STRATEGY_SELECTOR'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "STRATEGY_SELECTOR", projectId);
   }
 
   /**
@@ -156,16 +195,7 @@ export class PostgresAuthorityDirectory {
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'EXPERIMENT_SPONSOR'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "EXPERIMENT_SPONSOR", projectId);
   }
 
   /**
@@ -192,16 +222,7 @@ export class PostgresAuthorityDirectory {
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'CAUSAL_REVIEWER'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "CAUSAL_REVIEWER", projectId);
   }
 
   /**
@@ -228,16 +249,7 @@ export class PostgresAuthorityDirectory {
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'DECISION_POLICY_APPROVER'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "DECISION_POLICY_APPROVER", projectId);
   }
 
   /**
@@ -264,16 +276,7 @@ export class PostgresAuthorityDirectory {
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'DECISION_POLICY_ACTIVATOR'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "DECISION_POLICY_ACTIVATOR", projectId);
   }
 
   /**
@@ -300,16 +303,7 @@ export class PostgresAuthorityDirectory {
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'GOVERNANCE_ADMIN'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "GOVERNANCE_ADMIN", projectId);
   }
 
   /**
@@ -336,16 +330,7 @@ export class PostgresAuthorityDirectory {
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'GOVERNANCE_HOLD_OPERATOR'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "GOVERNANCE_HOLD_OPERATOR", projectId);
   }
 
   /**
@@ -372,16 +357,7 @@ export class PostgresAuthorityDirectory {
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'RISK_REVIEWER'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "RISK_REVIEWER", projectId);
   }
 
   /**
@@ -408,16 +384,7 @@ export class PostgresAuthorityDirectory {
     principalId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'SECURITY_REVIEWER'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [principalId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(principalId, "SECURITY_REVIEWER", projectId);
   }
 
   /**
@@ -465,22 +432,19 @@ export class PostgresAuthorityDirectory {
     approverId: string,
     projectId: string,
   ): Promise<boolean> {
-    const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok
-       FROM authority_grants
-       WHERE principal_id = $1
-         AND principal_type = 'APPROVER'
-         AND project_id = $2
-         AND enabled = TRUE`,
-      [approverId, projectId],
-    );
-    return result.rows.length > 0;
+    return this.hasUnrevokedGrant(approverId, "APPROVER", projectId);
   }
 
   async hasAnyRequesterGrant(requesterId: string): Promise<boolean> {
     const result = await this.db.query<{ ok: number }>(
-      `SELECT 1 AS ok FROM authority_grants
-       WHERE principal_id = $1 AND principal_type = 'REQUESTER' AND enabled = TRUE
+      `SELECT 1 AS ok FROM authority_grants g
+       WHERE g.principal_id = $1 AND g.principal_type = 'REQUESTER' AND g.enabled = TRUE
+         AND NOT EXISTS (
+           SELECT 1 FROM authority_revocations r
+           WHERE r.target_type = 'DIRECT_GRANT'
+             AND r.target_id = g.grant_id
+             AND r.effective_at <= NOW()
+         )
        LIMIT 1`,
       [requesterId],
     );

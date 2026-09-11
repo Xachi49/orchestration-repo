@@ -48,9 +48,31 @@ export async function advanceToApprovedRun(
     stack,
     request,
   );
-  const decisionNonce = deliveredNonce(stack.approvalDelivery, approvalRequestId);
-  const approved = await stack.humanAuthorization.decide({
+  return approveAwaitingRun(stack, {
+    runId,
     approvalRequestId,
+    request,
+  });
+}
+
+/**
+ * Complete Phase6 approval for a run already at AWAITING_APPROVAL.
+ * Does not re-admit — avoids ACTIVE_DUPLICATE on the same logical objective.
+ */
+export async function approveAwaitingRun(
+  stack: PostgresOrchestratorStack,
+  awaiting: {
+    runId: string;
+    approvalRequestId: string;
+    request: AdmissionRequest;
+  },
+): Promise<ApprovedRunContext> {
+  const decisionNonce = deliveredNonce(
+    stack.approvalDelivery,
+    awaiting.approvalRequestId,
+  );
+  const approved = await stack.humanAuthorization.decide({
+    approvalRequestId: awaiting.approvalRequestId,
     approverId: "approver_bootstrap",
     decision: "APPROVE",
     decisionNonce,
@@ -60,7 +82,12 @@ export async function advanceToApprovedRun(
   if (approved.result !== "APPROVED") {
     throw new Error(`expected APPROVED, got ${approved.result}`);
   }
-  return { runId, approvalRequestId, decisionNonce, request };
+  return {
+    runId: awaiting.runId,
+    approvalRequestId: awaiting.approvalRequestId,
+    decisionNonce,
+    request: awaiting.request,
+  };
 }
 
 export async function advanceToExecuting(

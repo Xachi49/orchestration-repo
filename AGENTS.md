@@ -206,3 +206,23 @@ Assurance may determine whether evidence supports a claim of conformance.
 Assurance may not create the authority, policy, execution, truth, or
 governance that it evaluates. System certificates create zero Runs,
 approvals, execution attempts, or authority grants.
+
+## Production synthesis (Phase 24)
+
+PRODUCTION QUALIFICATION synthesizes the complete system into one coherent
+reference runtime and immutable release qualification.
+
+It cannot deploy, grant authority, or manufacture operational permission.
+
+BUILD ≠ RELEASE.
+RELEASE_CANDIDATE ≠ RELEASE_QUALIFIED.
+RELEASE_QUALIFIED ≠ DEPLOYED.
+CERTIFICATE ≠ DEPLOYMENT_AUTHORIZATION.
+REFERENCE_RUNTIME ≠ PRODUCTION_ENVIRONMENT.
+QUALIFICATION_RECORD ≠ AUTHORITY_GRANT.
+RELEASE_MANIFEST ≠ DEPLOYMENT.
+DEPLOYMENT ≠ IN SCOPE.
+
+Phase 24 may determine whether a specific immutable release candidate is
+coherent and qualified for release. It may not deploy that candidate.
+There is no Phase 25 in the core architecture.

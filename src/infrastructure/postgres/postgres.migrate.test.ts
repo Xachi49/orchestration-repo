@@ -9,15 +9,15 @@ import {
 } from "./test-helpers.js";
 
 describe("PostgreSQL migration compatibility", () => {
-  it("createTestDatabase migrate + assertCompatible accepts 018", async () => {
+  it("createTestDatabase migrate + assertCompatible accepts 019", async () => {
     const db = await createTestDatabase(
-      uniquePostgresTestId("schema_018_compatible"),
+      uniquePostgresTestId("schema_019_compatible"),
     );
     try {
       const runner = new PostgresMigrationRunner(db);
       const status = await runner.status();
       expect(SUPPORTED_SCHEMA_VERSION).toBe(
-        "018_phase23_independent_assurance",
+        "019_phase24_production_synthesis",
       );
       expect(status.supported).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(status.current).toBe(SUPPORTED_SCHEMA_VERSION);
@@ -28,13 +28,13 @@ describe("PostgreSQL migration compatibility", () => {
     }
   });
 
-  it("database at 017 migrates forward to 018 then becomes compatible", async () => {
+  it("database at 018 migrates forward to 019 then becomes compatible", async () => {
     const db = new PostgresDatabase({
       connectionString: requireTestDatabaseUrl(),
       max: 4,
       connectionTimeoutMillis: 5_000,
       idleTimeoutMillis: 10_000,
-      instanceId: uniquePostgresTestId("schema_017_forward"),
+      instanceId: uniquePostgresTestId("schema_018_forward"),
     });
     try {
       const runner = new PostgresMigrationRunner(db);
@@ -44,9 +44,9 @@ describe("PostgreSQL migration compatibility", () => {
         [SUPPORTED_SCHEMA_VERSION],
       );
       const before = await runner.status();
-      expect(before.current).toBe("017_phase22_governed_federation");
+      expect(before.current).toBe("018_phase23_independent_assurance");
       expect(before.pending).toContain(
-        "018_phase23_independent_assurance",
+        "019_phase24_production_synthesis",
       );
 
       await expect(runner.assertCompatible()).rejects.toMatchObject({
@@ -58,11 +58,11 @@ describe("PostgreSQL migration compatibility", () => {
 
       const after = await runner.status();
       expect(SUPPORTED_SCHEMA_VERSION).toBe(
-        "018_phase23_independent_assurance",
+        "019_phase24_production_synthesis",
       );
       expect(after.current).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(after.pending).not.toContain(
-        "018_phase23_independent_assurance",
+        "019_phase24_production_synthesis",
       );
       expect(after.pending).toEqual([]);
       await runner.assertCompatible();
@@ -79,7 +79,7 @@ describe("PostgreSQL migration compatibility", () => {
       idleTimeoutMillis: 10_000,
       instanceId: uniquePostgresTestId("schema_future_reject"),
     });
-    const futureVersion = "019_phase24_unknown_future";
+    const futureVersion = "020_phase25_unknown_future";
     try {
       const runner = new PostgresMigrationRunner(db);
       await runner.migrate();
@@ -106,7 +106,7 @@ describe("PostgreSQL migration compatibility", () => {
     try {
       const health = await new PostgresHealthService(db, "postgres").readiness();
       expect(health.supportedSchemaVersion).toBe(
-        "018_phase23_independent_assurance",
+        "019_phase24_production_synthesis",
       );
       expect(health.supportedSchemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(health.schemaCompatible).toBe(true);

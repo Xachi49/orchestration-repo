@@ -16,7 +16,9 @@
     "db:migrate": "node --import tsx src/infrastructure/postgres/cli.ts migrate",
     "db:status": "node --import tsx src/infrastructure/postgres/cli.ts status",
     "start": "node --import tsx src/runtime/main.ts",
-    "audit:deps": "npm audit --omit=dev --audit-level=high"
+    "audit:deps": "npm audit --omit=dev --audit-level=high",
+    "qualify:preflight": "node --import tsx scripts/qualify-preflight.mjs",
+    "reference-runtime:manifest": "node --import tsx scripts/reference-runtime-manifest.mjs"
   },
   "dependencies": {
     "fastify": "^5.12.1",

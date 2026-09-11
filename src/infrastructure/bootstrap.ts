@@ -91,6 +91,8 @@ export async function bootstrapOrchestratorStack(
     const stack = await createPostgresOrchestratorStack({
       db,
       instanceId: options.instanceId ?? fileConfig.instanceId,
+      seedControlPlane: false,
+      seedRepositorySources: false,
     });
     options.onPhase?.("RECOVERY_RUNNING");
     const recoveryItems = await stack.recovery.recover();

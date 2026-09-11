@@ -2,6 +2,7 @@ import pg from "pg";
 import { DurabilityError } from "../../durability/errors.js";
 import { ConstitutionalError } from "../../constitutional/errors.js";
 import { AssuranceError } from "../../assurance/errors.js";
+import { QualificationError } from "../../qualification/errors.js";
 import { FederationError } from "../../federation/errors.js";
 import { GovernanceError } from "../../governance/errors.js";
 import {
@@ -16,12 +17,13 @@ function isNormalizedApplicationError(error: unknown): boolean {
     return true;
   }
   // Preserve known deterministic domain errors thrown inside TX callbacks —
-  // do not re-wrap as DATABASE_TRANSACTION_FAILED (Phase 20/21/22/23).
+  // do not re-wrap as DATABASE_TRANSACTION_FAILED (Phase 20/21/22/23/24).
   return (
     error instanceof GovernanceError ||
     error instanceof ConstitutionalError ||
     error instanceof FederationError ||
     error instanceof AssuranceError ||
+    error instanceof QualificationError ||
     (error instanceof Error &&
       (error.name === "SchedulingError" || error.name === "AdmissionError"))
   );

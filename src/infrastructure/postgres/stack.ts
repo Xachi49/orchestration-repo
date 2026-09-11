@@ -349,6 +349,16 @@ import {
   PostgresAssuranceAuditRepository,
 } from "./repositories/assurance.js";
 import { AssuranceOrchestrationService } from "../../assurance/index.js";
+import {
+  PostgresProductionQualificationRunRepository,
+  PostgresQualificationEvidenceRepository,
+  PostgresReleaseQualificationRecordRepository,
+  PostgresReleaseManifestRepository,
+  PostgresQualificationAuditRepository,
+} from "./repositories/qualification.js";
+import { createReferenceRuntimeQualification } from "../../qualification/reference-runtime.js";
+import type { QualificationOrchestrationService } from "../../qualification/service.js";
+import type { ReferenceRuntimeManifest } from "../../qualification/runtime-manifest.js";
 
 export interface PostgresOrchestratorStack {
   storageMode: "postgres";
@@ -449,6 +459,8 @@ export interface PostgresOrchestratorStack {
   federationService: FederationOrchestrationService;
   federationAgreements: PostgresFederationAgreementRepository;
   assuranceService: AssuranceOrchestrationService;
+  qualificationService: QualificationOrchestrationService;
+  referenceRuntimeManifest: ReferenceRuntimeManifest;
   canonicalAuthority: import("../../governance/canonical-authority.js").CanonicalAuthorityGrantPort;
   /** Runs whose durable state can still yield missing scheduler work. */
   listDiscoverableRunIds: (
@@ -464,6 +476,11 @@ export async function createPostgresOrchestratorStack(options: {
   instanceId?: string;
   clock?: ClockPort;
   seedControlPlane?: boolean;
+  /**
+   * Explicit test/bootstrap opt-in to seed EXAMPLE_REPOSITORY_SOURCE.
+   * Production default is false — never auto-create repository fixtures.
+   */
+  seedRepositorySources?: boolean;
   dataRoot?: string;
   completionFailpoint?: import("../../verification/service.js").VerificationCompletionFailpoint;
   programCompletionFailpoint?: import("../../programs/service.js").ProgramCompletionFailpoint;
@@ -486,6 +503,11 @@ export async function createPostgresOrchestratorStack(options: {
   };
   /** @internal TEST ONLY — assurance certification failpoint seam. */
   assuranceCertificationFailpoint?: {
+    name: string;
+    trigger: () => void;
+  };
+  /** @internal TEST ONLY — qualification finalization failpoint seam. */
+  qualificationFailpoint?: {
     name: string;
     trigger: () => void;
   };
@@ -612,7 +634,9 @@ export async function createPostgresOrchestratorStack(options: {
   });
 
   const sources = new PostgresRepositorySourceRegistry(db);
-  await sources.seed([EXAMPLE_REPOSITORY_SOURCE]);
+  if (options.seedRepositorySources === true) {
+    await sources.seed([EXAMPLE_REPOSITORY_SOURCE]);
+  }
   const remote = new FakeRemoteRepository({
     identity: {
       provider: "GITHUB",
@@ -1687,6 +1711,34 @@ export async function createPostgresOrchestratorStack(options: {
       : {}),
   });
 
+  const qualificationRuns = new PostgresProductionQualificationRunRepository(db);
+  const qualificationEvidence = new PostgresQualificationEvidenceRepository(db);
+  const releaseQualificationRecords =
+    new PostgresReleaseQualificationRecordRepository(db);
+  const releaseManifests = new PostgresReleaseManifestRepository(db);
+  const qualificationAudits = new PostgresQualificationAuditRepository(db);
+  const { qualificationService, referenceRuntimeManifest } =
+    createReferenceRuntimeQualification({
+      nowIso: () => clock.nowIso(),
+      assuranceService,
+      runs: qualificationRuns,
+      evidence: qualificationEvidence,
+      records: releaseQualificationRecords,
+      manifests: releaseManifests,
+      audits: qualificationAudits,
+      runFinalization: (fn, lockKey) =>
+        db.withTransaction(async () => {
+          await db.query(
+            `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+            [`qualification-run:${lockKey}`],
+          );
+          return fn();
+        }),
+      ...(options.qualificationFailpoint !== undefined
+        ? { qualificationFailpoint: options.qualificationFailpoint }
+        : {}),
+    });
+
   const schedulerPorts = createPhaseDispatchPorts({
     runs,
     artifacts: schedulerArtifacts,
@@ -1821,6 +1873,8 @@ export async function createPostgresOrchestratorStack(options: {
     federationService,
     federationAgreements,
     assuranceService,
+    qualificationService,
+    referenceRuntimeManifest,
     canonicalAuthority: governanceCanonicalAuthority,
     listDiscoverableRunIds: (limit: number, projectIds?: readonly string[]) =>
       runs.listActionableDiscoverableRunIds(

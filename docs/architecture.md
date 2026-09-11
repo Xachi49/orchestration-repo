@@ -1772,3 +1772,32 @@ Assessment QUALIFIED does not auto-issue a certificate; independent
 ASSURANCE_CERTIFIER authority is required. Fault injection is denied in
 PRODUCTION.
 
+## Phase 24 — Production synthesis
+
+See [docs/phase-24-production-synthesis.md](phase-24-production-synthesis.md),
+[docs/production-reference-runtime.md](production-reference-runtime.md), and
+[docs/production-qualification-runbook.md](production-qualification-runbook.md).
+
+Phase 24 assembles one coherent production reference runtime and issues an
+immutable release qualification record. It does **not** deploy.
+
+```text
+BUILD → RELEASE CANDIDATE → PHASE23 CERTIFICATE (final target)
+      → READINESS → QUALIFICATION RECORD → RELEASE MANIFEST
+QUALIFIED ─X→ DEPLOYED
+```
+
+Final end state:
+
+```text
+CONTROL PLANE → INGESTION → PLANNING → VALIDATION → HUMAN AUTHORIZATION
+→ BOUNDED EXECUTION → INDEPENDENT VERIFICATION → GOVERNED MEMORY
+→ OBSERVABILITY → DURABILITY → PRODUCTION RUNTIME → SCHEDULING
+→ PROGRAMS → PORTFOLIOS → SCENARIO INTELLIGENCE → EXPERIMENTATION
+→ CAUSAL INTELLIGENCE → DECISION POLICIES → INSTITUTIONAL GOVERNANCE
+→ CONSTITUTIONAL GOVERNANCE → FEDERATION → INDEPENDENT ASSURANCE
+→ PRODUCTION QUALIFICATION
+```
+
+There is no Phase 25 in the core architecture.
+

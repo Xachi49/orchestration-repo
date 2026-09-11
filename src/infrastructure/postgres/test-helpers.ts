@@ -80,6 +80,8 @@ export async function createTestStack(
     db,
     instanceId,
     seedControlPlane: true,
+    // Explicit test fixture path — not production default.
+    seedRepositorySources: true,
     testOnlyCausalEvidenceSeeds,
     testOnlyDecisionStateSources,
     ...(opts?.completionFailpoint !== undefined
@@ -302,6 +304,7 @@ export async function createTestStackOnUrl(
     db,
     instanceId,
     seedControlPlane: true,
+    seedRepositorySources: true,
     testOnlyCausalEvidenceSeeds,
     testOnlyDecisionStateSources,
   });

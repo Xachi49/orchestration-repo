@@ -41,6 +41,12 @@ export class InMemoryRunRepository implements RunRepository {
     return parsed;
   }
 
+  async listRecent(limit: number): Promise<readonly RunRecord[]> {
+    return [...this.runs.values()]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, Math.max(0, limit));
+  }
+
   async listByProject(projectId: string): Promise<readonly RunRecord[]> {
     return [...this.runs.values()].filter(
       (record) => record.projectId === projectId,

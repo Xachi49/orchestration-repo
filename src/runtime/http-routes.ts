@@ -57,8 +57,9 @@ export function extractWorkItemIdFromUrl(url: string): string | undefined {
 }
 
 export function extractApprovalRequestIdFromUrl(url: string): string | undefined {
-  const match = /\/v1\/approval-requests\/([^/]+)(?:\/|$)/.exec(
-    url.split("?")[0] ?? url,
-  );
+  const path = url.split("?")[0] ?? url;
+  const match =
+    /\/v1\/approval-requests\/([^/]+)(?:\/|$)/.exec(path) ??
+    /\/v1\/approvals\/([^/]+)(?:\/|$)/.exec(path);
   return match?.[1];
 }

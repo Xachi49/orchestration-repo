@@ -1,0 +1,269 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f1419;
+  --panel: #171d25;
+  --panel-2: #1e2630;
+  --border: #2a3441;
+  --text: #e7ecf3;
+  --muted: #9aa7b8;
+  --accent: #5b9fd4;
+  --success: #3d9a6a;
+  --warn: #c9a227;
+  --danger: #c45757;
+  --await: #7a6cc7;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.92em;
+}
+
+.dev-banner {
+  background: #3a2f12;
+  border-bottom: 1px solid var(--warn);
+  color: #f0e2a8;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  padding: 6px 16px;
+}
+
+.dev-banner-danger {
+  background: #3a1818;
+  border-bottom-color: var(--danger);
+  color: #f0c4c4;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.nav {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 1.25rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.nav h1 {
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0 0 1rem;
+  color: var(--muted);
+}
+
+.nav a {
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+}
+
+.nav a.active {
+  background: var(--panel-2);
+  color: var(--accent);
+}
+
+.main {
+  padding: 1.25rem 1.5rem 2rem;
+}
+
+.header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.25rem;
+  gap: 1rem;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+}
+
+.card .label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.card .value {
+  font-size: 1.6rem;
+  margin-top: 0.25rem;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.92rem;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.badge.SUCCESS,
+.badge.PASS {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.badge.FAILED,
+.badge.BLOCKED {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.badge.AWAITING_ACTION,
+.badge.IN_PROGRESS {
+  color: var(--await);
+  border-color: var(--await);
+}
+
+.badge.NOT_STARTED {
+  color: var(--muted);
+}
+
+.timeline {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 160px 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  cursor: pointer;
+}
+
+.timeline-item:hover {
+  border-color: var(--accent);
+}
+
+form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.75rem;
+}
+
+label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+}
+
+button {
+  cursor: pointer;
+  background: var(--accent);
+  color: #0b1220;
+  border: none;
+  font-weight: 600;
+}
+
+button.secondary {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+button.danger {
+  background: var(--danger);
+  color: white;
+}
+
+.error-box {
+  border: 1px solid var(--danger);
+  background: #2a1515;
+  color: #f0c7c7;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.doctrine {
+  font-size: 0.8rem;
+  color: var(--warn);
+  margin-top: 0.5rem;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 1.5rem 0;
+}

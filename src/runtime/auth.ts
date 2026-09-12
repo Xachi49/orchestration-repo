@@ -35,7 +35,18 @@ export class StaticRequestAuthenticator implements RequestAuthenticator {
   }
 }
 
+/**
+ * DEVELOPMENT / TEST identity adapter only.
+ *
+ * CLIENT-PROVIDED PRINCIPAL != AUTHENTICATED PRINCIPAL.
+ * Trusts the raw `x-orchestrator-principal` header as identity — any browser
+ * may choose any string. Forbidden in PRODUCTION by runtime config invariants.
+ * Does not verify credentials, sessions, mTLS, or tokens.
+ */
 export class HeaderRequestAuthenticator implements RequestAuthenticator {
+  /** Explicit marker for Control Tower / ops surfaces. */
+  static readonly developmentIdentityAdapter = true as const;
+
   authenticate(
     headers: Readonly<Record<string, string | string[] | undefined>>,
   ): AuthenticatedPrincipal {

@@ -64,6 +64,11 @@ export const RuntimeConfigSchema = z
     mutationRateWindowMs: positiveInt,
     outboxMaxAttempts: z.number().int().min(1).max(100),
     modelProviderEnabled: z.boolean(),
+    /**
+     * Explicit DEVELOPMENT/TEST Control Tower unrestricted reads.
+     * Never inferred from empty bindings or ANONYMOUS alone. Default false.
+     */
+    controlTowerDevAllowAll: z.boolean(),
     build: z.object({
       applicationVersion: z.string().min(1),
       nodeVersion: z.string().min(1),
@@ -172,6 +177,9 @@ export function loadRuntimeConfig(
   const debugMode =
     env(envMap, "ORCHESTRATOR_DEBUG") === "1" ||
     env(envMap, "ORCHESTRATOR_DEBUG") === "true";
+  const controlTowerDevAllowAll =
+    env(envMap, "ORCHESTRATOR_CONTROL_TOWER_DEV_ALLOW_ALL") === "1" ||
+    env(envMap, "ORCHESTRATOR_CONTROL_TOWER_DEV_ALLOW_ALL") === "true";
   const deliverySecret = env(envMap, "APPROVAL_DELIVERY_SECRET_KEY");
   const staticPrincipalId = env(envMap, "ORCHESTRATOR_STATIC_PRINCIPAL_ID");
   const workerConcurrency = parseIntEnv(
@@ -232,6 +240,7 @@ export function loadRuntimeConfig(
     ),
     outboxMaxAttempts: parseIntEnv(envMap, "ORCHESTRATOR_OUTBOX_MAX_ATTEMPTS", 8),
     modelProviderEnabled: env(envMap, "ORCHESTRATOR_MODEL_PROVIDER") === "openai",
+    controlTowerDevAllowAll,
     build: loadBuildIdentity({
       runtimeEnvironment,
       applicationVersion: pkg.version,
@@ -250,6 +259,18 @@ export function loadRuntimeConfig(
 }
 
 export function assertProductionInvariants(config: RuntimeConfig): void {
+  if (config.controlTowerDevAllowAll) {
+    if (
+      config.runtimeEnvironment !== "DEVELOPMENT" &&
+      config.runtimeEnvironment !== "TEST"
+    ) {
+      throw new RuntimeError(
+        "CONTROL_TOWER_DEV_ALLOW_ALL_FORBIDDEN",
+        "ORCHESTRATOR_CONTROL_TOWER_DEV_ALLOW_ALL is only valid in DEVELOPMENT or TEST",
+      );
+    }
+  }
+
   if (config.runtimeEnvironment !== "PRODUCTION") {
     if (config.storageMode === "postgres" && !config.databaseUrl) {
       throw new RuntimeError(
@@ -269,6 +290,13 @@ export function assertProductionInvariants(config: RuntimeConfig): void {
     return;
   }
 
+  if (config.controlTowerDevAllowAll) {
+    throw new RuntimeError(
+      "PRODUCTION_CONTROL_TOWER_DEV_ALLOW_ALL_FORBIDDEN",
+      "PRODUCTION cannot enable Control Tower unrestricted read mode",
+    );
+  }
+
   if (config.storageMode === "memory") {
     throw new RuntimeError(
       "PRODUCTION_MEMORY_STORAGE_FORBIDDEN",
@@ -285,6 +313,12 @@ export function assertProductionInvariants(config: RuntimeConfig): void {
     throw new RuntimeError(
       "PRODUCTION_ANONYMOUS_AUTH_FORBIDDEN",
       "PRODUCTION cannot use anonymous authentication",
+    );
+  }
+  if (config.authenticationMode === "HEADER_PRINCIPAL") {
+    throw new RuntimeError(
+      "PRODUCTION_HEADER_PRINCIPAL_FORBIDDEN",
+      "PRODUCTION cannot trust client-supplied x-orchestrator-principal (DEVELOPMENT AUTH ONLY)",
     );
   }
   if (

@@ -208,6 +208,20 @@ export class PostgresRunRepository implements RunRepository {
     return updated;
   }
 
+  async listRecent(limit: number): Promise<readonly RunRecord[]> {
+    if (limit <= 0) return [];
+    const result = await this.db.query<{
+      payload: unknown;
+      record_revision: string | number;
+    }>(
+      `SELECT payload, record_revision FROM runs
+       ORDER BY updated_at DESC, run_id DESC
+       LIMIT $1`,
+      [limit],
+    );
+    return result.rows.map((row) => mapRunRow(row));
+  }
+
   async listByStates(
     states: readonly RunState[],
     limit: number,

@@ -36,9 +36,11 @@ import { registerGovernanceRoutes } from "./governance.js";
 import { registerConstitutionalRoutes } from "./constitutional.js";
 import { registerFederationRoutes } from "./federation.js";
 import { registerAssuranceRoutes } from "./assurance.js";
+import { registerControlTowerRoutes } from "./control-tower.js";
 import type { ConstitutionalChangeOrchestrationService } from "../constitutional/service.js";
 import type { FederationOrchestrationService } from "../federation/service.js";
 import type { AssuranceOrchestrationService } from "../assurance/service.js";
+import type { ControlTowerService } from "../control-tower/service.js";
 import type { ProgramOrchestrationService } from "../programs/service.js";
 import type { ProgramRepository, ProgramPlanRepository } from "../programs/repositories.js";
 import type { PortfolioOrchestrationService } from "../portfolio/service.js";
@@ -116,6 +118,8 @@ export interface ApiDeps {
   constitutionalService?: ConstitutionalChangeOrchestrationService;
   federationService?: FederationOrchestrationService;
   assuranceService?: AssuranceOrchestrationService;
+  controlTower?: ControlTowerService;
+  controlTowerOptions?: import("./control-tower.js").ControlTowerRouteOptions;
   storageMode?: StorageMode;
   runs?: RunRepository;
   readiness?: {
@@ -397,6 +401,14 @@ export async function buildServer(deps: ApiDeps = {}) {
     registerAssuranceRoutes(app, {
       assuranceService: deps.assuranceService,
     });
+  }
+
+  if (deps.controlTower) {
+    registerControlTowerRoutes(
+      app,
+      deps.controlTower,
+      deps.controlTowerOptions ?? {},
+    );
   }
 
   return app;

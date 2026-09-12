@@ -20,6 +20,7 @@ Roles do not change domain authority.
 | `ORCHESTRATOR_AUTH_MODE` | `ANONYMOUS` `HEADER_PRINCIPAL` `STATIC_PRINCIPAL` |
 | `ORCHESTRATOR_STATIC_PRINCIPAL_ID` | for STATIC_PRINCIPAL |
 | `ORCHESTRATOR_ACCESS_BINDINGS` | `principal:project[,project];...` HTTP access only |
+| `ORCHESTRATOR_CONTROL_TOWER_DEV_ALLOW_ALL` | Explicit DEVELOPMENT/TEST Control Tower unrestricted reads; default `false`; forbidden in PRODUCTION/STAGING |
 | `APPROVAL_DELIVERY_SECRET_KEY` | 32-byte base64; never log |
 | `ORCHESTRATOR_INSTANCE_ID` | unique per process; default random UUID |
 | `ORCHESTRATOR_WORKER_CONCURRENCY` | 1–64 |

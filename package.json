@@ -18,7 +18,11 @@
     "start": "node --import tsx src/runtime/main.ts",
     "audit:deps": "npm audit --omit=dev --audit-level=high",
     "qualify:preflight": "node --import tsx scripts/qualify-preflight.mjs",
-    "reference-runtime:manifest": "node --import tsx scripts/reference-runtime-manifest.mjs"
+    "reference-runtime:manifest": "node --import tsx scripts/reference-runtime-manifest.mjs",
+    "control-tower:dev": "npm run --prefix apps/control-tower dev",
+    "control-tower:build": "npm run --prefix apps/control-tower build",
+    "control-tower:typecheck": "npm run --prefix apps/control-tower typecheck",
+    "control-tower:test": "npm run --prefix apps/control-tower test"
   },
   "dependencies": {
     "fastify": "^5.12.1",

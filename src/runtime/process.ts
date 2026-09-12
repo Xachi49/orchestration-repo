@@ -13,8 +13,14 @@ import { redactUnknown } from "./logging.js";
 import { bootstrapOrchestratorStack } from "../infrastructure/bootstrap.js";
 import type { BootstrapResult } from "../infrastructure/bootstrap.js";
 import { buildServer } from "../api/server.js";
+import {
+  controlTowerFromStack,
+  controlTowerRouteOptionsFromRuntime,
+} from "../api/control-tower-factory.js";
+import { FakeApprovalDeliveryService } from "../authorization/delivery.js";
 import { PostgresHealthService } from "../infrastructure/postgres/health.js";
 import type { PostgresOrchestratorStack } from "../infrastructure/postgres/stack.js";
+import type { LocalObservabilityStack } from "../infrastructure/observability/local-stack.js";
 import {
   SchedulerClaimLoop,
   SchedulerDiscoveryLoop,
@@ -116,6 +122,11 @@ export function createOrchestratorRuntime(
             ? (boot.stack as PostgresOrchestratorStack)
             : undefined;
 
+        const controlTowerStack = postgres ?? (boot.stack as LocalObservabilityStack);
+        const controlTower = controlTowerFromStack(controlTowerStack);
+        const hasFakeDelivery =
+          controlTowerStack.approvalDelivery instanceof FakeApprovalDeliveryService;
+
         if (config.runtimeRole !== "WORKER") {
           app = await buildServer({
             admission: boot.stack.admission,
@@ -132,6 +143,12 @@ export function createOrchestratorRuntime(
             verificationReadiness: boot.stack.verificationReadiness,
             memory: boot.stack.memory,
             observability: boot.stack.observability,
+            controlTower,
+            controlTowerOptions: controlTowerRouteOptionsFromRuntime({
+              config,
+              access,
+              hasFakeDelivery,
+            }),
             ...(postgres
               ? {
                   scheduler: postgres.scheduler,

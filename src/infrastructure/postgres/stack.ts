@@ -398,6 +398,7 @@ export interface PostgresOrchestratorStack {
   stepExecutions: PostgresStepExecutionRepository;
   authorizationRecords: PostgresAuthorizationRecordRepository;
   approvalRequests: PostgresApprovalRequestRepository;
+  decisionCards: PostgresDecisionCardStore;
   scheduler: PortfolioSchedulerService;
   schedulerWorkItems: PostgresSchedulerWorkItemRepository;
   schedulerDependencies: PostgresSchedulerDependencyRepository;
@@ -1812,6 +1813,7 @@ export async function createPostgresOrchestratorStack(options: {
     stepExecutions,
     authorizationRecords,
     approvalRequests,
+    decisionCards,
     scheduler,
     schedulerWorkItems,
     schedulerDependencies,

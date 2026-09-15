@@ -50,6 +50,7 @@ export function AppShell() {
         <NavLink to="/objectives">Objectives</NavLink>
         <NavLink to="/runs">Runs</NavLink>
         <NavLink to="/approvals">Approval Inbox</NavLink>
+        <NavLink to="/revenue-recovery">Revenue Recovery</NavLink>
         <NavLink to="/evidence">Evidence</NavLink>
         <NavLink to="/assurance">System Assurance</NavLink>
         <NavLink to="/qualification">Qualification</NavLink>

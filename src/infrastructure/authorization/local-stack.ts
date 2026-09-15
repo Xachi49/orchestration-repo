@@ -59,6 +59,7 @@ export function createLocalAuthorizationStack(options?: {
   budgets?: readonly ResourceBudgetProfile[];
   planningModel?: PlanningModel;
   capabilities?: readonly Capability[];
+  projects?: readonly import("../../control-plane/projects/project.js").Project[];
   validationModel?: ValidationModel;
   revisionModel?: PlanRevisionModel;
   planIdentities?: PlanIdentityGenerator;

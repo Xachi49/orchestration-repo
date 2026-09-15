@@ -51,6 +51,7 @@ export function createLocalExecutionStack(options?: {
   budgets?: readonly ResourceBudgetProfile[];
   planningModel?: PlanningModel;
   capabilities?: readonly Capability[];
+  projects?: readonly import("../../control-plane/projects/project.js").Project[];
   validationModel?: ValidationModel;
   revisionModel?: PlanRevisionModel;
   planIdentities?: PlanIdentityGenerator;
@@ -78,6 +79,7 @@ export function createLocalExecutionStack(options?: {
     ...(options?.capabilities !== undefined
       ? { capabilities: options.capabilities }
       : {}),
+    ...(options?.projects !== undefined ? { projects: options.projects } : {}),
     ...(options?.validationModel !== undefined
       ? { validationModel: options.validationModel }
       : {}),

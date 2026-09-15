@@ -9,16 +9,14 @@ import {
 } from "./test-helpers.js";
 
 describe("PostgreSQL migration compatibility", () => {
-  it("createTestDatabase migrate + assertCompatible accepts 019", async () => {
+  it("createTestDatabase migrate + assertCompatible accepts 020", async () => {
     const db = await createTestDatabase(
-      uniquePostgresTestId("schema_019_compatible"),
+      uniquePostgresTestId("schema_020_compatible"),
     );
     try {
       const runner = new PostgresMigrationRunner(db);
       const status = await runner.status();
-      expect(SUPPORTED_SCHEMA_VERSION).toBe(
-        "019_phase24_production_synthesis",
-      );
+      expect(SUPPORTED_SCHEMA_VERSION).toBe("021_product_revenue_recovery_integrity");
       expect(status.supported).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(status.current).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(status.pending).toEqual([]);
@@ -28,26 +26,27 @@ describe("PostgreSQL migration compatibility", () => {
     }
   });
 
-  it("database at 018 migrates forward to 019 then becomes compatible", async () => {
+  it("database at 019 migrates forward to 020 then becomes compatible", async () => {
     const db = new PostgresDatabase({
       connectionString: requireTestDatabaseUrl(),
       max: 4,
       connectionTimeoutMillis: 5_000,
       idleTimeoutMillis: 10_000,
-      instanceId: uniquePostgresTestId("schema_018_forward"),
+      instanceId: uniquePostgresTestId("schema_019_forward"),
     });
     try {
       const runner = new PostgresMigrationRunner(db);
       await runner.migrate();
-      await db.query(
-        `DELETE FROM schema_migrations WHERE version = $1`,
-        [SUPPORTED_SCHEMA_VERSION],
-      );
+      await db.query(`DELETE FROM schema_migrations WHERE version = $1`, [
+        SUPPORTED_SCHEMA_VERSION,
+      ]);
+      await db.query(`DELETE FROM schema_migrations WHERE version = $1`, [
+        "020_product_revenue_recovery",
+      ]);
       const before = await runner.status();
-      expect(before.current).toBe("018_phase23_independent_assurance");
-      expect(before.pending).toContain(
-        "019_phase24_production_synthesis",
-      );
+      expect(before.current).toBe("019_phase24_production_synthesis");
+      expect(before.pending).toContain("020_product_revenue_recovery");
+      expect(before.pending).toContain("021_product_revenue_recovery_integrity");
 
       await expect(runner.assertCompatible()).rejects.toMatchObject({
         code: "DATABASE_SCHEMA_OUT_OF_DATE",
@@ -57,13 +56,9 @@ describe("PostgreSQL migration compatibility", () => {
       expect(applied).toContain(SUPPORTED_SCHEMA_VERSION);
 
       const after = await runner.status();
-      expect(SUPPORTED_SCHEMA_VERSION).toBe(
-        "019_phase24_production_synthesis",
-      );
+      expect(SUPPORTED_SCHEMA_VERSION).toBe("021_product_revenue_recovery_integrity");
       expect(after.current).toBe(SUPPORTED_SCHEMA_VERSION);
-      expect(after.pending).not.toContain(
-        "019_phase24_production_synthesis",
-      );
+      expect(after.pending).not.toContain("021_product_revenue_recovery_integrity");
       expect(after.pending).toEqual([]);
       await runner.assertCompatible();
     } finally {
@@ -79,7 +74,7 @@ describe("PostgreSQL migration compatibility", () => {
       idleTimeoutMillis: 10_000,
       instanceId: uniquePostgresTestId("schema_future_reject"),
     });
-    const futureVersion = "020_phase25_unknown_future";
+    const futureVersion = "022_unknown_future_schema";
     try {
       const runner = new PostgresMigrationRunner(db);
       await runner.migrate();
@@ -106,7 +101,7 @@ describe("PostgreSQL migration compatibility", () => {
     try {
       const health = await new PostgresHealthService(db, "postgres").readiness();
       expect(health.supportedSchemaVersion).toBe(
-        "019_phase24_production_synthesis",
+        "021_product_revenue_recovery_integrity",
       );
       expect(health.supportedSchemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(health.schemaCompatible).toBe(true);

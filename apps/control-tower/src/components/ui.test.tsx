@@ -107,3 +107,36 @@ describe("Control Tower client security", () => {
     globalThis.fetch = originalFetch;
   });
 });
+
+describe("Revenue Recovery Control Tower economics", () => {
+  it("keeps estimated booked and collected revenue visually distinct", () => {
+    render(
+      <table>
+        <tbody>
+          <tr>
+            <th>Estimated</th>
+            <td data-testid="estimated-revenue">4800 USD</td>
+          </tr>
+          <tr>
+            <th>Booked</th>
+            <td data-testid="booked-revenue">4200 USD</td>
+          </tr>
+          <tr>
+            <th>Collected</th>
+            <td data-testid="collected-revenue">2100 USD</td>
+          </tr>
+        </tbody>
+      </table>,
+    );
+    expect(screen.getByTestId("estimated-revenue").textContent).toContain(
+      "4800",
+    );
+    expect(screen.getByTestId("booked-revenue").textContent).toContain("4200");
+    expect(screen.getByTestId("collected-revenue").textContent).toContain(
+      "2100",
+    );
+    expect(screen.getByTestId("estimated-revenue").textContent).not.toBe(
+      screen.getByTestId("collected-revenue").textContent,
+    );
+  });
+});

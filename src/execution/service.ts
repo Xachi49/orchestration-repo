@@ -48,10 +48,13 @@ import { TestProfileRegistry } from "./test-profiles.js";
 import { artifactRootFor } from "./paths.js";
 import type { Capability } from "../control-plane/capabilities/capability.js";
 import {
+  CreateCallbackTaskArgsSchema,
   CreateLocalPatchArgsSchema,
   CreateTaskArgsSchema,
   PreparePullRequestArgsSchema,
   RunTestsArgsSchema,
+  SendRecoveryEmailArgsSchema,
+  SendRecoverySmsArgsSchema,
 } from "./action-schemas.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -1410,6 +1413,67 @@ export class ExecutionService {
           runId: input.runId,
         };
       }
+      case "SEND_RECOVERY_SMS": {
+        const args = SendRecoverySmsArgsSchema.parse(step.normalizedArguments);
+        const result = await this.deps.actuator.sendRecoverySms({
+          runId: input.runId,
+          executionAttemptId: input.executionAttemptId,
+          stepId: step.stepId,
+          stepIdempotencyKey: step.idempotencyKey,
+          artifactRoot: input.artifactRoot,
+          args,
+          nowIso,
+          runtime,
+        });
+        return this.finalizeRecoveryOutreachStep({
+          step,
+          input,
+          nowIso,
+          result,
+        });
+      }
+      case "SEND_RECOVERY_EMAIL": {
+        const args = SendRecoveryEmailArgsSchema.parse(
+          step.normalizedArguments,
+        );
+        const result = await this.deps.actuator.sendRecoveryEmail({
+          runId: input.runId,
+          executionAttemptId: input.executionAttemptId,
+          stepId: step.stepId,
+          stepIdempotencyKey: step.idempotencyKey,
+          artifactRoot: input.artifactRoot,
+          args,
+          nowIso,
+          runtime,
+        });
+        return this.finalizeRecoveryOutreachStep({
+          step,
+          input,
+          nowIso,
+          result,
+        });
+      }
+      case "CREATE_CALLBACK_TASK": {
+        const args = CreateCallbackTaskArgsSchema.parse(
+          step.normalizedArguments,
+        );
+        const result = await this.deps.actuator.createRecoveryCallbackTask({
+          runId: input.runId,
+          executionAttemptId: input.executionAttemptId,
+          stepId: step.stepId,
+          stepIdempotencyKey: step.idempotencyKey,
+          artifactRoot: input.artifactRoot,
+          args,
+          nowIso,
+          runtime,
+        });
+        return this.finalizeRecoveryOutreachStep({
+          step,
+          input,
+          nowIso,
+          result,
+        });
+      }
       default: {
         throw new ExecutionError(
           "EXECUTION_UNSUPPORTED_ACTION",
@@ -1417,6 +1481,63 @@ export class ExecutionService {
         );
       }
     }
+  }
+
+  private async finalizeRecoveryOutreachStep(params: {
+    step: CompiledExecutionStep;
+    input: {
+      runId: string;
+      executionAttemptId: string;
+      artifactRoot: string;
+    };
+    nowIso: string;
+    result: import("./actuator.js").RecoveryOutreachActuatorResult;
+  }): Promise<StepExecutionResult> {
+    const { step, input, nowIso, result } = params;
+    const artifactId = this.identities.nextArtifactId();
+    await this.deps.artifacts.save({
+      artifactId,
+      runId: input.runId,
+      executionAttemptId: input.executionAttemptId,
+      stepId: step.stepId,
+      artifactType: "RECOVERY_ATTEMPT",
+      relativePath: result.artifactRelativePath,
+      contentHash: result.contentHash,
+      size: result.size,
+      createdAt: nowIso,
+    });
+    await this.persistArtifactBytes({
+      artifactId,
+      runId: input.runId,
+      executionAttemptId: input.executionAttemptId,
+      stepId: step.stepId,
+      artifactType: "RECOVERY_ATTEMPT",
+      relativePath: result.artifactRelativePath,
+      artifactRoot: input.artifactRoot,
+      createdAt: nowIso,
+    });
+    return {
+      stepId: step.stepId,
+      idempotencyKey: step.idempotencyKey,
+      capabilityId: step.capabilityId,
+      actionType: step.actionType,
+      status: "SUCCEEDED",
+      startedAt: nowIso,
+      completedAt: this.deps.clock.nowIso(),
+      outputArtifactRefs: [artifactId],
+      outputHashes: [result.contentHash],
+      affectedTargets: [result.attemptId],
+      verificationMetadata: {
+        channel: result.channel,
+        deliveryOutcome: result.deliveryOutcome,
+        replayed: result.replayed,
+        ...(result.providerMessageId
+          ? { providerMessageId: result.providerMessageId }
+          : {}),
+      },
+      executionAttemptId: input.executionAttemptId,
+      runId: input.runId,
+    };
   }
 
   private async persistArtifactBytes(input: {

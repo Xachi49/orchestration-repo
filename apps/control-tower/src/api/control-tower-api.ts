@@ -155,4 +155,64 @@ export const controlTowerApi = {
   assurance: () => apiFetch<Record<string, unknown>>("/v1/system/assurance"),
   qualification: () =>
     apiFetch<Record<string, unknown>>("/v1/system/qualification"),
+  revenueRecoveryDashboard: (customerAccountId: string, projectId: string) =>
+    apiFetch<{
+      doctrine: Record<string, string>;
+      funnel: {
+        openRecoveryCases: number;
+        casesAwaitingApproval: number;
+        engagedLeads: number;
+        appointmentsRecovered: number;
+        confirmedRecoveredRevenue: number;
+        bookedRecoveredRevenue: number;
+        operatorAttestedRevenue: number;
+        estimatedPipelineRecovered: number;
+      };
+      cases: Array<{
+        recoveryCaseId: string;
+        leadId: string;
+        status: string;
+        estimatedRecoverableValue: number | null;
+        currency: string | null;
+        gapDetectedAt: string;
+        orchestratorRunId: string | null;
+      }>;
+    }>(
+      `/v1/revenue-recovery/dashboard?customerAccountId=${encodeURIComponent(customerAccountId)}&projectId=${encodeURIComponent(projectId)}`,
+    ),
+  revenueRecoveryCase: (
+    recoveryCaseId: string,
+    customerAccountId: string,
+    projectId: string,
+  ) =>
+    apiFetch<{
+      doctrine: Record<string, string>;
+      recoveryCase: {
+        recoveryCaseId: string;
+        status: string;
+        orchestratorRunId?: string;
+      };
+      lead: {
+        leadId: string;
+        serviceRequested?: string;
+        phoneMasked?: string;
+        emailMasked?: string;
+      };
+      contactPolicy: { eligible: boolean };
+      attempts: Array<{
+        attemptId: string;
+        channel: string;
+        sentAt: string;
+        deliveryOutcome: string;
+      }>;
+      economics: {
+        estimatedRecoverableValue: number | null;
+        bookedRecoveredRevenue: number | null;
+        confirmedCollectedRevenue: number | null;
+        operatorAttestedRevenue: number | null;
+        currency: string;
+      };
+    }>(
+      `/v1/revenue-recovery/cases/${encodeURIComponent(recoveryCaseId)}?customerAccountId=${encodeURIComponent(customerAccountId)}&projectId=${encodeURIComponent(projectId)}`,
+    ),
 };

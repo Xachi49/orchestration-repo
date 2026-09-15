@@ -180,6 +180,7 @@ export function createOrchestratorRuntime(
                   constitutionalService: postgres.constitutionalService,
                   federationService: postgres.federationService,
                   assuranceService: postgres.assuranceService,
+                  revenueRecovery: postgres.revenueRecoveryService,
                 }
               : {}),
             storageMode: boot.storageMode,

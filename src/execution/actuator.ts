@@ -1,8 +1,11 @@
 import type {
   CreateLocalPatchArgs,
   CreateTaskArgs,
+  CreateCallbackTaskArgs,
   PreparePullRequestArgs,
   RunTestsArgs,
+  SendRecoveryEmailArgs,
+  SendRecoverySmsArgs,
 } from "./action-schemas.js";
 import type { StepExecutionResult } from "../domain/execution/index.js";
 
@@ -42,6 +45,17 @@ export interface PullRequestPreparationResult {
   baseBranch: string;
   proposedHeadBranchName: string;
   githubWritePerformed: false;
+}
+
+export interface RecoveryOutreachActuatorResult {
+  artifactRelativePath: string;
+  contentHash: string;
+  size: number;
+  attemptId: string;
+  channel: "SMS" | "EMAIL" | "CALL_TASK";
+  deliveryOutcome: "SENT" | "FAILED" | "SIMULATED";
+  providerMessageId?: string;
+  replayed: boolean;
 }
 
 export interface ActuatorRuntimeBounds {
@@ -96,6 +110,39 @@ export interface SafeActuator {
     nowIso: string;
     runtime: ActuatorRuntimeBounds;
   }): Promise<PullRequestPreparationResult>;
+
+  sendRecoverySms(input: {
+    runId: string;
+    executionAttemptId: string;
+    stepId: string;
+    stepIdempotencyKey: string;
+    artifactRoot: string;
+    args: SendRecoverySmsArgs;
+    nowIso: string;
+    runtime: ActuatorRuntimeBounds;
+  }): Promise<RecoveryOutreachActuatorResult>;
+
+  sendRecoveryEmail(input: {
+    runId: string;
+    executionAttemptId: string;
+    stepId: string;
+    stepIdempotencyKey: string;
+    artifactRoot: string;
+    args: SendRecoveryEmailArgs;
+    nowIso: string;
+    runtime: ActuatorRuntimeBounds;
+  }): Promise<RecoveryOutreachActuatorResult>;
+
+  createRecoveryCallbackTask(input: {
+    runId: string;
+    executionAttemptId: string;
+    stepId: string;
+    stepIdempotencyKey: string;
+    artifactRoot: string;
+    args: CreateCallbackTaskArgs;
+    nowIso: string;
+    runtime: ActuatorRuntimeBounds;
+  }): Promise<RecoveryOutreachActuatorResult>;
 
   /**
    * Optional actuator-specific reconciliation after crash while RUNNING.

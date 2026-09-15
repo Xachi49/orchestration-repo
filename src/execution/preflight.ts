@@ -169,7 +169,10 @@ export class ExecutionPreflightService {
         if (
           step.actionType === "RUN_TESTS" ||
           step.actionType === "CREATE_TASK" ||
-          step.actionType === "PREPARE_PULL_REQUEST"
+          step.actionType === "PREPARE_PULL_REQUEST" ||
+          step.actionType === "SEND_RECOVERY_SMS" ||
+          step.actionType === "SEND_RECOVERY_EMAIL" ||
+          step.actionType === "CREATE_CALLBACK_TASK"
         ) {
           continue;
         }

@@ -7,6 +7,7 @@ import {
 } from "../../control-plane/fixtures.js";
 import type { ResourceBudgetProfile } from "../../control-plane/budgets/budget.js";
 import type { Capability } from "../../control-plane/capabilities/capability.js";
+import type { Project } from "../../control-plane/projects/project.js";
 import { EXAMPLE_REQUESTER_GRANTS } from "../../admission/fixtures.js";
 import type { RequesterGrant } from "../../admission/authorization.js";
 import { ObjectiveAdmissionService } from "../../admission/service.js";
@@ -42,13 +43,14 @@ export function createLocalAdmissionStack(options?: {
   clockIso?: string;
   budgets?: readonly ResourceBudgetProfile[];
   capabilities?: readonly Capability[];
+  projects?: readonly Project[];
 }): LocalAdmissionStack {
   const clock = new FixedClock(options?.clockIso ?? "2026-08-14T12:00:00.000Z");
   const capabilities = new InMemoryCapabilityRegistry(
     options?.capabilities ?? EXAMPLE_CAPABILITIES,
   );
   const controlPlane = new ControlPlaneService({
-    projects: new InMemoryProjectRegistry([EXAMPLE_PROJECT]),
+    projects: new InMemoryProjectRegistry(options?.projects ?? [EXAMPLE_PROJECT]),
     capabilities,
     policies: new InMemoryPolicyRegistry([EXAMPLE_POLICY_BUNDLE], { clock }),
     budgets: new InMemoryResourceBudgetRegistry(

@@ -25,6 +25,7 @@ import { FakeRepositoryWorkspace } from "./fake-workspace.js";
 import type { RequesterGrant } from "../../admission/authorization.js";
 import type { ResourceBudgetProfile } from "../../control-plane/budgets/budget.js";
 import type { Capability } from "../../control-plane/capabilities/capability.js";
+import type { Project } from "../../control-plane/projects/project.js";
 import type { InMemoryRunRepository } from "../admission/in-memory-run-repository.js";
 import type { InMemoryObjectiveRepository } from "../admission/in-memory-objective-repository.js";
 import type { FixedClock } from "../clock.js";
@@ -53,6 +54,7 @@ export function createLocalIngestionStack(options?: {
   clockIso?: string;
   budgets?: readonly ResourceBudgetProfile[];
   capabilities?: readonly Capability[];
+  projects?: readonly Project[];
   remote?: RemoteRepositoryService;
   workspace?: RepositoryWorkspaceService;
   indexer?: ProjectIndexer;
@@ -62,6 +64,7 @@ export function createLocalIngestionStack(options?: {
     clockIso?: string;
     budgets?: readonly ResourceBudgetProfile[];
     capabilities?: readonly Capability[];
+    projects?: readonly Project[];
   } = {};
   if (options?.grants) {
     admissionOptions.grants = options.grants;
@@ -74,6 +77,9 @@ export function createLocalIngestionStack(options?: {
   }
   if (options?.capabilities) {
     admissionOptions.capabilities = options.capabilities;
+  }
+  if (options?.projects) {
+    admissionOptions.projects = options.projects;
   }
   const admissionStack = createLocalAdmissionStack(admissionOptions);
   const remote =

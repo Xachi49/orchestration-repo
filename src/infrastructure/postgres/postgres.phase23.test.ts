@@ -71,9 +71,7 @@ describe("Phase 23 postgres independent assurance", () => {
   it("O. current-schema restart — Phase23 migration present under current schema", async () => {
     const env = await createP23Env("schema");
     try {
-      expect(SUPPORTED_SCHEMA_VERSION).toBe(
-        "019_phase24_production_synthesis",
-      );
+      expect(SUPPORTED_SCHEMA_VERSION).toBe("021_product_revenue_recovery_integrity");
       const health = await new PostgresHealthService(
         env.db,
         "postgres",
@@ -90,6 +88,12 @@ describe("Phase 23 postgres independent assurance", () => {
       );
       expect(status.applied.map((r) => r.version)).toContain(
         "019_phase24_production_synthesis",
+      );
+      expect(status.applied.map((r) => r.version)).toContain(
+        "020_product_revenue_recovery",
+      );
+      expect(status.applied.map((r) => r.version)).toContain(
+        "021_product_revenue_recovery_integrity",
       );
 
       const restarted = await createP23ConcurrentStack(env.db, "schema-r");

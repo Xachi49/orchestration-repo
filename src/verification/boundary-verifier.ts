@@ -109,6 +109,10 @@ export class ExecutionBoundaryVerifier {
             return "TASK";
           case "PREPARE_PULL_REQUEST":
             return "PR_PREPARATION";
+          case "SEND_RECOVERY_SMS":
+          case "SEND_RECOVERY_EMAIL":
+          case "CREATE_CALLBACK_TASK":
+            return "RECOVERY_ATTEMPT";
           default:
             return "OTHER";
         }

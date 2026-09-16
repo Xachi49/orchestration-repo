@@ -30,6 +30,11 @@ import type {
   RevenueAttributionRepository,
   RevenueRecoveryRecordRepository,
 } from "./repositories.js";
+import type { RecoveryProviderEventRepository } from "./provider-events.js";
+import {
+  parseRecoveryProviderEvent,
+  type RecoveryProviderEvent,
+} from "./provider-events.js";
 
 export class InMemoryLeadRepository implements LeadRepository {
   private readonly byId = new Map<string, Lead>();
@@ -193,6 +198,7 @@ export class InMemoryRecoveryAttemptRepository
 {
   private readonly byId = new Map<string, RecoveryAttempt>();
   private readonly byExecutionActionIdentity = new Map<string, string>();
+  private readonly byProviderMessageId = new Map<string, string>();
 
   async getById(attemptId: string): Promise<RecoveryAttempt | null> {
     return this.byId.get(attemptId) ?? null;
@@ -202,6 +208,13 @@ export class InMemoryRecoveryAttemptRepository
     identity: string,
   ): Promise<RecoveryAttempt | null> {
     const id = this.byExecutionActionIdentity.get(identity);
+    return id ? (this.byId.get(id) ?? null) : null;
+  }
+
+  async getByProviderMessageId(
+    providerMessageId: string,
+  ): Promise<RecoveryAttempt | null> {
+    const id = this.byProviderMessageId.get(providerMessageId);
     return id ? (this.byId.get(id) ?? null) : null;
   }
 
@@ -218,6 +231,9 @@ export class InMemoryRecoveryAttemptRepository
       parsed.executionActionIdentity,
       parsed.attemptId,
     );
+    if (parsed.providerMessageId) {
+      this.byProviderMessageId.set(parsed.providerMessageId, parsed.attemptId);
+    }
   }
 }
 
@@ -312,6 +328,34 @@ export class InMemoryProductAuditRepository implements ProductAuditRepository {
   ): Promise<readonly ProductAuditEvent[]> {
     return this.rows.filter((e) => e.recoveryCaseId === recoveryCaseId);
   }
+
+  /** Test helper — all audits including web-ingress/Resend product observations. */
+  listAll(): readonly ProductAuditEvent[] {
+    return [...this.rows];
+  }
+}
+
+export class InMemoryRecoveryProviderEventRepository
+  implements RecoveryProviderEventRepository
+{
+  private readonly byKey = new Map<string, RecoveryProviderEvent>();
+
+  async getByProviderEventKey(input: {
+    providerName: string;
+    providerEventKey: string;
+  }): Promise<RecoveryProviderEvent | null> {
+    return (
+      this.byKey.get(`${input.providerName}|${input.providerEventKey}`) ?? null
+    );
+  }
+
+  async save(event: RecoveryProviderEvent): Promise<void> {
+    const parsed = parseRecoveryProviderEvent(event);
+    this.byKey.set(
+      `${parsed.providerName}|${parsed.providerEventKey}`,
+      parsed,
+    );
+  }
 }
 
 export function createInMemoryRevenueRecoveryRepos() {
@@ -325,5 +369,6 @@ export function createInMemoryRevenueRecoveryRepos() {
     records: new InMemoryRevenueRecoveryRecordRepository(),
     templates: new InMemoryRecoveryTemplateRepository(),
     audits: new InMemoryProductAuditRepository(),
+    providerEvents: new InMemoryRecoveryProviderEventRepository(),
   };
 }

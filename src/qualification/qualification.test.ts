@@ -592,7 +592,7 @@ describe("Phase 24 qualification", () => {
     expect(QUALIFICATION_DOCTRINE.deploymentNotInScope).toBe(
       "DEPLOYMENT != IN SCOPE",
     );
-    expect(SUPPORTED_SCHEMA_VERSION).toBe("021_product_revenue_recovery_integrity");
+    expect(SUPPORTED_SCHEMA_VERSION).toBe("022_product_revenue_recovery_live_pilot");
   });
 
   it("architecture conformance includes Phase24 rules", () => {

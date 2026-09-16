@@ -10,7 +10,7 @@ describe("schema migration catalog", () => {
     expect(latest).toBeDefined();
     expect(latest!.version).toBe(SUPPORTED_SCHEMA_VERSION);
     expect(SUPPORTED_SCHEMA_VERSION).toBe(
-      "021_product_revenue_recovery_integrity",
+      "022_product_revenue_recovery_live_pilot",
     );
   });
 
@@ -26,7 +26,7 @@ describe("schema migration catalog", () => {
       "018_phase23_independent_assurance",
       "019_phase24_production_synthesis",
       "020_product_revenue_recovery",
-      "021_product_revenue_recovery_integrity",
+      "022_product_revenue_recovery_live_pilot",
     ];
     for (let i = 0; i < phaseTail.length; i++) {
       const expected = phaseTail[i]!;

@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { hashCanonical } from "./hash.js";
 
-export const LEAD_SOURCES = ["MANUAL", "WEBHOOK", "FAKE_TEST_SOURCE"] as const;
+export const LEAD_SOURCES = [
+  "MANUAL",
+  "WEBHOOK",
+  "FAKE_TEST_SOURCE",
+  "WEB_FORM",
+] as const;
 export type LeadSource = (typeof LEAD_SOURCES)[number];
 
 export const LeadConsentSchema = z

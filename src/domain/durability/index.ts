@@ -98,4 +98,4 @@ export const MAX_ARTIFACT_BYTES = 1_048_576;
 export const DEFAULT_LEASE_TTL_SECONDS = 60;
 export const MAX_TRANSACTION_RETRIES = 3;
 export const SUPPORTED_SCHEMA_VERSION =
-  "021_product_revenue_recovery_integrity";
+  "022_product_revenue_recovery_live_pilot";

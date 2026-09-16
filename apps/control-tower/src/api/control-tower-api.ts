@@ -168,6 +168,12 @@ export const controlTowerApi = {
         operatorAttestedRevenue: number;
         estimatedPipelineRecovered: number;
       };
+      pilot?: {
+        mode: string;
+        webIngestConfigured: boolean;
+        resendConfigured: boolean;
+        livePilotTenantBound: boolean;
+      };
       cases: Array<{
         recoveryCaseId: string;
         leadId: string;
@@ -199,11 +205,25 @@ export const controlTowerApi = {
         emailMasked?: string;
       };
       contactPolicy: { eligible: boolean };
+      provider?: {
+        mode: string;
+        health: {
+          mode: string;
+          webIngestConfigured: boolean;
+          resendConfigured: boolean;
+          livePilotTenantBound: boolean;
+        };
+      };
       attempts: Array<{
         attemptId: string;
         channel: string;
         sentAt: string;
         deliveryOutcome: string;
+        providerName?: string | null;
+        providerMessageId?: string | null;
+        deliveryState?: string | null;
+        lastProviderEventKind?: string | null;
+        lastProviderEventAt?: string | null;
       }>;
       economics: {
         estimatedRecoverableValue: number | null;

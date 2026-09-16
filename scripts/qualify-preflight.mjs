@@ -35,6 +35,13 @@ const migration021 = join(
 if (!existsSync(migration021)) {
   fail("migration 021_product_revenue_recovery_integrity.sql missing");
 }
+const migration022 = join(
+  root,
+  "migrations/022_product_revenue_recovery_live_pilot.sql",
+);
+if (!existsSync(migration022)) {
+  fail("migration 022_product_revenue_recovery_live_pilot.sql missing");
+}
 
 const lock = join(root, "package-lock.json");
 if (!existsSync(lock)) {
@@ -45,8 +52,8 @@ const durability = readFileSync(
   join(root, "src/domain/durability/index.ts"),
   "utf8",
 );
-if (!durability.includes("021_product_revenue_recovery_integrity")) {
-  fail("SUPPORTED_SCHEMA_VERSION is not 021_product_revenue_recovery_integrity");
+if (!durability.includes("022_product_revenue_recovery_live_pilot")) {
+  fail("SUPPORTED_SCHEMA_VERSION is not 022_product_revenue_recovery_live_pilot");
 }
 
 const manifest = mintProductionReferenceRuntimeManifest("PRODUCTION");
@@ -71,7 +78,7 @@ console.log(
       qualifiedForRelease: false,
       deploymentAuthorized: false,
       note: "PRECHECK_PASS != QUALIFIED_FOR_RELEASE",
-      supportedSchemaVersion: "021_product_revenue_recovery_integrity",
+      supportedSchemaVersion: "022_product_revenue_recovery_live_pilot",
       referenceRuntimeManifestHash: manifest.manifestHash,
       doctrineHash,
       message:

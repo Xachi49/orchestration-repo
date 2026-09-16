@@ -6,6 +6,7 @@ export const ExecutionArtifactTypeSchema = z.enum([
   "TASK",
   "PR_PREPARATION",
   "ROLLBACK",
+  "RECOVERY_ATTEMPT",
   "OTHER",
 ]);
 export type ExecutionArtifactType = z.infer<typeof ExecutionArtifactTypeSchema>;

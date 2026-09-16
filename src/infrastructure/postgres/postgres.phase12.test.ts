@@ -710,295 +710,473 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
     }
   });
 
-  it("multi-node API+worker lifecycle reloads exact durable authority on empty heap", async () => {
-    const projectId = `p12_mn_${uniquePostgresTestId("proj").slice(0, 12)}`;
-    const apiA = await createTestStack(uniquePostgresTestId("p12_mn_api_a"));
-    const apiB = await createTestStack(uniquePostgresTestId("p12_mn_api_b"));
-    const workerA = await createTestStack(uniquePostgresTestId("p12_mn_w_a"));
-    const workerB = await createTestStack(uniquePostgresTestId("p12_mn_w_b"));
-    try {
-      await seedDedicatedPostgresTestProject(apiA.db, projectId);
-      const appA = await fullApi(
-        apiA.stack,
-        perimeterFor(EXAMPLE_REQUESTER_ID, [projectId]),
-      );
-      const appB = await fullApi(
-        apiB.stack,
-        perimeterFor(EXAMPLE_REQUESTER_ID, [projectId]),
-      );
-      const request = buildPostgresTestAdmissionRequest({
-        testName: "p12-mn",
-        projectId,
-        learnable: true,
-      });
-      const [firstRes, secondRes] = await Promise.all([
-        appA.inject({ method: "POST", url: "/v1/runs", payload: request }),
-        appB.inject({ method: "POST", url: "/v1/runs", payload: request }),
-      ]);
-      const first = admissionHttpView(firstRes, request);
-      const second = admissionHttpView(secondRes, request);
-      expectCanonicalConcurrentAdmission(first, second);
-      const idempotencyKey = objectiveIdempotencyKey({
-        projectId: request.projectId,
-        objectiveId: request.objectiveId,
-        objectiveVersion: request.objectiveVersion,
-        requestedEnvironment: request.requestedEnvironment,
-      });
-      const runRows = await apiA.db.query<{ run_id: string }>(
-        `SELECT run_id FROM runs WHERE idempotency_key = $1`,
-        [idempotencyKey],
-      );
-      expect(runRows.rows).toHaveLength(1);
-      const objectives = await apiA.db.query<{ c: number }>(
-        `SELECT COUNT(*)::int AS c
-         FROM objectives
-         WHERE project_id = $1 AND objective_id = $2 AND objective_version = $3`,
-        [request.projectId, request.objectiveId, request.objectiveVersion],
-      );
-      expect(Number(objectives.rows[0]?.c ?? 0)).toBe(1);
-      const runId = runRows.rows[0]!.run_id;
-      await workerA.stack.ingestion.ingest(runId, projectId, EXAMPLE_ENVIRONMENT);
-      await workerA.stack.planning.plan(runId);
-      await workerA.stack.validation.validate(runId);
-      const routed = await workerA.stack.authorizationRouting.route(runId);
-      expect(routed.outcome).toBe("PENDING_APPROVAL");
-      const nonce = deliveredNonce(
-        workerA.stack.approvalDelivery,
-        routed.approvalRequestId,
-      );
-      const approved = await workerA.stack.humanAuthorization.decide({
-        approvalRequestId: routed.approvalRequestId,
-        approverId: "approver_bootstrap",
-        decision: "APPROVE",
-        decisionNonce: nonce,
-        submittedAt: new Date().toISOString(),
-      });
-      expect(approved.result).toBe("APPROVED");
-      const [execA, execB] = await Promise.allSettled([
-        workerA.stack.execution.execute(runId),
-        workerB.stack.execution.execute(runId),
-      ]);
-      const execResults = [execA, execB];
-      const successes = execResults.filter((item) => item.status === "fulfilled");
-      expect(successes.length).toBeGreaterThanOrEqual(1);
-      await workerA.stack.verification.verify(runId);
-      const learned = await workerA.stack.memory.learn(runId);
-      expect(learned.promotedPrecedentIds.length).toBeGreaterThan(0);
-      expect(new Set(learned.promotedPrecedentIds).size).toBe(
-        learned.promotedPrecedentIds.length,
-      );
-      const completions = await apiA.db.query(
-        `SELECT COUNT(*)::int AS c FROM json_documents
-         WHERE collection = 'completion_records' AND run_id = $1`,
-        [runId],
-      );
-      expect(Number(completions.rows[0]?.c ?? 0)).toBe(1);
-      const attempts = await apiA.db.query(
-        `SELECT COUNT(*)::int AS c FROM json_documents
-         WHERE collection = 'execution_attempts' AND run_id = $1`,
-        [runId],
-      );
-      expect(Number(attempts.rows[0]?.c ?? 0)).toBe(1);
-      const snapshot = await workerA.stack.observability.rebuild(projectId, {
-        projectId,
-        kind: "LAST_N_RUNS",
-        lastN: 5,
-      });
-      await appA.close();
-      await appB.close();
-      await apiA.close();
-      await apiB.close();
-      await workerA.close();
-      await workerB.close();
-      const reload = await createTestStack(uniquePostgresTestId("p12_mn_reload"));
-      try {
-        const run = await reload.stack.runs.getById(runId);
-        expect(run?.state).toBe("COMPLETED");
-        const auth = await reload.db.query<{ document_id: string }>(
-          `SELECT document_id FROM json_documents
-           WHERE collection = 'authorization_records' AND run_id = $1`,
-          [runId],
+  it(
+    "multi-node API+worker lifecycle reloads exact durable authority on empty heap",
+    async () => {
+      // Four createTestStack + full Phase2→9 + empty-heap reload regularly
+      // exceeds Vitest's default 5s under CI load. Step timings prove finite
+      // work — local 15s budget only; no global testTimeout change.
+      const t0 = Date.now();
+      const steps: Array<{ step: string; ms: number }> = [];
+      let current: string | undefined;
+      const stamp = (step: string, startedAt: number) => {
+        const ms = Date.now() - startedAt;
+        steps.push({ step, ms });
+        console.info(
+          `[p12-multinode] ${step}=${ms}ms elapsed=${Date.now() - t0}ms`,
         );
-        expect(auth.rows.length).toBe(1);
-        const completion = await reload.db.query(
-          `SELECT 1 FROM json_documents
-           WHERE collection = 'completion_records' AND run_id = $1`,
-          [runId],
+      };
+      const timed = async <T>(
+        step: string,
+        fn: () => Promise<T>,
+      ): Promise<T> => {
+        current = step;
+        console.info(
+          `[p12-multinode] start ${step} elapsed=${Date.now() - t0}ms`,
         );
-        expect(completion.rows.length).toBe(1);
-        const health = await reload.stack.observability.snapshots.getById(
-          snapshot.healthSnapshotId,
-        );
-        expect(health?.snapshotId).toBe(snapshot.healthSnapshotId);
-        for (const precedentId of learned.promotedPrecedentIds) {
-          const precedent = await reload.stack.memory.getPrecedent(precedentId);
-          expect(precedent?.precedentId).toBe(precedentId);
+        const startedAt = Date.now();
+        try {
+          return await fn();
+        } finally {
+          stamp(step, startedAt);
+          current = undefined;
         }
-      } finally {
-        await reload.close();
-      }
-    } finally {
-      await apiA.close().catch(() => undefined);
-      await apiB.close().catch(() => undefined);
-      await workerA.close().catch(() => undefined);
-      await workerB.close().catch(() => undefined);
-    }
-  });
+      };
 
-  it("SIGTERM drain leaves RUNNING steps unrepaired for Phase 11 containment", async () => {
-    const instanceA = uniquePostgresTestId("p12_sig_a");
-    const envA = await createTestStack(instanceA);
-    try {
-      const request = buildPostgresTestAdmissionRequest({ testName: "p12-sig" });
-      const { runId } = await advanceToApprovedRun(envA.stack, request);
-      const drain = new DrainController();
-      const metrics = new OperationalMetrics();
-      let extraClaims = 0;
-      const loop = new BoundedWorkerLoop({
-        concurrency: 1,
-        pollIntervalMs: 15,
-        jitterMs: 0,
-        isAccepting: () => drain.isAcceptingWork(),
-        jobs: [
-          {
-            name: "work",
-            run: async () => {
-              extraClaims += 1;
-            },
-          },
-        ],
-      });
-      loop.start();
-      await sleep(30);
-      const persisted = await persistRunningStep({
-        env: envA,
-        runId,
-        instanceId: instanceA,
-        ttlSeconds: 2,
-      });
-      expect(envA.stack.actuator.invocations.length).toBe(0);
-      const startup = new StartupLifecycle();
-      startup.advance("CONFIG_VALIDATED");
-      startup.advance("SERVICES_READY");
-      startup.advance("ACCEPTING_TRAFFIC");
-      const config = loadRuntimeConfig({
-        ORCHESTRATOR_ENV: "TEST",
-        ORCHESTRATOR_STORAGE: "memory",
-        ORCHESTRATOR_SHUTDOWN_GRACE_MS: "50",
-      });
-      const app = await buildServer({
-        admission: envA.stack.admission,
-        storageMode: "postgres",
-        runs: envA.stack.runs,
-        perimeter: {
-          ...perimeterFor(EXAMPLE_REQUESTER_ID, [EXAMPLE_PROJECT_ID], { drain }),
-          runs: envA.stack.runs,
-          approvalRequests: envA.stack.approvalRequests,
-        },
-        health: {
-          config,
-          startup,
-          drain,
-          metrics,
-          build: config.build,
-          database: async () => ({
-            storageMode: "postgres",
-            databaseReachable: true,
-            schemaCompatible: true,
-            supportedSchemaVersion: "013_phase18_causal_intelligence",
-          }),
-        },
-      });
-      const ready = await app.inject({ method: "GET", url: "/health/ready" });
-      expect(ready.statusCode).toBe(200);
-      const claimsBefore = extraClaims;
-      drain.beginDrain();
-      expect(drain.current()).toBe("DRAINING");
-      const notReady = await app.inject({ method: "GET", url: "/health/ready" });
-      expect(notReady.statusCode).toBe(503);
-      const denied = await app.inject({
-        method: "POST",
-        url: "/v1/runs",
-        payload: buildPostgresTestAdmissionRequest({ testName: "p12-sig-deny" }),
-      });
-      expect(denied.statusCode).toBe(503);
-      await loop.waitIdle(50);
-      loop.stop();
-      expect(extraClaims).toBeLessThanOrEqual(claimsBefore + 1);
-      const step = await envA.stack.stepExecutions.getByIdempotencyKey(
-        persisted.stepKey,
+      const projectId = `p12_mn_${uniquePostgresTestId("proj").slice(0, 12)}`;
+      const apiA = await timed("1.createApiA", () =>
+        createTestStack(uniquePostgresTestId("p12_mn_api_a")),
       );
-      expect(step?.status).toBe("RUNNING");
-      await app.close();
-      await envA.close();
-      const envB = await createTestStack(uniquePostgresTestId("p12_sig_b"));
+      let apiB: Awaited<ReturnType<typeof createTestStack>> | undefined;
+      let workerA: Awaited<ReturnType<typeof createTestStack>> | undefined;
+      let workerB: Awaited<ReturnType<typeof createTestStack>> | undefined;
+      let appA: Awaited<ReturnType<typeof fullApi>> | undefined;
+      let appB: Awaited<ReturnType<typeof fullApi>> | undefined;
       try {
-        await waitUntilPostgresLeaseExpired(envB.db, persisted.coordinationKey);
-        expect(envB.stack.actuator.invocations.length).toBe(0);
-        const reloaded = await envB.stack.stepExecutions.getByIdempotencyKey(
-          persisted.stepKey,
+        apiB = await timed("2.createApiB", () =>
+          createTestStack(uniquePostgresTestId("p12_mn_api_b")),
         );
-        expect(reloaded?.status).toBe("RUNNING");
-        const leasesB = new PostgresLeaseStore(envB.db, 30);
-        const leaseB = await leasesB.acquire({
-          coordinationKey: persisted.coordinationKey,
-          phase: "execution",
-          ownerId: envB.stack.instanceId,
+        workerA = await timed("3.createWorkerA", () =>
+          createTestStack(uniquePostgresTestId("p12_mn_w_a")),
+        );
+        workerB = await timed("4.createWorkerB", () =>
+          createTestStack(uniquePostgresTestId("p12_mn_w_b")),
+        );
+        await timed("5.seedProject", () =>
+          seedDedicatedPostgresTestProject(apiA.db, projectId),
+        );
+        appA = await timed("6.buildApiA", () =>
+          fullApi(
+            apiA.stack,
+            perimeterFor(EXAMPLE_REQUESTER_ID, [projectId]),
+          ),
+        );
+        appB = await timed("7.buildApiB", () =>
+          fullApi(
+            apiB!.stack,
+            perimeterFor(EXAMPLE_REQUESTER_ID, [projectId]),
+          ),
+        );
+        const request = buildPostgresTestAdmissionRequest({
+          testName: "p12-mn",
+          projectId,
+          learnable: true,
         });
-        expect(leaseB.fenceToken).toBeGreaterThan(persisted.fenceToken);
-        await expect(
-          leasesB.heartbeat({
-            coordinationKey: persisted.coordinationKey,
-            ownerId: instanceA,
-            fenceToken: persisted.fenceToken,
-          }),
-        ).rejects.toMatchObject({ code: "LEASE_OWNERSHIP_LOST" });
-        envB.stack.actuator.simulateStateUnknown = true;
-        await envB.stack.recovery.recover();
-        expect(envB.stack.actuator.invocations.length).toBe(0);
+        const [firstRes, secondRes] = await timed("8.concurrentAdmit", () =>
+          Promise.all([
+            appA!.inject({ method: "POST", url: "/v1/runs", payload: request }),
+            appB!.inject({ method: "POST", url: "/v1/runs", payload: request }),
+          ]),
+        );
+        const first = admissionHttpView(firstRes, request);
+        const second = admissionHttpView(secondRes, request);
+        expectCanonicalConcurrentAdmission(first, second);
+        const idempotencyKey = objectiveIdempotencyKey({
+          projectId: request.projectId,
+          objectiveId: request.objectiveId,
+          objectiveVersion: request.objectiveVersion,
+          requestedEnvironment: request.requestedEnvironment,
+        });
+        const runRows = await apiA.db.query<{ run_id: string }>(
+          `SELECT run_id FROM runs WHERE idempotency_key = $1`,
+          [idempotencyKey],
+        );
+        expect(runRows.rows).toHaveLength(1);
+        const objectives = await apiA.db.query<{ c: number }>(
+          `SELECT COUNT(*)::int AS c
+           FROM objectives
+           WHERE project_id = $1 AND objective_id = $2 AND objective_version = $3`,
+          [request.projectId, request.objectiveId, request.objectiveVersion],
+        );
+        expect(Number(objectives.rows[0]?.c ?? 0)).toBe(1);
+        const runId = runRows.rows[0]!.run_id;
+        await timed("9.ingestPlanValidate", async () => {
+          await workerA!.stack.ingestion.ingest(
+            runId,
+            projectId,
+            EXAMPLE_ENVIRONMENT,
+          );
+          await workerA!.stack.planning.plan(runId);
+          await workerA!.stack.validation.validate(runId);
+        });
+        const routed = await timed("10.routeApprove", async () => {
+          const r = await workerA!.stack.authorizationRouting.route(runId);
+          expect(r.outcome).toBe("PENDING_APPROVAL");
+          const nonce = deliveredNonce(
+            workerA!.stack.approvalDelivery,
+            r.approvalRequestId,
+          );
+          const approved = await workerA!.stack.humanAuthorization.decide({
+            approvalRequestId: r.approvalRequestId,
+            approverId: "approver_bootstrap",
+            decision: "APPROVE",
+            decisionNonce: nonce,
+            submittedAt: new Date().toISOString(),
+          });
+          expect(approved.result).toBe("APPROVED");
+          return r;
+        });
+        void routed;
+        await timed("11.concurrentExecute", async () => {
+          const [execA, execB] = await Promise.allSettled([
+            workerA!.stack.execution.execute(runId),
+            workerB!.stack.execution.execute(runId),
+          ]);
+          const successes = [execA, execB].filter(
+            (item) => item.status === "fulfilled",
+          );
+          expect(successes.length).toBeGreaterThanOrEqual(1);
+        });
+        const learned = await timed("12.verifyLearnObservability", async () => {
+          await workerA!.stack.verification.verify(runId);
+          const learnedResult = await workerA!.stack.memory.learn(runId);
+          expect(learnedResult.promotedPrecedentIds.length).toBeGreaterThan(0);
+          expect(new Set(learnedResult.promotedPrecedentIds).size).toBe(
+            learnedResult.promotedPrecedentIds.length,
+          );
+          const completions = await apiA.db.query(
+            `SELECT COUNT(*)::int AS c FROM json_documents
+             WHERE collection = 'completion_records' AND run_id = $1`,
+            [runId],
+          );
+          expect(Number(completions.rows[0]?.c ?? 0)).toBe(1);
+          const attempts = await apiA.db.query(
+            `SELECT COUNT(*)::int AS c FROM json_documents
+             WHERE collection = 'execution_attempts' AND run_id = $1`,
+            [runId],
+          );
+          expect(Number(attempts.rows[0]?.c ?? 0)).toBe(1);
+          const snapshot = await workerA!.stack.observability.rebuild(projectId, {
+            projectId,
+            kind: "LAST_N_RUNS",
+            lastN: 5,
+          });
+          return { learnedResult, snapshot };
+        });
+        await timed("13.closeLiveStacks", async () => {
+          await appA!.close();
+          appA = undefined;
+          await appB!.close();
+          appB = undefined;
+          await apiA.close();
+          await apiB!.close();
+          await workerA!.close();
+          await workerB!.close();
+        });
+        const reload = await timed("14.createReloadStack", () =>
+          createTestStack(uniquePostgresTestId("p12_mn_reload")),
+        );
+        try {
+          await timed("15.reloadAssertions", async () => {
+            const run = await reload.stack.runs.getById(runId);
+            expect(run?.state).toBe("COMPLETED");
+            const auth = await reload.db.query<{ document_id: string }>(
+              `SELECT document_id FROM json_documents
+               WHERE collection = 'authorization_records' AND run_id = $1`,
+              [runId],
+            );
+            expect(auth.rows.length).toBe(1);
+            const completion = await reload.db.query(
+              `SELECT 1 FROM json_documents
+               WHERE collection = 'completion_records' AND run_id = $1`,
+              [runId],
+            );
+            expect(completion.rows.length).toBe(1);
+            const health = await reload.stack.observability.snapshots.getById(
+              learned.snapshot.healthSnapshotId,
+            );
+            expect(health?.snapshotId).toBe(learned.snapshot.healthSnapshotId);
+            for (const precedentId of learned.learnedResult.promotedPrecedentIds) {
+              const precedent =
+                await reload.stack.memory.getPrecedent(precedentId);
+              expect(precedent?.precedentId).toBe(precedentId);
+            }
+          });
+        } finally {
+          await timed("16.closeReload", () => reload.close());
+        }
+      } catch (error) {
+        console.info(
+          `[p12-multinode] FAIL current=${current ?? "none"} steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
+        throw error;
       } finally {
-        await envB.close();
+        if (appA) await appA.close().catch(() => undefined);
+        if (appB) await appB.close().catch(() => undefined);
+        await apiA.close().catch(() => undefined);
+        if (apiB) await apiB.close().catch(() => undefined);
+        if (workerA) await workerA.close().catch(() => undefined);
+        if (workerB) await workerB.close().catch(() => undefined);
+        console.info(
+          `[p12-multinode] DONE steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
       }
-    } finally {
-      await envA.close().catch(() => undefined);
-    }
-  });
+    },
+    15_000,
+  );
 
-  it("hard-kill runtime recovers through a newer fence without blind replay", async () => {
-    const instanceA = uniquePostgresTestId("p12_kill_a");
-    const envA = await createTestStack(instanceA);
-    try {
-      const { runId } = await advanceToApprovedRun(
-        envA.stack,
-        buildPostgresTestAdmissionRequest({ testName: "p12-kill" }),
+  it(
+    "SIGTERM drain leaves RUNNING steps unrepaired for Phase 11 containment",
+    async () => {
+      // createTestStack×2 + approve + lease TTL wait (~2s) exceeds default 5s
+      // under CI load. Instrument to prove finite stages; local 15s only.
+      const t0 = Date.now();
+      const steps: Array<{ step: string; ms: number }> = [];
+      let current: string | undefined;
+      const stamp = (step: string, startedAt: number) => {
+        const ms = Date.now() - startedAt;
+        steps.push({ step, ms });
+        console.info(
+          `[p12-sigterm] ${step}=${ms}ms elapsed=${Date.now() - t0}ms`,
+        );
+      };
+      const timed = async <T>(
+        step: string,
+        fn: () => Promise<T>,
+      ): Promise<T> => {
+        current = step;
+        console.info(
+          `[p12-sigterm] start ${step} elapsed=${Date.now() - t0}ms`,
+        );
+        const startedAt = Date.now();
+        try {
+          return await fn();
+        } finally {
+          stamp(step, startedAt);
+          current = undefined;
+        }
+      };
+
+      const instanceA = uniquePostgresTestId("p12_sig_a");
+      const envA = await timed("1.createStackA", () =>
+        createTestStack(instanceA),
       );
-      const loop = new BoundedWorkerLoop({
-        concurrency: 1,
-        pollIntervalMs: 20,
-        jitterMs: 0,
-        isAccepting: () => true,
-        jobs: [
-          {
-            name: "outbox",
-            run: async () => {
-              await envA.stack.approvalDeliveryDispatcher.dispatchOnce(1);
-            },
-          },
-        ],
-      });
-      loop.start();
-      const persisted = await persistRunningStep({
-        env: envA,
-        runId,
-        instanceId: instanceA,
-        ttlSeconds: 2,
-      });
-      loop.stop();
-      await envA.close();
-      const envB = await createTestStack(uniquePostgresTestId("p12_kill_b"));
+      let loop: BoundedWorkerLoop | undefined;
+      let app: Awaited<ReturnType<typeof buildServer>> | undefined;
       try {
-        await waitUntilPostgresLeaseExpired(envB.db, persisted.coordinationKey);
-        const workerB = new BoundedWorkerLoop({
+        const request = buildPostgresTestAdmissionRequest({
+          testName: "p12-sig",
+        });
+        const { runId } = await timed("2.advanceToApprovedRun", () =>
+          advanceToApprovedRun(envA.stack, request),
+        );
+        const drain = new DrainController();
+        const metrics = new OperationalMetrics();
+        let extraClaims = 0;
+        loop = new BoundedWorkerLoop({
+          concurrency: 1,
+          pollIntervalMs: 15,
+          jitterMs: 0,
+          isAccepting: () => drain.isAcceptingWork(),
+          jobs: [
+            {
+              name: "work",
+              run: async () => {
+                extraClaims += 1;
+              },
+            },
+          ],
+        });
+        loop.start();
+        await sleep(30);
+        const persisted = await timed("3.persistRunningStep", () =>
+          persistRunningStep({
+            env: envA,
+            runId,
+            instanceId: instanceA,
+            ttlSeconds: 2,
+          }),
+        );
+        expect(envA.stack.actuator.invocations.length).toBe(0);
+        const startup = new StartupLifecycle();
+        startup.advance("CONFIG_VALIDATED");
+        startup.advance("SERVICES_READY");
+        startup.advance("ACCEPTING_TRAFFIC");
+        const config = loadRuntimeConfig({
+          ORCHESTRATOR_ENV: "TEST",
+          ORCHESTRATOR_STORAGE: "memory",
+          ORCHESTRATOR_SHUTDOWN_GRACE_MS: "50",
+        });
+        app = await timed("4.buildServer", () =>
+          buildServer({
+            admission: envA.stack.admission,
+            storageMode: "postgres",
+            runs: envA.stack.runs,
+            perimeter: {
+              ...perimeterFor(EXAMPLE_REQUESTER_ID, [EXAMPLE_PROJECT_ID], {
+                drain,
+              }),
+              runs: envA.stack.runs,
+              approvalRequests: envA.stack.approvalRequests,
+            },
+            health: {
+              config,
+              startup,
+              drain,
+              metrics,
+              build: config.build,
+              database: async () => ({
+                storageMode: "postgres",
+                databaseReachable: true,
+                schemaCompatible: true,
+                supportedSchemaVersion: "013_phase18_causal_intelligence",
+              }),
+            },
+          }),
+        );
+        await timed("5.drainAndAssert", async () => {
+          const ready = await app!.inject({
+            method: "GET",
+            url: "/health/ready",
+          });
+          expect(ready.statusCode).toBe(200);
+          const claimsBefore = extraClaims;
+          drain.beginDrain();
+          expect(drain.current()).toBe("DRAINING");
+          const notReady = await app!.inject({
+            method: "GET",
+            url: "/health/ready",
+          });
+          expect(notReady.statusCode).toBe(503);
+          const denied = await app!.inject({
+            method: "POST",
+            url: "/v1/runs",
+            payload: buildPostgresTestAdmissionRequest({
+              testName: "p12-sig-deny",
+            }),
+          });
+          expect(denied.statusCode).toBe(503);
+          await loop!.waitIdle(50);
+          loop!.stop();
+          loop = undefined;
+          expect(extraClaims).toBeLessThanOrEqual(claimsBefore + 1);
+          const step = await envA.stack.stepExecutions.getByIdempotencyKey(
+            persisted.stepKey,
+          );
+          expect(step?.status).toBe("RUNNING");
+        });
+        await timed("6.closeAppAndStackA", async () => {
+          await app!.close();
+          app = undefined;
+          await envA.close();
+        });
+        const envB = await timed("7.createStackB", () =>
+          createTestStack(uniquePostgresTestId("p12_sig_b")),
+        );
+        try {
+          await timed("8.waitLeaseExpired", () =>
+            waitUntilPostgresLeaseExpired(envB.db, persisted.coordinationKey),
+          );
+          await timed("9.recoveryAssertions", async () => {
+            expect(envB.stack.actuator.invocations.length).toBe(0);
+            const reloaded = await envB.stack.stepExecutions.getByIdempotencyKey(
+              persisted.stepKey,
+            );
+            expect(reloaded?.status).toBe("RUNNING");
+            const leasesB = new PostgresLeaseStore(envB.db, 30);
+            const leaseB = await leasesB.acquire({
+              coordinationKey: persisted.coordinationKey,
+              phase: "execution",
+              ownerId: envB.stack.instanceId,
+            });
+            expect(leaseB.fenceToken).toBeGreaterThan(persisted.fenceToken);
+            await expect(
+              leasesB.heartbeat({
+                coordinationKey: persisted.coordinationKey,
+                ownerId: instanceA,
+                fenceToken: persisted.fenceToken,
+              }),
+            ).rejects.toMatchObject({ code: "LEASE_OWNERSHIP_LOST" });
+            envB.stack.actuator.simulateStateUnknown = true;
+            await envB.stack.recovery.recover();
+            expect(envB.stack.actuator.invocations.length).toBe(0);
+          });
+        } finally {
+          await timed("10.closeStackB", () => envB.close());
+        }
+      } catch (error) {
+        console.info(
+          `[p12-sigterm] FAIL current=${current ?? "none"} steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
+        throw error;
+      } finally {
+        if (loop) loop.stop();
+        if (app) await app.close().catch(() => undefined);
+        await envA.close().catch(() => undefined);
+        console.info(
+          `[p12-sigterm] DONE steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
+      }
+    },
+    15_000,
+  );
+
+  it(
+    "hard-kill runtime recovers through a newer fence without blind replay",
+    async () => {
+      // createTestStack×2 + approve + lease TTL wait (~2s) exceeds default 5s
+      // under CI load. Instrument to prove finite stages; local 15s only.
+      const t0 = Date.now();
+      const steps: Array<{ step: string; ms: number }> = [];
+      let current: string | undefined;
+      const stamp = (step: string, startedAt: number) => {
+        const ms = Date.now() - startedAt;
+        steps.push({ step, ms });
+        console.info(
+          `[p12-hardkill] ${step}=${ms}ms elapsed=${Date.now() - t0}ms`,
+        );
+      };
+      const timed = async <T>(
+        step: string,
+        fn: () => Promise<T>,
+      ): Promise<T> => {
+        current = step;
+        console.info(
+          `[p12-hardkill] start ${step} elapsed=${Date.now() - t0}ms`,
+        );
+        const startedAt = Date.now();
+        try {
+          return await fn();
+        } finally {
+          stamp(step, startedAt);
+          current = undefined;
+        }
+      };
+
+      const instanceA = uniquePostgresTestId("p12_kill_a");
+      const envA = await timed("1.createStackA", () =>
+        createTestStack(instanceA),
+      );
+      let loop: BoundedWorkerLoop | undefined;
+      let workerB: BoundedWorkerLoop | undefined;
+      try {
+        const { runId } = await timed("2.advanceToApprovedRun", () =>
+          advanceToApprovedRun(
+            envA.stack,
+            buildPostgresTestAdmissionRequest({ testName: "p12-kill" }),
+          ),
+        );
+        loop = new BoundedWorkerLoop({
           concurrency: 1,
           pollIntervalMs: 20,
           jitterMs: 0,
@@ -1007,35 +1185,83 @@ describe("Phase 12 PostgreSQL runtime acceptance", () => {
             {
               name: "outbox",
               run: async () => {
-                await envB.stack.approvalDeliveryDispatcher.dispatchOnce(1);
+                await envA.stack.approvalDeliveryDispatcher.dispatchOnce(1);
               },
             },
           ],
         });
-        workerB.start();
-        const leasesB = new PostgresLeaseStore(envB.db, 30);
-        const leaseB = await leasesB.acquire({
-          coordinationKey: persisted.coordinationKey,
-          phase: "execution",
-          ownerId: envB.stack.instanceId,
-        });
-        expect(leaseB.fenceToken).toBeGreaterThan(persisted.fenceToken);
-        expect(envB.stack.actuator.invocations.length).toBe(0);
-        const step = await envB.stack.stepExecutions.getByIdempotencyKey(
-          persisted.stepKey,
+        loop.start();
+        const persisted = await timed("3.persistRunningStep", () =>
+          persistRunningStep({
+            env: envA,
+            runId,
+            instanceId: instanceA,
+            ttlSeconds: 2,
+          }),
         );
-        expect(step?.status).toBe("RUNNING");
-        await envB.stack.recovery.recover();
-        expect(envB.stack.actuator.invocations.length).toBe(0);
-        workerB.stop();
+        loop.stop();
+        loop = undefined;
+        await timed("4.closeStackA", () => envA.close());
+        const envB = await timed("5.createStackB", () =>
+          createTestStack(uniquePostgresTestId("p12_kill_b")),
+        );
+        try {
+          await timed("6.waitLeaseExpired", () =>
+            waitUntilPostgresLeaseExpired(envB.db, persisted.coordinationKey),
+          );
+          workerB = new BoundedWorkerLoop({
+            concurrency: 1,
+            pollIntervalMs: 20,
+            jitterMs: 0,
+            isAccepting: () => true,
+            jobs: [
+              {
+                name: "outbox",
+                run: async () => {
+                  await envB.stack.approvalDeliveryDispatcher.dispatchOnce(1);
+                },
+              },
+            ],
+          });
+          workerB.start();
+          await timed("7.fenceAndRecover", async () => {
+            const leasesB = new PostgresLeaseStore(envB.db, 30);
+            const leaseB = await leasesB.acquire({
+              coordinationKey: persisted.coordinationKey,
+              phase: "execution",
+              ownerId: envB.stack.instanceId,
+            });
+            expect(leaseB.fenceToken).toBeGreaterThan(persisted.fenceToken);
+            expect(envB.stack.actuator.invocations.length).toBe(0);
+            const step = await envB.stack.stepExecutions.getByIdempotencyKey(
+              persisted.stepKey,
+            );
+            expect(step?.status).toBe("RUNNING");
+            await envB.stack.recovery.recover();
+            expect(envB.stack.actuator.invocations.length).toBe(0);
+          });
+          workerB.stop();
+          workerB = undefined;
+        } finally {
+          if (workerB) workerB.stop();
+          await timed("8.closeStackB", () => envB.close());
+        }
+      } catch (error) {
+        console.info(
+          `[p12-hardkill] FAIL current=${current ?? "none"} steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
+        throw error;
       } finally {
-        await envB.close();
+        if (loop) loop.stop();
+        if (workerB) workerB.stop();
+        await envA.close().catch(() => undefined);
+        console.info(
+          `[p12-hardkill] DONE steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
       }
-    } finally {
-      await envA.close().catch(() => undefined);
-    }
-  });
-
+    },
+    15_000,
+  );
   it("two worker runtimes fence the same outbox message", async () => {
     const envA = await createTestStack(uniquePostgresTestId("p12_ob_a"));
     const envB = await createTestStack(uniquePostgresTestId("p12_ob_b"));

@@ -20,9 +20,20 @@ function fail(message) {
 }
 
 const root = process.cwd();
-const migration = join(root, "migrations/019_phase24_production_synthesis.sql");
-if (!existsSync(migration)) {
+const migration019 = join(root, "migrations/019_phase24_production_synthesis.sql");
+if (!existsSync(migration019)) {
   fail("migration 019_phase24_production_synthesis.sql missing");
+}
+const migration020 = join(root, "migrations/020_product_revenue_recovery.sql");
+if (!existsSync(migration020)) {
+  fail("migration 020_product_revenue_recovery.sql missing");
+}
+const migration021 = join(
+  root,
+  "migrations/021_product_revenue_recovery_integrity.sql",
+);
+if (!existsSync(migration021)) {
+  fail("migration 021_product_revenue_recovery_integrity.sql missing");
 }
 
 const lock = join(root, "package-lock.json");
@@ -34,8 +45,8 @@ const durability = readFileSync(
   join(root, "src/domain/durability/index.ts"),
   "utf8",
 );
-if (!durability.includes("019_phase24_production_synthesis")) {
-  fail("SUPPORTED_SCHEMA_VERSION is not 019");
+if (!durability.includes("021_product_revenue_recovery_integrity")) {
+  fail("SUPPORTED_SCHEMA_VERSION is not 021_product_revenue_recovery_integrity");
 }
 
 const manifest = mintProductionReferenceRuntimeManifest("PRODUCTION");
@@ -60,7 +71,7 @@ console.log(
       qualifiedForRelease: false,
       deploymentAuthorized: false,
       note: "PRECHECK_PASS != QUALIFIED_FOR_RELEASE",
-      supportedSchemaVersion: "019_phase24_production_synthesis",
+      supportedSchemaVersion: "021_product_revenue_recovery_integrity",
       referenceRuntimeManifestHash: manifest.manifestHash,
       doctrineHash,
       message:

@@ -10,11 +10,11 @@ describe("schema migration catalog", () => {
     expect(latest).toBeDefined();
     expect(latest!.version).toBe(SUPPORTED_SCHEMA_VERSION);
     expect(SUPPORTED_SCHEMA_VERSION).toBe(
-      "019_phase24_production_synthesis",
+      "021_product_revenue_recovery_integrity",
     );
   });
 
-  it("keeps phase migrations 013–015 in order without gaps or duplicates", async () => {
+  it("keeps phase migrations 013–019 in order and product 020–021 after", async () => {
     const files = await listMigrationFiles();
     const versions = files.map((file) => file.version);
     const phaseTail = [
@@ -25,6 +25,8 @@ describe("schema migration catalog", () => {
       "017_phase22_governed_federation",
       "018_phase23_independent_assurance",
       "019_phase24_production_synthesis",
+      "020_product_revenue_recovery",
+      "021_product_revenue_recovery_integrity",
     ];
     for (let i = 0; i < phaseTail.length; i++) {
       const expected = phaseTail[i]!;

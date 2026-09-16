@@ -1,3 +1,5 @@
+import { createPostgresRevenueRecoveryService } from "../../api/revenue-recovery-factory.js";
+import { RevenueRecoveryPhase7Actuator } from "../../revenue-recovery/phase7-actuator.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -460,6 +462,9 @@ export interface PostgresOrchestratorStack {
   federationService: FederationOrchestrationService;
   federationAgreements: PostgresFederationAgreementRepository;
   assuranceService: AssuranceOrchestrationService;
+  revenueRecoveryService: import("../../revenue-recovery/service.js").RevenueRecoveryService;
+  /** Fake messaging provider attached to revenueRecoveryService (no real sends). */
+  revenueRecoveryMessaging: import("../../revenue-recovery/messaging.js").FakeRecoveryMessagingProvider;
   qualificationService: QualificationOrchestrationService;
   referenceRuntimeManifest: ReferenceRuntimeManifest;
   canonicalAuthority: import("../../governance/canonical-authority.js").CanonicalAuthorityGrantPort;
@@ -514,6 +519,16 @@ export async function createPostgresOrchestratorStack(options: {
   };
   schedulerGlobalMaxConcurrency?: number;
   defaultEnvironment?: string;
+  /**
+   * Economic provenance environment for the Revenue Recovery product.
+   * Omitted → PRODUCTION (FAKE_TEST provenance rejected).
+   */
+  revenueRecoveryRuntimeEnvironment?: import("../../revenue-recovery/provenance.js").ProductRuntimeEnvironment;
+  /**
+   * @internal TEST ONLY — replace the default execution-friendly planning model.
+   * Used by Revenue Recovery Postgres qualification to plan SEND_RECOVERY_SMS.
+   */
+  planningModel?: import("../../planning/model.js").PlanningModel;
   /**
    * @internal TEST ONLY — PostgreSQL integration tests may supply in-memory
    * authoritative evidence seeds. Bootstrap and production runtime must not set this.
@@ -700,7 +715,7 @@ export async function createPostgresOrchestratorStack(options: {
   const plans = new PostgresPlanRepository(db);
   const planningUsage = new PostgresPlanningUsageLedger(db);
   const planningModel = createExperimentAwarePlanningModel(
-    createExecutionFriendlyPlanningModel(),
+    options.planningModel ?? createExecutionFriendlyPlanningModel(),
     {
       lineage: experimentLineage,
       plans: experimentPlans,
@@ -1712,6 +1727,20 @@ export async function createPostgresOrchestratorStack(options: {
       : {}),
   });
 
+  const { service: revenueRecoveryService, messaging: revenueRecoveryMessaging } =
+    createPostgresRevenueRecoveryService({
+      db,
+      nowIso: () => clock.nowIso(),
+      admission,
+      ...(options.revenueRecoveryRuntimeEnvironment
+        ? { runtimeEnvironment: options.revenueRecoveryRuntimeEnvironment }
+        : {}),
+    });
+  // Outreach is reachable only through the canonical Phase7 SafeActuator path.
+  actuator.attachRevenueRecovery(
+    new RevenueRecoveryPhase7Actuator(revenueRecoveryService),
+  );
+
   const qualificationRuns = new PostgresProductionQualificationRunRepository(db);
   const qualificationEvidence = new PostgresQualificationEvidenceRepository(db);
   const releaseQualificationRecords =
@@ -1875,6 +1904,8 @@ export async function createPostgresOrchestratorStack(options: {
     federationService,
     federationAgreements,
     assuranceService,
+    revenueRecoveryService,
+    revenueRecoveryMessaging,
     qualificationService,
     referenceRuntimeManifest,
     canonicalAuthority: governanceCanonicalAuthority,
@@ -1898,5 +1929,6 @@ export function createFixedClockPostgresStack(
   return createPostgresOrchestratorStack({
     db,
     clock: new FixedClock(clockIso),
+    revenueRecoveryRuntimeEnvironment: "TEST",
   });
 }

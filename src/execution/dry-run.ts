@@ -3,11 +3,15 @@ import type { ExecutionStep } from "../domain/plan/execution-plan.js";
 import type { ExecutionPlan } from "../domain/plan/execution-plan.js";
 import {
   CapabilityExecutionSchemaMap,
+  CreateCallbackTaskArgsSchema,
   CreateLocalPatchArgsSchema,
   CreateTaskArgsSchema,
   isPhase7ActionType,
+  isRecoveryPhase7ActionType,
   PreparePullRequestArgsSchema,
   RunTestsArgsSchema,
+  SendRecoveryEmailArgsSchema,
+  SendRecoverySmsArgsSchema,
   type Phase7ActionType,
 } from "./action-schemas.js";
 import { ExecutionError } from "./errors.js";
@@ -24,6 +28,9 @@ export const CompiledExecutionStepSchema = z
       "RUN_TESTS",
       "CREATE_TASK",
       "PREPARE_PULL_REQUEST",
+      "SEND_RECOVERY_SMS",
+      "SEND_RECOVERY_EMAIL",
+      "CREATE_CALLBACK_TASK",
     ]),
     validatedTargets: z.array(z.string()),
     normalizedArguments: z.record(z.string(), z.unknown()),
@@ -131,6 +138,8 @@ export class DryRunCompiler {
         );
       }
       validatedTargets = [args.testProfileId];
+    } else if (isRecoveryPhase7ActionType(step.actionType)) {
+      validatedTargets = step.targetIds.filter((t) => t !== "workspace");
     } else {
       validatedTargets = step.targetIds
         .filter((t) => t !== "workspace")
@@ -186,6 +195,9 @@ export class DryRunCompiler {
       ...step.validation.checks,
       ...(step.rollback.instructions ?? []),
     ];
+    const allowHttpInPlan =
+      step.actionType === "PREPARE_PULL_REQUEST" ||
+      isRecoveryPhase7ActionType(step.actionType);
     for (const text of haystacks) {
       if (/\b(curl|wget|bash\s+-c|sh\s+-c|powershell)\b/i.test(text)) {
         throw new ExecutionError(
@@ -194,7 +206,7 @@ export class DryRunCompiler {
           { stepId: step.stepId },
         );
       }
-      if (/https?:\/\//i.test(text) && step.actionType !== "PREPARE_PULL_REQUEST") {
+      if (/https?:\/\//i.test(text) && !allowHttpInPlan) {
         throw new ExecutionError(
           "EXECUTION_ARGUMENT_INVALID",
           "Plan text contains arbitrary URL/network target",
@@ -203,6 +215,9 @@ export class DryRunCompiler {
       }
     }
     for (const target of step.targetIds) {
+      if (isRecoveryPhase7ActionType(step.actionType) && target.startsWith("rr_")) {
+        continue;
+      }
       if (pathLooksAbsolute(target) || target.includes("..")) {
         throw new ExecutionError(
           "EXECUTION_TARGET_INVALID",
@@ -286,6 +301,24 @@ export class DryRunCompiler {
           associatedPatchReferences: step.dependsOn,
         });
       }
+      case "SEND_RECOVERY_SMS": {
+        return SendRecoverySmsArgsSchema.parse(
+          parseRecoveryOutreachTargets(step),
+        );
+      }
+      case "SEND_RECOVERY_EMAIL": {
+        return SendRecoveryEmailArgsSchema.parse(
+          parseRecoveryOutreachTargets(step),
+        );
+      }
+      case "CREATE_CALLBACK_TASK": {
+        const base = parseRecoveryOutreachTargets(step);
+        return CreateCallbackTaskArgsSchema.parse({
+          recoveryCaseId: base.recoveryCaseId,
+          leadId: base.leadId,
+          ...(base.note ? { note: base.note } : {}),
+        });
+      }
       default: {
         const _exhaustive: never = actionType;
         throw new ExecutionError(
@@ -295,6 +328,62 @@ export class DryRunCompiler {
       }
     }
   }
+}
+
+function parseRecoveryOutreachTargets(step: ExecutionStep): {
+  recoveryCaseId: string;
+  leadId: string;
+  templateId?: string;
+  templateVersion?: number;
+  note?: string;
+} {
+  const caseId = step.targetIds
+    .find((t) => t.startsWith("rr_case:"))
+    ?.slice("rr_case:".length);
+  const leadId = step.targetIds
+    .find((t) => t.startsWith("rr_lead:"))
+    ?.slice("rr_lead:".length);
+  const templateRaw = step.targetIds
+    .find((t) => t.startsWith("rr_template:"))
+    ?.slice("rr_template:".length);
+  const note = step.targetIds
+    .find((t) => t.startsWith("rr_note:"))
+    ?.slice("rr_note:".length);
+  if (!caseId || !leadId) {
+    throw new ExecutionError(
+      "EXECUTION_ARGUMENT_INVALID",
+      "Recovery action requires rr_case: and rr_lead: targetIds",
+      { stepId: step.stepId, targetIds: step.targetIds },
+    );
+  }
+  let templateId: string | undefined;
+  let templateVersion: number | undefined;
+  if (templateRaw) {
+    const at = templateRaw.lastIndexOf("@");
+    if (at <= 0) {
+      throw new ExecutionError(
+        "EXECUTION_ARGUMENT_INVALID",
+        "rr_template must be templateId@version",
+        { stepId: step.stepId, templateRaw },
+      );
+    }
+    templateId = templateRaw.slice(0, at);
+    templateVersion = Number(templateRaw.slice(at + 1));
+    if (!Number.isInteger(templateVersion) || templateVersion < 1) {
+      throw new ExecutionError(
+        "EXECUTION_ARGUMENT_INVALID",
+        "Invalid recovery template version",
+        { stepId: step.stepId, templateRaw },
+      );
+    }
+  }
+  return {
+    recoveryCaseId: caseId,
+    leadId,
+    ...(templateId !== undefined ? { templateId } : {}),
+    ...(templateVersion !== undefined ? { templateVersion } : {}),
+    ...(note !== undefined ? { note } : {}),
+  };
 }
 
 function pathLooksAbsolute(value: string): boolean {

@@ -6,15 +6,20 @@ import type {
   LocalPatchActuatorResult,
   LocalTaskActuatorResult,
   PullRequestPreparationResult,
+  RecoveryOutreachActuatorResult,
   RegisteredTestActuatorResult,
   SafeActuator,
 } from "../../execution/actuator.js";
 import type {
+  CreateCallbackTaskArgs,
   CreateLocalPatchArgs,
   CreateTaskArgs,
   PreparePullRequestArgs,
   RunTestsArgs,
+  SendRecoveryEmailArgs,
+  SendRecoverySmsArgs,
 } from "../../execution/action-schemas.js";
+import type { RevenueRecoveryPhase7Actuator } from "../../revenue-recovery/phase7-actuator.js";
 import { TestProfileRegistry } from "../../execution/test-profiles.js";
 import { ExecutionTargetValidator } from "../../execution/target-validator.js";
 import { resolveContained } from "../../ingestion/workspace-paths.js";
@@ -28,8 +33,7 @@ function hashContent(content: string): string {
 /**
  * Deterministic fake actuator for local/unit tests.
  * Records invocations; does not spawn processes or write GitHub.
- * Enforces timeoutMs by failing closed when simulateTimeout is set or
- * when timeoutMs is non-positive.
+ * Recovery methods require an attached RevenueRecoveryPhase7Actuator.
  */
 export class FakeSafeActuator implements SafeActuator {
   readonly invocations: Array<{ method: string; input: unknown }> = [];
@@ -40,8 +44,13 @@ export class FakeSafeActuator implements SafeActuator {
   simulateTimeout = false;
   /** When true, next actuation throws STEP_EXECUTION_STATE_UNKNOWN (uncertain side effect). */
   simulateStateUnknown = false;
+  recoveryActuator: RevenueRecoveryPhase7Actuator | null = null;
 
   constructor(private readonly testProfiles = new TestProfileRegistry()) {}
+
+  attachRevenueRecovery(actuator: RevenueRecoveryPhase7Actuator): void {
+    this.recoveryActuator = actuator;
+  }
 
   private assertRuntime(runtime: ActuatorRuntimeBounds): void {
     if (runtime.timeoutMs <= 0) {
@@ -67,6 +76,16 @@ export class FakeSafeActuator implements SafeActuator {
         { timedOut: false },
       );
     }
+  }
+
+  private requireRecovery(): RevenueRecoveryPhase7Actuator {
+    if (!this.recoveryActuator) {
+      throw new ExecutionError(
+        "EXECUTION_UNSUPPORTED_ACTION",
+        "Revenue Recovery Phase7 actuator is not attached",
+      );
+    }
+    return this.recoveryActuator;
   }
 
   async createLocalPatch(input: {
@@ -120,33 +139,33 @@ export class FakeSafeActuator implements SafeActuator {
   }): Promise<RegisteredTestActuatorResult> {
     this.invocations.push({ method: "runRegisteredTestProfile", input });
     this.assertRuntime(input.runtime);
-    const profile = this.testProfiles.require(input.args.testProfileId);
+    const profile = this.testProfiles.get(input.args.testProfileId);
+    if (!profile) {
+      throw new ExecutionError(
+        "EXECUTION_ARGUMENT_INVALID",
+        `Unregistered test profile: ${input.args.testProfileId}`,
+      );
+    }
     const relativePath = path.posix.join(
-      "tests",
-      `${input.stepId}-${input.args.testProfileId}.json`,
+      "test-results",
+      `${input.stepId}.json`,
     );
     const absolute = resolveContained(input.artifactRoot, relativePath);
     await mkdir(path.dirname(absolute), { recursive: true });
-    const payload = {
+    const body = JSON.stringify({
       testProfileId: profile.testProfileId,
       argv: profile.argv,
-      shell: false as const,
       exitCode: this.testExitCode,
-      stdoutSummary: `fake ${profile.testProfileId} ok`,
-      stderrSummary: "",
-      durationMs: 1,
-      timeoutMs: input.runtime.timeoutMs,
-    };
-    const body = JSON.stringify(payload);
+      createdAt: input.nowIso,
+    });
     await writeFile(absolute, body, "utf8");
     return {
       testProfileId: profile.testProfileId,
-      argv: profile.argv,
+      argv: [...profile.argv],
       exitCode: this.testExitCode,
-      stdoutSummary: payload.stdoutSummary,
+      stdoutSummary: "ok",
       stderrSummary: "",
       durationMs: 1,
-      timedOut: false,
       artifactRelativePath: relativePath,
       contentHash: hashContent(body),
     };
@@ -172,9 +191,8 @@ export class FakeSafeActuator implements SafeActuator {
       taskId,
       title: input.args.title,
       description: input.args.description,
-      sourcePlanId: input.planId,
-      sourceStepId: input.stepId,
       status: "CREATED",
+      planId: input.planId,
       createdAt: input.nowIso,
     });
     await writeFile(absolute, body, "utf8");
@@ -224,6 +242,51 @@ export class FakeSafeActuator implements SafeActuator {
       proposedHeadBranchName: input.args.proposedHeadBranchName,
       githubWritePerformed: false,
     };
+  }
+
+  async sendRecoverySms(input: {
+    runId: string;
+    executionAttemptId: string;
+    stepId: string;
+    stepIdempotencyKey: string;
+    artifactRoot: string;
+    args: SendRecoverySmsArgs;
+    nowIso: string;
+    runtime: ActuatorRuntimeBounds;
+  }): Promise<RecoveryOutreachActuatorResult> {
+    this.invocations.push({ method: "sendRecoverySms", input });
+    this.assertRuntime(input.runtime);
+    return this.requireRecovery().sendRecoverySms(input);
+  }
+
+  async sendRecoveryEmail(input: {
+    runId: string;
+    executionAttemptId: string;
+    stepId: string;
+    stepIdempotencyKey: string;
+    artifactRoot: string;
+    args: SendRecoveryEmailArgs;
+    nowIso: string;
+    runtime: ActuatorRuntimeBounds;
+  }): Promise<RecoveryOutreachActuatorResult> {
+    this.invocations.push({ method: "sendRecoveryEmail", input });
+    this.assertRuntime(input.runtime);
+    return this.requireRecovery().sendRecoveryEmail(input);
+  }
+
+  async createRecoveryCallbackTask(input: {
+    runId: string;
+    executionAttemptId: string;
+    stepId: string;
+    stepIdempotencyKey: string;
+    artifactRoot: string;
+    args: CreateCallbackTaskArgs;
+    nowIso: string;
+    runtime: ActuatorRuntimeBounds;
+  }): Promise<RecoveryOutreachActuatorResult> {
+    this.invocations.push({ method: "createRecoveryCallbackTask", input });
+    this.assertRuntime(input.runtime);
+    return this.requireRecovery().createRecoveryCallbackTask(input);
   }
 
   async reconcileRunningStep(input: {

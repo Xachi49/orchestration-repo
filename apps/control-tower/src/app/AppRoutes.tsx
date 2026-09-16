@@ -14,6 +14,10 @@ import {
   GovernancePage,
   QualificationPage,
 } from "../features/system/SystemPages.js";
+import {
+  RevenueRecoveryCasePage,
+  RevenueRecoveryDashboardPage,
+} from "../features/revenue-recovery/RevenueRecoveryPages.js";
 
 export function AppRoutes() {
   return (
@@ -29,6 +33,15 @@ export function AppRoutes() {
           element={<ApprovalDecisionPage />}
         />
         <Route path="evidence" element={<EvidencePage />} />
+        <Route path="revenue-recovery" element={<RevenueRecoveryDashboardPage />} />
+        <Route
+          path="revenue-recovery/cases"
+          element={<RevenueRecoveryDashboardPage />}
+        />
+        <Route
+          path="revenue-recovery/cases/:recoveryCaseId"
+          element={<RevenueRecoveryCasePage />}
+        />
         <Route path="assurance" element={<AssurancePage />} />
         <Route path="qualification" element={<QualificationPage />} />
         <Route path="governance" element={<GovernancePage />} />

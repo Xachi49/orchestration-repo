@@ -56,6 +56,7 @@ export function createLocalValidationStack(options?: {
   budgets?: readonly ResourceBudgetProfile[];
   planningModel?: PlanningModel;
   capabilities?: readonly Capability[];
+  projects?: readonly import("../../control-plane/projects/project.js").Project[];
   validationModel?: ValidationModel;
   revisionModel?: PlanRevisionModel;
   planIdentities?: PlanIdentityGenerator;
@@ -68,6 +69,7 @@ export function createLocalValidationStack(options?: {
     clockIso?: string;
     budgets?: readonly ResourceBudgetProfile[];
     capabilities?: readonly Capability[];
+    projects?: readonly import("../../control-plane/projects/project.js").Project[];
     model?: PlanningModel;
   } = {};
   if (options?.grants) {
@@ -81,6 +83,9 @@ export function createLocalValidationStack(options?: {
   }
   if (options?.capabilities) {
     planningOptions.capabilities = options.capabilities;
+  }
+  if (options?.projects) {
+    planningOptions.projects = options.projects;
   }
   if (options?.planningModel) {
     planningOptions.model = options.planningModel;

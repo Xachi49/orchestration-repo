@@ -54,11 +54,14 @@ describe("ControlPlaneService", () => {
       context.availableCapabilities.map((item) => item.capabilityId).sort(),
     ).toEqual(
       [
+        "CREATE_CALLBACK_TASK",
         "CREATE_LOCAL_PATCH",
         "CREATE_TASK",
         "PREPARE_PULL_REQUEST",
         "READ_FILE",
         "RUN_TESTS",
+        "SEND_RECOVERY_EMAIL",
+        "SEND_RECOVERY_SMS",
       ].sort(),
     );
   });

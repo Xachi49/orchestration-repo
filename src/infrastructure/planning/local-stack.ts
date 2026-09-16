@@ -37,6 +37,7 @@ export function createLocalPlanningStack(options?: {
   clockIso?: string;
   budgets?: readonly ResourceBudgetProfile[];
   capabilities?: readonly Capability[];
+  projects?: readonly import("../../control-plane/projects/project.js").Project[];
   model?: PlanningModel;
   tokenEstimator?: PlanningTokenReservationEstimator;
   maxOutputTokensByOperation?: PlanningMaxOutputTokensByOperation;
@@ -46,6 +47,7 @@ export function createLocalPlanningStack(options?: {
     clockIso?: string;
     budgets?: readonly ResourceBudgetProfile[];
     capabilities?: readonly Capability[];
+    projects?: readonly import("../../control-plane/projects/project.js").Project[];
   } = {};
   if (options?.grants) {
     baseOptions.grants = options.grants;
@@ -58,6 +60,9 @@ export function createLocalPlanningStack(options?: {
   }
   if (options?.capabilities) {
     baseOptions.capabilities = options.capabilities;
+  }
+  if (options?.projects) {
+    baseOptions.projects = options.projects;
   }
   const base = createLocalIngestionStack(baseOptions);
   const planningCoordinator = new InMemoryPlanningCoordinator();

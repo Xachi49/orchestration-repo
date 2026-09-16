@@ -1246,68 +1246,123 @@ describe("Phase 24 postgres production synthesis", () => {
     }
   });
 
-  it("P. backup/restore into isolated target verifies critical records", async () => {
-    const id = uniquePostgresTestId("x")
-      .replace(/[^a-z0-9]/gi, "")
-      .slice(0, 10);
-    const source = await createDisposableDatabase(`p12src${id}`);
-    const dest = await createDisposableDatabase(`p12dst${id}`);
-    try {
-      const sourceEnv = await createTestStackOnUrl(
-        uniquePostgresTestId("p24-bak-src"),
-        source.url,
+  it(
+    "P. backup/restore into isolated target verifies critical records",
+    async () => {
+      // Phase12 sibling backup/restore completes ~11–12s in CI; default 5s is
+      // invalid for dual disposable DBs + full Phase2→8 + dump/restore. Local
+      // budget only — mirrors phase12's 20_000ms; no global testTimeout change.
+      const t0 = Date.now();
+      const steps: Array<{ step: string; ms: number }> = [];
+      let current: string | undefined;
+      const stamp = (step: string, startedAt: number) => {
+        const ms = Date.now() - startedAt;
+        steps.push({ step, ms });
+        console.info(`[p24-P] ${step}=${ms}ms elapsed=${Date.now() - t0}ms`);
+      };
+      const timed = async <T>(
+        step: string,
+        fn: () => Promise<T>,
+      ): Promise<T> => {
+        current = step;
+        console.info(`[p24-P] start ${step} elapsed=${Date.now() - t0}ms`);
+        const startedAt = Date.now();
+        try {
+          return await fn();
+        } finally {
+          stamp(step, startedAt);
+          current = undefined;
+        }
+      };
+
+      const id = uniquePostgresTestId("x")
+        .replace(/[^a-z0-9]/gi, "")
+        .slice(0, 10);
+      const source = await timed("1.createDisposableSource", () =>
+        createDisposableDatabase(`p12src${id}`),
       );
-      const request = buildPostgresTestAdmissionRequest({
-        testName: "p24-backup",
-      });
-      const ctx = await advanceToCompletedRun(sourceEnv.stack, request);
-      const runId = ctx.runId;
-      await sourceEnv.close();
-
-      if (pgDumpToolsAvailable()) {
-        dumpAndRestoreWithPgDump(source.url, dest.url);
-      } else {
-        const srcCopy = await createTestStackOnUrl(
-          uniquePostgresTestId("p24-bak-sc"),
-          source.url,
-          { migrate: false },
-        );
-        const dstCopy = await createTestStackOnUrl(
-          uniquePostgresTestId("p24-bak-dc"),
-          dest.url,
-          { migrate: true },
-        );
-        await copyPublicTables(srcCopy.db, dstCopy.db);
-        await srcCopy.close();
-        await dstCopy.close();
-      }
-
-      const restored = await createTestStackOnUrl(
-        uniquePostgresTestId("p24-bak-rst"),
-        dest.url,
-        { migrate: !pgDumpToolsAvailable() },
+      const dest = await timed("2.createDisposableDest", () =>
+        createDisposableDatabase(`p12dst${id}`),
       );
       try {
-        const run = await restored.stack.runs.getById(runId);
-        expect(run?.state).toBe("COMPLETED");
-        const completion = await restored.db.query(
-          `SELECT document_id FROM json_documents
-           WHERE collection = 'completion_records'
-             AND payload->>'runId' = $1`,
-          [runId],
+        const sourceEnv = await timed("3.createSourceStack", () =>
+          createTestStackOnUrl(
+            uniquePostgresTestId("p24-bak-src"),
+            source.url,
+          ),
         );
-        expect(completion.rows.length).toBe(1);
-        expect(QUALIFICATION_DOCTRINE.backupExistsNotRestoreVerified).toBe(
-          "BACKUP_EXISTS != RESTORE_VERIFIED",
+        const request = buildPostgresTestAdmissionRequest({
+          testName: "p24-backup",
+        });
+        const ctx = await timed("4.advanceToCompletedRun", () =>
+          advanceToCompletedRun(sourceEnv.stack, request),
         );
+        const runId = ctx.runId;
+        await timed("5.closeSourceEnv", () => sourceEnv.close());
+
+        await timed("6.backupRestore", async () => {
+          if (pgDumpToolsAvailable()) {
+            dumpAndRestoreWithPgDump(source.url, dest.url);
+          } else {
+            const srcCopy = await createTestStackOnUrl(
+              uniquePostgresTestId("p24-bak-sc"),
+              source.url,
+              { migrate: false },
+            );
+            const dstCopy = await createTestStackOnUrl(
+              uniquePostgresTestId("p24-bak-dc"),
+              dest.url,
+              { migrate: true },
+            );
+            try {
+              await copyPublicTables(srcCopy.db, dstCopy.db);
+            } finally {
+              await srcCopy.close();
+              await dstCopy.close();
+            }
+          }
+        });
+
+        const restored = await timed("7.createRestoredStack", () =>
+          createTestStackOnUrl(
+            uniquePostgresTestId("p24-bak-rst"),
+            dest.url,
+            { migrate: !pgDumpToolsAvailable() },
+          ),
+        );
+        try {
+          await timed("8.verifyCriticalRecords", async () => {
+            const run = await restored.stack.runs.getById(runId);
+            expect(run?.state).toBe("COMPLETED");
+            const completion = await restored.db.query(
+              `SELECT document_id FROM json_documents
+               WHERE collection = 'completion_records'
+                 AND payload->>'runId' = $1`,
+              [runId],
+            );
+            expect(completion.rows.length).toBe(1);
+            expect(QUALIFICATION_DOCTRINE.backupExistsNotRestoreVerified).toBe(
+              "BACKUP_EXISTS != RESTORE_VERIFIED",
+            );
+          });
+        } finally {
+          await timed("9.closeRestored", () => restored.close());
+        }
+      } catch (error) {
+        console.info(
+          `[p24-P] FAIL current=${current ?? "none"} steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
+        throw error;
       } finally {
-        await restored.close();
+        await timed("10.dropDest", () => dest.drop());
+        await timed("11.dropSource", () => source.drop());
+        console.info(
+          `[p24-P] DONE steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
       }
-    } finally {
-      await dest.drop();
-      await source.drop();
-    }
-  });
+    },
+    25_000,
+  );
 
   it("Q. log minimization — sentinels absent from structured logs", async () => {
     const logger = new MemoryStructuredLogger("p24-q", () => undefined);
@@ -1401,65 +1456,116 @@ describe("Phase 24 postgres production synthesis", () => {
     }
   });
 
-  it("S. release manifest only after QUALIFIED_FOR_RELEASE", async () => {
-    const life = p23LifecycleFromAnchor(ANCHOR);
-    const env = await createP24Env("manifest-s", { seedControlPlane: true });
-    const projectId = uniquePostgresTestId("p24s");
-    try {
-      await seedP23Authority(env.db, projectId);
-      const { institutionId } = await p23CreateInstitution(env.stack, projectId);
-      const golden = await advanceToCompletedRun(
-        env.stack,
-        buildPostgresTestAdmissionRequest({ testName: "p24-s-g" }),
-      );
-      const ctx = await p23QualifyThroughAssessment(env.stack, {
-        projectId,
-        institutionId,
-        evidenceGeneratedAt: life.evidenceGeneratedAt,
-        proofEffectiveFrom: life.runCreatedAt,
-        proofExpiresAt: life.caseExpiresAt,
-      });
-      const cert = await p23CertifyQualified(env.stack, ctx, {
-        proofEffectiveFrom: life.certificationProofAt,
-        proofExpiresAt: life.caseExpiresAt,
-      });
-      const runtime = mintProductionReferenceRuntimeManifest("TEST");
-      const built = p24BuildCandidate({
-        assuranceTargetFingerprint: cert.targetFingerprint,
-      });
-      const candidate = {
-        ...built.candidate,
-        assuranceTargetFingerprint: cert.targetFingerprint,
-        referenceRuntimeManifestHash: runtime.manifestHash,
+  it(
+    "S. release manifest only after QUALIFIED_FOR_RELEASE",
+    async () => {
+      // createP24Env + golden Phase2→8 + Phase23 qualify/certify + finalize
+      // routinely exceeds Vitest's default 5s in CI. Instrument to prove finite
+      // stages; local 15s budget only — no global testTimeout change.
+      const t0 = Date.now();
+      const steps: Array<{ step: string; ms: number }> = [];
+      let current: string | undefined;
+      const stamp = (step: string, startedAt: number) => {
+        const ms = Date.now() - startedAt;
+        steps.push({ step, ms });
+        console.info(`[p24-S] ${step}=${ms}ms elapsed=${Date.now() - t0}ms`);
       };
-      const qRun = await env.stack.qualificationService.createQualificationRun({
-        candidate,
-        runtimeManifest: runtime,
-        certificateId: cert.certificateId,
-      });
-      // Without trusted evidence → INCONCLUSIVE / not qualified → no release manifest
-      const incomplete =
-        await env.stack.qualificationService.finalizeQualification({
-          qualificationRunId: qRun.qualificationRunId,
-          candidate,
-          buildManifest: built.buildManifest,
-          runtimeManifest: runtime,
-          readiness: allCriticalPass(),
-        });
-      expect(incomplete.record.outcome).not.toBe("QUALIFIED_FOR_RELEASE");
-      expect(incomplete.manifest).toBeNull();
-      void golden;
-    } finally {
-      await env.close();
-    }
-  });
+      const timed = async <T>(
+        step: string,
+        fn: () => Promise<T>,
+      ): Promise<T> => {
+        current = step;
+        console.info(`[p24-S] start ${step} elapsed=${Date.now() - t0}ms`);
+        const startedAt = Date.now();
+        try {
+          return await fn();
+        } finally {
+          stamp(step, startedAt);
+          current = undefined;
+        }
+      };
 
-  it("T. migration continuity 016–019 + current schema", async () => {
+      const life = p23LifecycleFromAnchor(ANCHOR);
+      const env = await timed("1.createP24Env", () =>
+        createP24Env("manifest-s", { seedControlPlane: true }),
+      );
+      const projectId = uniquePostgresTestId("p24s");
+      try {
+        await timed("2.seedP23Authority", () =>
+          seedP23Authority(env.db, projectId),
+        );
+        const { institutionId } = await timed("3.createInstitution", () =>
+          p23CreateInstitution(env.stack, projectId),
+        );
+        const golden = await timed("4.advanceToCompletedRun", () =>
+          advanceToCompletedRun(
+            env.stack,
+            buildPostgresTestAdmissionRequest({ testName: "p24-s-g" }),
+          ),
+        );
+        const ctx = await timed("5.qualifyThroughAssessment", () =>
+          p23QualifyThroughAssessment(env.stack, {
+            projectId,
+            institutionId,
+            evidenceGeneratedAt: life.evidenceGeneratedAt,
+            proofEffectiveFrom: life.runCreatedAt,
+            proofExpiresAt: life.caseExpiresAt,
+          }),
+        );
+        const cert = await timed("6.certifyQualified", () =>
+          p23CertifyQualified(env.stack, ctx, {
+            proofEffectiveFrom: life.certificationProofAt,
+            proofExpiresAt: life.caseExpiresAt,
+          }),
+        );
+        const runtime = mintProductionReferenceRuntimeManifest("TEST");
+        const built = p24BuildCandidate({
+          assuranceTargetFingerprint: cert.targetFingerprint,
+        });
+        const candidate = {
+          ...built.candidate,
+          assuranceTargetFingerprint: cert.targetFingerprint,
+          referenceRuntimeManifestHash: runtime.manifestHash,
+        };
+        const qRun = await timed("7.createQualificationRun", () =>
+          env.stack.qualificationService.createQualificationRun({
+            candidate,
+            runtimeManifest: runtime,
+            certificateId: cert.certificateId,
+          }),
+        );
+        // Without trusted evidence → INCONCLUSIVE / not qualified → no release manifest
+        const incomplete = await timed("8.finalizeQualification", () =>
+          env.stack.qualificationService.finalizeQualification({
+            qualificationRunId: qRun.qualificationRunId,
+            candidate,
+            buildManifest: built.buildManifest,
+            runtimeManifest: runtime,
+            readiness: allCriticalPass(),
+          }),
+        );
+        expect(incomplete.record.outcome).not.toBe("QUALIFIED_FOR_RELEASE");
+        expect(incomplete.manifest).toBeNull();
+        void golden;
+      } catch (error) {
+        console.info(
+          `[p24-S] FAIL current=${current ?? "none"} steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
+        throw error;
+      } finally {
+        await timed("9.closeEnv", () => env.close());
+        console.info(
+          `[p24-S] DONE steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
+      }
+    },
+    15_000,
+  );
+
+  it("T. migration continuity 016–021 + current schema", async () => {
     const env = await createP24Env("schema-t");
     try {
-      expect(SUPPORTED_SCHEMA_VERSION).toBe(
-        "019_phase24_production_synthesis",
-      );
+      expect(SUPPORTED_SCHEMA_VERSION).toBe("021_product_revenue_recovery_integrity");
       const health = await new PostgresHealthService(
         env.db,
         "postgres",
@@ -1472,6 +1578,8 @@ describe("Phase 24 postgres production synthesis", () => {
       expect(applied).toContain("017_phase22_governed_federation");
       expect(applied).toContain("018_phase23_independent_assurance");
       expect(applied).toContain("019_phase24_production_synthesis");
+      expect(applied).toContain("020_product_revenue_recovery");
+      expect(applied).toContain("021_product_revenue_recovery_integrity");
       const restarted = await createP24ConcurrentRuntime(env.db, "schema-tr");
       expect(restarted.stack.assuranceService).toBeDefined();
       expect(restarted.stack.qualificationService).toBeDefined();

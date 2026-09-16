@@ -42,50 +42,122 @@ import {
 } from "../../verification/artifact-verifier.js";
 
 describe("PostgreSQL Phase 11 acceptance", () => {
-  it("durable requester/approver authority survives restart", async () => {
-    const envA = await createTestStack(uniquePostgresTestId("auth_a"));
-    try {
-      const grantsA = await envA.stack.authorityDirectory.listRequesterGrants(
-        EXAMPLE_REQUESTER_ID,
-        EXAMPLE_PROJECT_ID,
-      );
-      expect(grantsA.length).toBeGreaterThan(0);
-      const approverA = await envA.stack.authorityDirectory.isApproverEnabled(
-        "approver_bootstrap",
-        EXAMPLE_PROJECT_ID,
-      );
-      expect(approverA).toBe(true);
-      const admitted = await envA.stack.admission.admit(
-        buildPostgresTestAdmissionRequest({ testName: "auth-restart" }),
-      );
-      expect(admitted.outcome).toBe("ADMITTED");
-      await envA.close();
+  it(
+    "durable requester/approver authority survives restart",
+    async () => {
+      // Dual createTestStack (migrate+seed) + admit regularly exceeds Vitest's
+      // default 5s on accumulated CI DBs. Step timings prove finite work — no
+      // lock-spin or sleep. Local budget only; global testTimeout unchanged.
+      const t0 = Date.now();
+      const steps: Array<{ step: string; ms: number }> = [];
+      let current: string | undefined;
+      const stamp = (step: string, startedAt: number) => {
+        const ms = Date.now() - startedAt;
+        steps.push({ step, ms });
+        console.info(
+          `[p11-auth-restart] ${step}=${ms}ms elapsed=${Date.now() - t0}ms`,
+        );
+      };
+      const timed = async <T>(
+        step: string,
+        fn: () => Promise<T>,
+      ): Promise<T> => {
+        current = step;
+        console.info(
+          `[p11-auth-restart] start ${step} elapsed=${Date.now() - t0}ms`,
+        );
+        const startedAt = Date.now();
+        try {
+          return await fn();
+        } finally {
+          stamp(step, startedAt);
+          current = undefined;
+        }
+      };
 
-      const envB = await createTestStack(uniquePostgresTestId("auth_b"));
+      const envA = await timed("1.createStackA", () =>
+        createTestStack(uniquePostgresTestId("auth_a")),
+      );
       try {
-        const grantsB = await envB.stack.authorityDirectory.listRequesterGrants(
-          EXAMPLE_REQUESTER_ID,
-          EXAMPLE_PROJECT_ID,
+        const grantsA = await timed("2.listRequesterGrantsA", () =>
+          envA.stack.authorityDirectory.listRequesterGrants(
+            EXAMPLE_REQUESTER_ID,
+            EXAMPLE_PROJECT_ID,
+          ),
         );
-        expect(grantsB).toEqual(grantsA);
-        const approverB = await envB.stack.authorityDirectory.isApproverEnabled(
-          "approver_bootstrap",
-          EXAMPLE_PROJECT_ID,
+        expect(grantsA.length).toBeGreaterThan(0);
+        const approverA = await timed("3.isApproverEnabledA", () =>
+          envA.stack.authorityDirectory.isApproverEnabled(
+            "approver_bootstrap",
+            EXAMPLE_PROJECT_ID,
+          ),
         );
-        expect(approverB).toBe(approverA);
+        expect(approverA).toBe(true);
+        // Dedicated project for admit so Phase2 lock cannot collide with the
+        // following nonce-outbox test on EXAMPLE_PROJECT_ID under Vitest timeout
+        // async leakage.
+        const admitProjectId = uniquePostgresTestId("auth_restart_proj");
+        await timed("4.seedAdmitProject", () =>
+          seedDedicatedPostgresTestProject(envA.db, admitProjectId),
+        );
+        const admitted = await timed("5.admit", () =>
+          envA.stack.admission.admit(
+            buildPostgresTestAdmissionRequest({
+              testName: "auth-restart",
+              projectId: admitProjectId,
+            }),
+          ),
+        );
+        expect(admitted.outcome).toBe("ADMITTED");
+        await timed("6.closeStackA", () => envA.close());
+
+        const envB = await timed("7.createStackB", () =>
+          createTestStack(uniquePostgresTestId("auth_b")),
+        );
+        try {
+          const grantsB = await timed("8.listRequesterGrantsB", () =>
+            envB.stack.authorityDirectory.listRequesterGrants(
+              EXAMPLE_REQUESTER_ID,
+              EXAMPLE_PROJECT_ID,
+            ),
+          );
+          expect(grantsB).toEqual(grantsA);
+          const approverB = await timed("9.isApproverEnabledB", () =>
+            envB.stack.authorityDirectory.isApproverEnabled(
+              "approver_bootstrap",
+              EXAMPLE_PROJECT_ID,
+            ),
+          );
+          expect(approverB).toBe(approverA);
+        } finally {
+          await timed("10.closeStackB", () => envB.close());
+        }
+      } catch (error) {
+        console.info(
+          `[p11-auth-restart] FAIL current=${current ?? "none"} steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
+        throw error;
       } finally {
-        await envB.close();
+        await envA.close().catch(() => undefined);
+        console.info(
+          `[p11-auth-restart] DONE steps=${JSON.stringify(steps)} elapsed=${Date.now() - t0}ms`,
+        );
       }
-    } finally {
-      await envA.close().catch(() => undefined);
-    }
-  });
+    },
+    15_000,
+  );
 
   it("does not persist plaintext approval nonce in durable outbox", async () => {
     const env = await createTestStack(uniquePostgresTestId("nonce_audit"));
     try {
+      // Unique Phase2 identity (projectId + objectiveId) so this scenario is
+      // repeatable on accumulated DBs and isolated from sibling tests that may
+      // still hold EXAMPLE_PROJECT_ID admission locks after a Vitest timeout.
+      const projectId = uniquePostgresTestId("nonce_audit_proj");
+      await seedDedicatedPostgresTestProject(env.db, projectId);
       const request = buildPostgresTestAdmissionRequest({
         testName: "nonce-outbox-audit",
+        projectId,
       });
       const { approvalRequestId } = await advanceToAwaitingApproval(
         env.stack,

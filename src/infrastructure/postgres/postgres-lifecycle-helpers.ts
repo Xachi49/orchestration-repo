@@ -16,7 +16,19 @@ export async function advanceToAwaitingApproval(
 ): Promise<{ runId: string; approvalRequestId: string }> {
   const admitted = await stack.admission.admit(request);
   if (admitted.outcome !== "ADMITTED") {
-    throw new Error(`expected ADMITTED, got ${admitted.outcome}`);
+    const detail =
+      admitted.outcome === "CONFLICT" || admitted.outcome === "REJECTED"
+        ? ` reasonCode=${admitted.reasonCode} message=${admitted.message}`
+        : admitted.outcome === "ACTIVE_DUPLICATE" ||
+            admitted.outcome === "COMPLETED_DUPLICATE"
+          ? ` runId=${admitted.runId} idempotencyKey=${admitted.idempotencyKey}`
+          : "";
+    throw new Error(
+      `expected ADMITTED, got ${admitted.outcome}${detail} ` +
+        `(projectId=${request.projectId} objectiveId=${request.objectiveId} ` +
+        `objectiveVersion=${request.objectiveVersion} ` +
+        `requestedEnvironment=${request.requestedEnvironment})`,
+    );
   }
   const runId = admitted.runId!;
   await stack.ingestion.ingest(runId, request.projectId, EXAMPLE_ENVIRONMENT);
@@ -76,7 +88,9 @@ export async function approveAwaitingRun(
     approverId: "approver_bootstrap",
     decision: "APPROVE",
     decisionNonce,
-    submittedAt: new Date().toISOString(),
+    // Must follow the stack clock — wall-clock submittedAt expires MutableClock
+    // approval windows (e.g. RR fixtures anchored on RR_MONDAY_IN_WINDOW).
+    submittedAt: stack.clock.nowIso(),
     note: "postgres acceptance",
   });
   if (approved.result !== "APPROVED") {

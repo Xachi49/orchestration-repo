@@ -463,8 +463,9 @@ export interface PostgresOrchestratorStack {
   federationAgreements: PostgresFederationAgreementRepository;
   assuranceService: AssuranceOrchestrationService;
   revenueRecoveryService: import("../../revenue-recovery/service.js").RevenueRecoveryService;
-  /** Fake messaging provider attached to revenueRecoveryService (no real sends). */
-  revenueRecoveryMessaging: import("../../revenue-recovery/messaging.js").FakeRecoveryMessagingProvider;
+  /** Messaging provider attached to revenueRecoveryService (Fake / Shadow / Resend). */
+  revenueRecoveryMessaging: import("../../revenue-recovery/messaging.js").RecoveryMessagingProvider;
+  revenueRecoveryPilotConfig: import("../../revenue-recovery/pilot-config.js").RecoveryPilotConfig;
   qualificationService: QualificationOrchestrationService;
   referenceRuntimeManifest: ReferenceRuntimeManifest;
   canonicalAuthority: import("../../governance/canonical-authority.js").CanonicalAuthorityGrantPort;
@@ -526,9 +527,16 @@ export async function createPostgresOrchestratorStack(options: {
   revenueRecoveryRuntimeEnvironment?: import("../../revenue-recovery/provenance.js").ProductRuntimeEnvironment;
   /**
    * @internal TEST ONLY — replace the default execution-friendly planning model.
-   * Used by Revenue Recovery Postgres qualification to plan SEND_RECOVERY_SMS.
+   * Used by Revenue Recovery Postgres qualification to plan SEND_RECOVERY_*.
    */
   planningModel?: import("../../planning/model.js").PlanningModel;
+  /**
+   * @internal TEST ONLY — override live-pilot messaging / Resend transport.
+   * Production must not set these; defaults load from server env.
+   */
+  revenueRecoveryPilotConfig?: import("../../revenue-recovery/pilot-config.js").RecoveryPilotConfig;
+  revenueRecoveryMessaging?: import("../../revenue-recovery/messaging.js").RecoveryMessagingProvider;
+  revenueRecoveryResendTransport?: import("../../revenue-recovery/resend-provider.js").ResendTransport;
   /**
    * @internal TEST ONLY — PostgreSQL integration tests may supply in-memory
    * authoritative evidence seeds. Bootstrap and production runtime must not set this.
@@ -1727,13 +1735,22 @@ export async function createPostgresOrchestratorStack(options: {
       : {}),
   });
 
-  const { service: revenueRecoveryService, messaging: revenueRecoveryMessaging } =
+  const { service: revenueRecoveryService, messaging: revenueRecoveryMessaging, pilotConfig: revenueRecoveryPilotConfig } =
     createPostgresRevenueRecoveryService({
       db,
       nowIso: () => clock.nowIso(),
       admission,
       ...(options.revenueRecoveryRuntimeEnvironment
         ? { runtimeEnvironment: options.revenueRecoveryRuntimeEnvironment }
+        : {}),
+      ...(options.revenueRecoveryPilotConfig
+        ? { pilotConfig: options.revenueRecoveryPilotConfig }
+        : {}),
+      ...(options.revenueRecoveryMessaging
+        ? { messaging: options.revenueRecoveryMessaging }
+        : {}),
+      ...(options.revenueRecoveryResendTransport
+        ? { resendTransport: options.revenueRecoveryResendTransport }
         : {}),
     });
   // Outreach is reachable only through the canonical Phase7 SafeActuator path.
@@ -1906,6 +1923,7 @@ export async function createPostgresOrchestratorStack(options: {
     assuranceService,
     revenueRecoveryService,
     revenueRecoveryMessaging,
+    revenueRecoveryPilotConfig,
     qualificationService,
     referenceRuntimeManifest,
     canonicalAuthority: governanceCanonicalAuthority,

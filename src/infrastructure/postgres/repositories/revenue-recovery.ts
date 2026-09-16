@@ -323,6 +323,19 @@ export class PostgresRecoveryAttemptRepository
     return res.rows[0] ? parseRecoveryAttempt(res.rows[0].payload) : null;
   }
 
+  async getByProviderMessageId(
+    providerMessageId: string,
+  ): Promise<RecoveryAttempt | null> {
+    const res = await this.db.query<{ payload: unknown }>(
+      `SELECT payload FROM revenue_recovery_attempts
+       WHERE provider_message_id = $1
+          OR payload->>'providerMessageId' = $1
+       LIMIT 1`,
+      [providerMessageId],
+    );
+    return res.rows[0] ? parseRecoveryAttempt(res.rows[0].payload) : null;
+  }
+
   async listByCase(recoveryCaseId: string): Promise<readonly RecoveryAttempt[]> {
     const res = await this.db.query<{ payload: unknown }>(
       `SELECT payload FROM revenue_recovery_attempts
@@ -337,9 +350,13 @@ export class PostgresRecoveryAttemptRepository
     await this.db.query(
       `INSERT INTO revenue_recovery_attempts (
          attempt_id, recovery_case_id, lead_id, customer_account_id, project_id,
-         channel, sent_at, payload, record_revision, execution_action_identity
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
-       ON CONFLICT (attempt_id) DO NOTHING`,
+         channel, sent_at, payload, record_revision, execution_action_identity,
+         provider_message_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11)
+       ON CONFLICT (attempt_id) DO UPDATE SET
+         payload = EXCLUDED.payload,
+         record_revision = EXCLUDED.record_revision,
+         provider_message_id = EXCLUDED.provider_message_id`,
       [
         parsed.attemptId,
         parsed.recoveryCaseId,
@@ -351,6 +368,7 @@ export class PostgresRecoveryAttemptRepository
         JSON.stringify(parsed),
         parsed.recordRevision,
         parsed.executionActionIdentity,
+        parsed.providerMessageId ?? null,
       ],
     );
   }

@@ -89,6 +89,17 @@ import type {
 } from "./repositories.js";
 import { maskEmail, maskPhone } from "./hash.js";
 import { REVENUE_RECOVERY_DOCTRINE } from "./doctrine.js";
+import type { RecoveryPilotConfig } from "./pilot-config.js";
+import { recoveryPilotHealth } from "./pilot-config.js";
+import type { RecoveryProviderEventRepository } from "./provider-events.js";
+import {
+  newProviderEventId,
+  parseRecoveryProviderEvent,
+} from "./provider-events.js";
+import {
+  verifyWebIngestAuthentication,
+  AuthenticatedWebLeadSourceAdapter,
+} from "./web-lead-source.js";
 
 export type RevenueRecoveryServiceDeps = {
   nowIso: () => string;
@@ -110,6 +121,9 @@ export type RevenueRecoveryServiceDeps = {
   runtimeEnvironment?: ProductRuntimeEnvironment;
   /** Optional — when present, materializeRecoveryObjective may admit via Phase2. */
   admission?: ObjectiveAdmissionService;
+  /** Live pilot config (modes, tenant gate). Defaults to FAKE when omitted. */
+  pilotConfig?: RecoveryPilotConfig;
+  providerEvents?: RecoveryProviderEventRepository;
 };
 
 /**
@@ -127,9 +141,16 @@ const ENGINE_OPERATIONAL_EVENT_PROVENANCE: TrustProvenanceClass =
  */
 export class RevenueRecoveryService {
   private readonly runtimeEnvironment: ProductRuntimeEnvironment;
+  private readonly pilotConfig: RecoveryPilotConfig;
+  private readonly webAdapter = new AuthenticatedWebLeadSourceAdapter();
 
   constructor(private readonly deps: RevenueRecoveryServiceDeps) {
     this.runtimeEnvironment = deps.runtimeEnvironment ?? "DEVELOPMENT";
+    this.pilotConfig = deps.pilotConfig ?? { mode: "FAKE", livePilotRecipientAllowlist: [] };
+  }
+
+  getPilotHealth() {
+    return recoveryPilotHealth(this.pilotConfig);
   }
 
   async putConfiguration(
@@ -698,6 +719,11 @@ export class RevenueRecoveryService {
           renderedMessage: this.renderBoundedMessage(template!, templateValues),
         }),
         nowIso: now,
+        context: {
+          providerIdempotencyKey: executionActionIdentity,
+          customerAccountId: recoveryCase.customerAccountId,
+          projectId: recoveryCase.projectId,
+        },
       });
     } else if (input.actionType === "SEND_RECOVERY_EMAIL") {
       if (!lead.email) {
@@ -709,6 +735,23 @@ export class RevenueRecoveryService {
       this.assertChannelPermitted(policy, "EMAIL");
       channel = "EMAIL";
       recipientRef = maskEmail(lead.email) ?? "email";
+      if (
+        this.pilotConfig.mode === "SHADOW" ||
+        this.pilotConfig.mode === "LIVE_EMAIL"
+      ) {
+        await this.audit({
+          kind: "LIVE_EMAIL_REQUESTED",
+          customerAccountId: recoveryCase.customerAccountId,
+          projectId: recoveryCase.projectId,
+          leadId: lead.leadId,
+          recoveryCaseId: recoveryCase.recoveryCaseId,
+          payload: {
+            mode: this.pilotConfig.mode,
+            templateId: template!.templateId,
+            templateVersion: template!.version,
+          },
+        });
+      }
       delivery = await this.deps.messaging.sendEmail({
         action: SendRecoveryEmailSchema.parse({
           actionType: "SEND_RECOVERY_EMAIL",
@@ -724,6 +767,11 @@ export class RevenueRecoveryService {
           renderedMessage: this.renderBoundedMessage(template!, templateValues),
         }),
         nowIso: now,
+        context: {
+          providerIdempotencyKey: executionActionIdentity,
+          customerAccountId: recoveryCase.customerAccountId,
+          projectId: recoveryCase.projectId,
+        },
       });
     } else {
       if (!lead.phone) {
@@ -744,8 +792,23 @@ export class RevenueRecoveryService {
           ...(input.args.note ? { note: input.args.note } : {}),
         }),
         nowIso: now,
+        context: {
+          providerIdempotencyKey: executionActionIdentity,
+          customerAccountId: recoveryCase.customerAccountId,
+          projectId: recoveryCase.projectId,
+        },
       });
     }
+
+    const providerName = delivery.providerName ?? "FAKE";
+    const deliveryState =
+      providerName === "SHADOW"
+        ? ("SHADOWED" as const)
+        : delivery.outcome === "SENT"
+          ? ("SENT" as const)
+          : delivery.outcome === "FAILED"
+            ? ("FAILED" as const)
+            : ("SIMULATED" as const);
 
     const attempt: RecoveryAttempt = {
       attemptId: newRecoveryAttemptId(executionActionIdentity),
@@ -766,6 +829,8 @@ export class RevenueRecoveryService {
       sentAt: now,
       deliveryOutcome: delivery.outcome,
       providerMessageId: delivery.providerMessageId,
+      providerName,
+      deliveryState,
       recordRevision: 1,
     };
     await this.deps.attempts.save(attempt);
@@ -795,9 +860,217 @@ export class RevenueRecoveryService {
         runId: input.runId,
         executionAttemptId: input.executionAttemptId,
         stepId: input.stepId,
+        providerName,
+        deliveryState,
+        mode: this.pilotConfig.mode,
       },
     });
+    if (providerName === "RESEND" && delivery.outcome === "SENT") {
+      await this.audit({
+        kind: "LIVE_EMAIL_SENT",
+        customerAccountId: recoveryCase.customerAccountId,
+        projectId: recoveryCase.projectId,
+        leadId: lead.leadId,
+        recoveryCaseId: recoveryCase.recoveryCaseId,
+        payload: {
+          attemptId: attempt.attemptId,
+          providerMessageId: delivery.providerMessageId,
+        },
+      });
+    }
     return { attempt, replayed: false };
+  }
+
+  /**
+   * Authenticated web-form ingress → LeadIngestRequest → ingestLead.
+   * Tenant/project bind from trusted pilot server config — never from the caller body.
+   * WEB_FORM is lead-source truth only — never sale/payment confirmation.
+   */
+  async ingestWebLead(input: {
+    authorizationHeader?: string | undefined;
+    tokenHeader?: string | undefined;
+    payload: unknown;
+  }): Promise<{ lead: Lead; created: boolean }> {
+    const customerAccountId = this.pilotConfig.livePilotCustomerAccountId;
+    const projectId = this.pilotConfig.livePilotProjectId;
+    if (!customerAccountId || !projectId) {
+      throw new RevenueRecoveryError(
+        "WEB_INGEST_NOT_CONFIGURED",
+        "Web ingest requires RECOVERY_LIVE_PILOT_CUSTOMER_ACCOUNT_ID and RECOVERY_LIVE_PILOT_PROJECT_ID",
+      );
+    }
+    try {
+      verifyWebIngestAuthentication({
+        authorizationHeader: input.authorizationHeader,
+        tokenHeader: input.tokenHeader,
+        configuredSecret: this.pilotConfig.webIngestSecret,
+      });
+      const normalized = this.webAdapter.normalize({
+        payload: input.payload,
+        customerAccountId,
+        projectId,
+      });
+      const result = await this.ingestLead(normalized);
+      await this.audit({
+        kind: "WEB_LEAD_RECEIVED",
+        customerAccountId,
+        projectId,
+        leadId: result.lead.leadId,
+        payload: {
+          created: result.created,
+          externalLeadId: result.lead.externalLeadId,
+          hasEstimatedValue: result.lead.estimatedValue != null,
+        },
+      });
+      return result;
+    } catch (error) {
+      await this.audit({
+        kind: "WEB_LEAD_REJECTED",
+        customerAccountId,
+        projectId,
+        payload: {
+          reason:
+            error instanceof RevenueRecoveryError ? error.code : "REJECTED",
+        },
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /**
+   * Correlate Resend webhook by provider message id → RecoveryAttempt.
+   * Unknown ids are audited and ignored (no cross-case mutation).
+   * Inbound reply correlation is deferred when thread ids are absent.
+   */
+  async applyResendWebhookEvent(input: {
+    providerEventKey: string;
+    eventKind: string;
+    providerMessageId?: string;
+    occurredAt?: string;
+    metadata?: Record<string, string | number | boolean | null>;
+  }): Promise<{ applied: boolean; replayed: boolean }> {
+    if (!this.deps.providerEvents) {
+      throw new RevenueRecoveryError(
+        "PROVIDER_CONFIG_INVALID",
+        "Provider event store is not configured",
+      );
+    }
+    const existing = await this.deps.providerEvents.getByProviderEventKey({
+      providerName: "RESEND",
+      providerEventKey: input.providerEventKey,
+    });
+    if (existing) {
+      return { applied: false, replayed: true };
+    }
+
+    const now = input.occurredAt ?? this.deps.nowIso();
+    let attempt: RecoveryAttempt | null = null;
+    if (input.providerMessageId) {
+      attempt = await this.deps.attempts.getByProviderMessageId(
+        input.providerMessageId,
+      );
+    }
+
+    if (!attempt) {
+      await this.deps.providerEvents.save(
+        parseRecoveryProviderEvent({
+          providerEventId: newProviderEventId({
+            providerName: "RESEND",
+            providerEventKey: input.providerEventKey,
+          }),
+          providerName: "RESEND",
+          providerEventKey: input.providerEventKey,
+          ...(input.providerMessageId
+            ? { providerMessageId: input.providerMessageId }
+            : {}),
+          eventKind: input.eventKind,
+          occurredAt: now,
+          payload: {
+            correlated: false,
+            ...(input.metadata ?? {}),
+          },
+          recordRevision: 1,
+        }),
+      );
+      return { applied: false, replayed: false };
+    }
+
+    const deliveryState = mapResendEventToDeliveryState(input.eventKind);
+    const updated: RecoveryAttempt = {
+      ...attempt,
+      ...(deliveryState ? { deliveryState } : {}),
+      lastProviderEventKind: input.eventKind,
+      lastProviderEventAt: now,
+      recordRevision: attempt.recordRevision + 1,
+    };
+    await this.deps.attempts.save(updated);
+
+    await this.deps.providerEvents.save(
+      parseRecoveryProviderEvent({
+        providerEventId: newProviderEventId({
+          providerName: "RESEND",
+          providerEventKey: input.providerEventKey,
+        }),
+        providerName: "RESEND",
+        providerEventKey: input.providerEventKey,
+        ...(input.providerMessageId
+          ? { providerMessageId: input.providerMessageId }
+          : {}),
+        eventKind: input.eventKind,
+        attemptId: attempt.attemptId,
+        recoveryCaseId: attempt.recoveryCaseId,
+        leadId: attempt.leadId,
+        customerAccountId: attempt.customerAccountId,
+        projectId: attempt.projectId,
+        occurredAt: now,
+        payload: { correlated: true, ...(input.metadata ?? {}) },
+        recordRevision: 1,
+      }),
+    );
+
+    const auditKind = mapResendEventToAuditKind(input.eventKind);
+    if (auditKind) {
+      await this.audit({
+        kind: auditKind,
+        customerAccountId: attempt.customerAccountId,
+        projectId: attempt.projectId,
+        leadId: attempt.leadId,
+        recoveryCaseId: attempt.recoveryCaseId,
+        payload: {
+          attemptId: attempt.attemptId,
+          eventKind: input.eventKind,
+          providerMessageId: input.providerMessageId ?? null,
+        },
+      });
+    }
+
+    if (
+      input.eventKind === "email.bounced" ||
+      input.eventKind === "email.complained" ||
+      input.eventKind === "email.suppressed"
+    ) {
+      await this.suppressEmailChannel(attempt.leadId, now, input.eventKind);
+    }
+
+    return { applied: true, replayed: false };
+  }
+
+  private async suppressEmailChannel(
+    leadId: string,
+    nowIso: string,
+    reason: string,
+  ): Promise<void> {
+    const lead = await this.requireLead(leadId);
+    const updated: Lead = {
+      ...lead,
+      consent: {
+        ...(lead.consent ?? {}),
+        emailOptIn: false,
+        notes: `email_suppressed:${reason}`.slice(0, 500),
+      },
+      recordRevision: lead.recordRevision + 1,
+    };
+    await this.deps.leads.save(updated);
   }
 
   async attributeFromEvent(input: {
@@ -1030,7 +1303,27 @@ export class RevenueRecoveryService {
       recoveryCase,
       lead: this.sanitizeLead(lead),
       contactPolicy,
-      attempts,
+      attempts: attempts.map((a) => ({
+        attemptId: a.attemptId,
+        channel: a.channel,
+        sentAt: a.sentAt,
+        deliveryOutcome: a.deliveryOutcome,
+        leadId: a.leadId,
+        runId: a.runId,
+        providerName: a.providerName ?? null,
+        providerMessageId: a.providerMessageId ?? null,
+        providerIdempotencyKey: a.providerIdempotencyKey,
+        deliveryState: a.deliveryState ?? null,
+        lastProviderEventKind: a.lastProviderEventKind ?? null,
+        lastProviderEventAt: a.lastProviderEventAt ?? null,
+        recipientRef: a.recipientRef,
+        templateId: a.templateId ?? null,
+        templateVersion: a.templateVersion ?? null,
+      })),
+      provider: {
+        mode: this.pilotConfig.mode,
+        health: this.getPilotHealth(),
+      },
       events: events.map((e) => ({
         eventId: e.eventId,
         kind: e.kind,
@@ -1143,6 +1436,7 @@ export class RevenueRecoveryService {
         gapDetectedAt: c.gapDetectedAt,
         orchestratorRunId: c.orchestratorRunId ?? null,
       })),
+      pilot: this.getPilotHealth(),
     };
   }
 
@@ -1345,5 +1639,49 @@ export class RevenueRecoveryService {
       occurredAt,
       ...(input.payload ? { payload: input.payload } : {}),
     });
+  }
+}
+
+function mapResendEventToDeliveryState(
+  eventKind: string,
+): RecoveryAttempt["deliveryState"] | undefined {
+  switch (eventKind) {
+    case "email.sent":
+      return "SENT";
+    case "email.delivered":
+      return "DELIVERED";
+    case "email.delivery_delayed":
+      return "DELAYED";
+    case "email.bounced":
+      return "BOUNCED";
+    case "email.failed":
+      return "FAILED";
+    case "email.complained":
+      return "COMPLAINED";
+    case "email.suppressed":
+      return "SUPPRESSED";
+    default:
+      return undefined;
+  }
+}
+
+function mapResendEventToAuditKind(
+  eventKind: string,
+): ProductAuditEvent["kind"] | undefined {
+  switch (eventKind) {
+    case "email.delivered":
+      return "LIVE_EMAIL_DELIVERED";
+    case "email.bounced":
+      return "LIVE_EMAIL_BOUNCED";
+    case "email.failed":
+      return "LIVE_EMAIL_FAILED";
+    case "email.complained":
+      return "LIVE_EMAIL_COMPLAINED";
+    case "email.suppressed":
+      return "LIVE_EMAIL_SUPPRESSED";
+    case "email.sent":
+      return "LIVE_EMAIL_SENT";
+    default:
+      return undefined;
   }
 }

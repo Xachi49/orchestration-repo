@@ -12,6 +12,13 @@ import type { PlanningModel } from "../../planning/model.js";
 import type { ProductRuntimeEnvironment } from "../../revenue-recovery/provenance.js";
 import type { RecoverySmsPlanBinding } from "../../revenue-recovery/recovery-sms-planning-model.js";
 import { createRecoverySmsPlanningModel } from "../../revenue-recovery/recovery-sms-planning-model.js";
+import {
+  createRecoveryEmailPlanningModel,
+  type RecoveryEmailPlanBinding,
+} from "../../revenue-recovery/recovery-email-planning-model.js";
+import type { RecoveryPilotConfig } from "../../revenue-recovery/pilot-config.js";
+import type { RecoveryMessagingProvider } from "../../revenue-recovery/messaging.js";
+import type { ResendTransport } from "../../revenue-recovery/resend-provider.js";
 import { MutableClock } from "../clock.js";
 import { seedDedicatedPostgresTestProject } from "./test-project-isolation.js";
 import {
@@ -183,24 +190,30 @@ export type RrPostgresEnv = {
   clock: MutableClock;
   ids: RrUniqueIds;
   planBinding: RecoverySmsPlanBinding;
+  emailPlanBinding: RecoveryEmailPlanBinding;
   close: () => Promise<void>;
 };
 
 /**
  * Accumulated-DB-safe RR Postgres environment:
- * unique project (SUPERVISED) + MutableClock + TEST provenance + optional SMS plan.
+ * unique project (SUPERVISED) + MutableClock + TEST provenance + optional SMS/email plan.
  */
 export async function createRrPostgresEnv(input: {
   label: string;
+  ids?: RrUniqueIds;
   clockIso?: string;
   withRecoverySmsPlan?: boolean;
+  withRecoveryEmailPlan?: boolean;
   runtimeEnvironment?: ProductRuntimeEnvironment;
+  pilotConfig?: RecoveryPilotConfig;
+  messaging?: RecoveryMessagingProvider;
+  resendTransport?: ResendTransport;
 }): Promise<RrPostgresEnv> {
   process.env["APPROVAL_DELIVERY_SECRET_KEY"] =
     process.env["APPROVAL_DELIVERY_SECRET_KEY"] ??
     Buffer.alloc(32, 11).toString("base64");
 
-  const ids = uniqueRrIds(input.label);
+  const ids = input.ids ?? uniqueRrIds(input.label);
   const instanceId = uniquePostgresTestId(`rr_stack_${input.label}`);
   const db = await createTestDatabase(instanceId);
   await seedSupervisedRecoveryProject(db, ids.projectId);
@@ -212,8 +225,16 @@ export async function createRrPostgresEnv(input: {
     templateId: "",
     templateVersion: 1,
   };
+  const emailPlanBinding: RecoveryEmailPlanBinding = {
+    recoveryCaseId: "",
+    leadId: "",
+    templateId: "",
+    templateVersion: 1,
+  };
   let planningModel: PlanningModel | undefined;
-  if (input.withRecoverySmsPlan !== false) {
+  if (input.withRecoveryEmailPlan) {
+    planningModel = createRecoveryEmailPlanningModel(emailPlanBinding);
+  } else if (input.withRecoverySmsPlan !== false) {
     planningModel = createRecoverySmsPlanningModel(planBinding);
   }
 
@@ -225,6 +246,11 @@ export async function createRrPostgresEnv(input: {
     seedRepositorySources: true,
     revenueRecoveryRuntimeEnvironment: input.runtimeEnvironment ?? "TEST",
     ...(planningModel ? { planningModel } : {}),
+    ...(input.pilotConfig ? { revenueRecoveryPilotConfig: input.pilotConfig } : {}),
+    ...(input.messaging ? { revenueRecoveryMessaging: input.messaging } : {}),
+    ...(input.resendTransport
+      ? { revenueRecoveryResendTransport: input.resendTransport }
+      : {}),
   });
 
   return {
@@ -233,6 +259,7 @@ export async function createRrPostgresEnv(input: {
     clock,
     ids,
     planBinding,
+    emailPlanBinding,
     close: async () => {
       await stack.close();
     },
@@ -251,4 +278,8 @@ export function rrAdmissionRequest(input: {
   });
 }
 
-export { EXAMPLE_ENVIRONMENT, createRecoverySmsPlanningModel };
+export {
+  EXAMPLE_ENVIRONMENT,
+  createRecoverySmsPlanningModel,
+  createRecoveryEmailPlanningModel,
+};

@@ -39,6 +39,35 @@ export function RevenueRecoveryDashboardPage() {
       <p className="doctrine">{data.doctrine.bookedNotCollected}</p>
       <p className="doctrine">{data.doctrine.attestedNotConfirmed}</p>
       <div className="panel">
+        <h3>Pilot Health</h3>
+        <table>
+          <tbody>
+            <tr>
+              <th>Mode</th>
+              <td className="mono" data-testid="pilot-mode">
+                {data.pilot?.mode ?? "—"}
+              </td>
+            </tr>
+            <tr>
+              <th>Web ingress</th>
+              <td data-testid="pilot-web-ingress">
+                {data.pilot?.webIngestConfigured
+                  ? "configured"
+                  : "not configured"}
+              </td>
+            </tr>
+            <tr>
+              <th>Resend</th>
+              <td data-testid="pilot-resend">
+                {data.pilot?.resendConfigured
+                  ? "configured"
+                  : "not configured"}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="panel">
         <h3>Recovery Funnel</h3>
         <table>
           <tbody>
@@ -222,6 +251,17 @@ export function RevenueRecoveryCasePage() {
         </table>
       </div>
       <div className="panel">
+        <h3>Provider</h3>
+        <table>
+          <tbody>
+            <tr>
+              <th>Mode</th>
+              <td className="mono">{data.provider?.mode ?? "—"}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="panel">
         <h3>Attempts</h3>
         {data.attempts.length === 0 ? (
           <p className="empty">No outreach attempts.</p>
@@ -230,6 +270,14 @@ export function RevenueRecoveryCasePage() {
             {data.attempts.map((a) => (
               <li key={a.attemptId} className="mono">
                 {a.channel} @ {a.sentAt} → {a.deliveryOutcome}
+                {a.providerName ? ` · ${a.providerName}` : ""}
+                {a.deliveryState ? ` · state=${a.deliveryState}` : ""}
+                {a.providerMessageId
+                  ? ` · msg=${a.providerMessageId}`
+                  : ""}
+                {a.lastProviderEventKind
+                  ? ` · last=${a.lastProviderEventKind}`
+                  : ""}
               </li>
             ))}
           </ul>

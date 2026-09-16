@@ -16,7 +16,7 @@ describe("PostgreSQL migration compatibility", () => {
     try {
       const runner = new PostgresMigrationRunner(db);
       const status = await runner.status();
-      expect(SUPPORTED_SCHEMA_VERSION).toBe("021_product_revenue_recovery_integrity");
+      expect(SUPPORTED_SCHEMA_VERSION).toBe("022_product_revenue_recovery_live_pilot");
       expect(status.supported).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(status.current).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(status.pending).toEqual([]);
@@ -41,12 +41,16 @@ describe("PostgreSQL migration compatibility", () => {
         SUPPORTED_SCHEMA_VERSION,
       ]);
       await db.query(`DELETE FROM schema_migrations WHERE version = $1`, [
+        "021_product_revenue_recovery_integrity",
+      ]);
+      await db.query(`DELETE FROM schema_migrations WHERE version = $1`, [
         "020_product_revenue_recovery",
       ]);
       const before = await runner.status();
       expect(before.current).toBe("019_phase24_production_synthesis");
       expect(before.pending).toContain("020_product_revenue_recovery");
       expect(before.pending).toContain("021_product_revenue_recovery_integrity");
+      expect(before.pending).toContain("022_product_revenue_recovery_live_pilot");
 
       await expect(runner.assertCompatible()).rejects.toMatchObject({
         code: "DATABASE_SCHEMA_OUT_OF_DATE",
@@ -56,9 +60,9 @@ describe("PostgreSQL migration compatibility", () => {
       expect(applied).toContain(SUPPORTED_SCHEMA_VERSION);
 
       const after = await runner.status();
-      expect(SUPPORTED_SCHEMA_VERSION).toBe("021_product_revenue_recovery_integrity");
+      expect(SUPPORTED_SCHEMA_VERSION).toBe("022_product_revenue_recovery_live_pilot");
       expect(after.current).toBe(SUPPORTED_SCHEMA_VERSION);
-      expect(after.pending).not.toContain("021_product_revenue_recovery_integrity");
+      expect(after.pending).not.toContain("022_product_revenue_recovery_live_pilot");
       expect(after.pending).toEqual([]);
       await runner.assertCompatible();
     } finally {
@@ -101,7 +105,7 @@ describe("PostgreSQL migration compatibility", () => {
     try {
       const health = await new PostgresHealthService(db, "postgres").readiness();
       expect(health.supportedSchemaVersion).toBe(
-        "021_product_revenue_recovery_integrity",
+        "022_product_revenue_recovery_live_pilot",
       );
       expect(health.supportedSchemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
       expect(health.schemaCompatible).toBe(true);

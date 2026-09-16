@@ -28,6 +28,23 @@ export const RecoveryAttemptSchema = z
     sentAt: z.string().datetime(),
     deliveryOutcome: z.enum(["SENT", "FAILED", "SIMULATED"]),
     providerMessageId: z.string().min(1).optional(),
+    providerName: z.enum(["FAKE", "RESEND", "SHADOW"]).optional(),
+    /** Bounded delivery lifecycle from provider webhooks. */
+    deliveryState: z
+      .enum([
+        "SIMULATED",
+        "SHADOWED",
+        "SENT",
+        "DELIVERED",
+        "DELAYED",
+        "BOUNCED",
+        "FAILED",
+        "COMPLAINED",
+        "SUPPRESSED",
+      ])
+      .optional(),
+    lastProviderEventKind: z.string().max(64).optional(),
+    lastProviderEventAt: z.string().datetime().optional(),
     recordRevision: z.number().int().positive(),
   })
   .strict();

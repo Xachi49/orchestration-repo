@@ -42,4 +42,4 @@ export const RECOVERY_SAFETY_CEILINGS = {
 
 export const REVENUE_RECOVERY_PRODUCT_ID = "continuum-revenue-recovery-engine";
 export const REVENUE_RECOVERY_SCHEMA_MIGRATION =
-  "021_product_revenue_recovery_integrity" as const;
+  "022_product_revenue_recovery_live_pilot" as const;

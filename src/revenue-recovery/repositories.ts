@@ -64,6 +64,9 @@ export interface RecoveryAttemptRepository {
   getByExecutionActionIdentity(
     identity: string,
   ): Promise<RecoveryAttempt | null>;
+  getByProviderMessageId(
+    providerMessageId: string,
+  ): Promise<RecoveryAttempt | null>;
   listByCase(recoveryCaseId: string): Promise<readonly RecoveryAttempt[]>;
   save(attempt: RecoveryAttempt): Promise<void>;
 }

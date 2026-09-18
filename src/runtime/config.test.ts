@@ -10,6 +10,7 @@ const productionBase = {
   ORCHESTRATOR_AUTH_MODE: "STATIC_PRINCIPAL",
   ORCHESTRATOR_STATIC_PRINCIPAL_ID: "operator_static",
   APPROVAL_DELIVERY_SECRET_KEY: Buffer.alloc(32, 7).toString("base64"),
+  RECOVERY_PROVIDER_MODE: "SHADOW",
   ORCHESTRATOR_DEBUG: "false",
   ORCHESTRATOR_WORKER_CONCURRENCY: "4",
 };
@@ -45,6 +46,21 @@ describe("production runtime configuration", () => {
     const env = { ...productionBase };
     delete env.DATABASE_URL;
     expect(() => loadRuntimeConfig(env)).toThrow(/DATABASE_URL/);
+  });
+
+  it("rejects missing RECOVERY_PROVIDER_MODE in PRODUCTION", () => {
+    const env = { ...productionBase };
+    delete env.RECOVERY_PROVIDER_MODE;
+    expect(() => loadRuntimeConfig(env)).toThrow(/RECOVERY_PROVIDER_MODE/);
+  });
+
+  it("defaults HTTP listen to :: and prefers PORT", () => {
+    const config = loadRuntimeConfig({
+      ...productionBase,
+      PORT: "8080",
+    });
+    expect(config.httpHost).toBe("::");
+    expect(config.httpPort).toBe(8080);
   });
 
   it("rejects anonymous auth in PRODUCTION", () => {

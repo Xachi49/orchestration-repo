@@ -161,102 +161,116 @@ export async function buildServer(deps: ApiDeps = {}) {
     registerHealthRoutes(app, deps.health);
   }
 
-  app.get("/health", async () => ({
-    status: "ok",
-    phase: deps.governanceService
-      ? 20
-      : deps.decisionPolicyService
-      ? 19
-      : deps.causalService
-        ? 18
-        : deps.experimentService
-        ? 17
-        : deps.scenarioService
-          ? 16
-          : deps.portfolioService
-            ? 15
-            : deps.programService
-              ? 14
-              : deps.scheduler
-                ? 13
-                : observabilityEnabled
-                  ? 12
-                  : memoryEnabled
-                    ? 9
-                    : verificationEnabled
-                      ? 8
-                      : executionEnabled
-                        ? 7
-                        : approvalEnabled
-                          ? 6
-                          : deps.validation
-                            ? 5
-                            : 6,
-    milestone: deps.governanceService
-      ? 20
-      : deps.decisionPolicyService
-      ? 19
-      : deps.causalService
-        ? 18
-        : deps.experimentService
-        ? 17
-        : deps.scenarioService
-          ? 16
-          : deps.portfolioService
-            ? 15
-            : deps.programService
-              ? 14
-              : deps.scheduler
-                ? 13
-                : 12,
-    orchestrator: deps.governanceService
-      ? "governance"
-      : deps.decisionPolicyService
-      ? "decision-policies"
-      : deps.causalService
-        ? "causal"
-        : deps.experimentService
-        ? "experiments"
-        : deps.scenarioService
-          ? "scenarios"
-          : deps.portfolioService
-            ? "portfolios"
-            : deps.programService
-              ? "programs"
-              : deps.scheduler
-                ? "scheduler"
-                : observabilityEnabled
-                  ? "observability"
-                  : memoryEnabled
-                    ? "memory"
-                    : verificationEnabled
-                      ? "verification"
-                      : executionEnabled
-                        ? "execution"
-                        : approvalEnabled
-                          ? "authorization"
-                          : deps.validation
-                            ? "validation"
-                            : "planning",
-    llmConnected: false,
-    githubConnected: false,
-    githubWritesEnabled: false,
-    executionEnabled,
-    verificationEnabled,
-    memoryEnabled,
-    observabilityEnabled,
-    approvalEnabled,
-    schedulerEnabled: Boolean(deps.scheduler),
-    storageMode: deps.storageMode ?? "memory",
-    databaseReachable: deps.readiness?.databaseReachable ?? null,
-    schemaCompatible: deps.readiness?.schemaCompatible ?? null,
-    schemaVersion: deps.readiness?.schemaVersion ?? null,
-    supportedSchemaVersion: deps.readiness?.supportedSchemaVersion ?? null,
-    planningModelToolsEnabled: false,
-    validationModelToolsEnabled: false,
-    verificationModelToolsEnabled: false,
-    learningModelToolsEnabled: false,
-  }));
+  app.get("/health", async (_request, reply) => {
+    const liveDb = deps.health?.database
+      ? await deps.health.database()
+      : deps.readiness;
+    const requiresDatabaseProbe = Boolean(
+      deps.health?.database || deps.readiness,
+    );
+    const databaseReachable = liveDb?.databaseReachable ?? null;
+    const schemaCompatible = liveDb?.schemaCompatible ?? null;
+    const healthy =
+      !requiresDatabaseProbe ||
+      (databaseReachable === true && schemaCompatible === true);
+    return reply.status(healthy ? 200 : 503).send({
+      status: healthy ? "ok" : "not_ready",
+      alive: true,
+      phase: deps.governanceService
+        ? 20
+        : deps.decisionPolicyService
+          ? 19
+          : deps.causalService
+            ? 18
+            : deps.experimentService
+              ? 17
+              : deps.scenarioService
+                ? 16
+                : deps.portfolioService
+                  ? 15
+                  : deps.programService
+                    ? 14
+                    : deps.scheduler
+                      ? 13
+                      : observabilityEnabled
+                        ? 12
+                        : memoryEnabled
+                          ? 9
+                          : verificationEnabled
+                            ? 8
+                            : executionEnabled
+                              ? 7
+                              : approvalEnabled
+                                ? 6
+                                : deps.validation
+                                  ? 5
+                                  : 6,
+      milestone: deps.governanceService
+        ? 20
+        : deps.decisionPolicyService
+          ? 19
+          : deps.causalService
+            ? 18
+            : deps.experimentService
+              ? 17
+              : deps.scenarioService
+                ? 16
+                : deps.portfolioService
+                  ? 15
+                  : deps.programService
+                    ? 14
+                    : deps.scheduler
+                      ? 13
+                      : 12,
+      orchestrator: deps.governanceService
+        ? "governance"
+        : deps.decisionPolicyService
+          ? "decision-policies"
+          : deps.causalService
+            ? "causal"
+            : deps.experimentService
+              ? "experiments"
+              : deps.scenarioService
+                ? "scenarios"
+                : deps.portfolioService
+                  ? "portfolios"
+                  : deps.programService
+                    ? "programs"
+                    : deps.scheduler
+                      ? "scheduler"
+                      : observabilityEnabled
+                        ? "observability"
+                        : memoryEnabled
+                          ? "memory"
+                          : verificationEnabled
+                            ? "verification"
+                            : executionEnabled
+                              ? "execution"
+                              : approvalEnabled
+                                ? "authorization"
+                                : deps.validation
+                                  ? "validation"
+                                  : "planning",
+      llmConnected: false,
+      githubConnected: false,
+      githubWritesEnabled: false,
+      executionEnabled,
+      verificationEnabled,
+      memoryEnabled,
+      observabilityEnabled,
+      approvalEnabled,
+      schedulerEnabled: Boolean(deps.scheduler),
+      storageMode: deps.storageMode ?? "memory",
+      databaseReachable,
+      schemaCompatible,
+      schemaVersion: liveDb?.schemaVersion ?? null,
+      supportedSchemaVersion: liveDb?.supportedSchemaVersion ?? null,
+      planningModelToolsEnabled: false,
+      validationModelToolsEnabled: false,
+      verificationModelToolsEnabled: false,
+      learningModelToolsEnabled: false,
+    });
+  });
 
   if (deps.perimeter) {
     await registerPerimeter(app, deps.perimeter);

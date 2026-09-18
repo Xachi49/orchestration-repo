@@ -14,6 +14,11 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /api[_-]?key[=:]\s*\S+/gi,
   /APPROVAL_DELIVERY_SECRET_KEY[=:]\s*\S+/gi,
   /DATABASE_URL[=:]\s*\S+/gi,
+  /RESEND_API_KEY[=:]\s*\S+/gi,
+  /RESEND_WEBHOOK_SECRET[=:]\s*\S+/gi,
+  /RECOVERY_WEB_INGEST_SECRET[=:]\s*\S+/gi,
+  /re_[A-Za-z0-9_]{8,}/g,
+  /whsec_[A-Za-z0-9+/=_-]{8,}/g,
 ];
 
 const SECRET_KEYS = new Set([
@@ -29,6 +34,12 @@ const SECRET_KEYS = new Set([
   "nonce",
   "decisionNonce",
   "ciphertext",
+  "resendApiKey",
+  "resendWebhookSecret",
+  "webIngestSecret",
+  "RESEND_API_KEY",
+  "RESEND_WEBHOOK_SECRET",
+  "RECOVERY_WEB_INGEST_SECRET",
 ]);
 
 export function redactText(input: string): string {

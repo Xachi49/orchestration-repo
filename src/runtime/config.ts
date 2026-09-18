@@ -213,8 +213,12 @@ export function loadRuntimeConfig(
       "ORCHESTRATOR_LEASE_HEARTBEAT_MS",
       5_000,
     ),
-    httpHost: env(envMap, "ORCHESTRATOR_HTTP_HOST") ?? "127.0.0.1",
-    httpPort: parseIntEnv(envMap, "ORCHESTRATOR_HTTP_PORT", 3000),
+    httpHost: env(envMap, "ORCHESTRATOR_HTTP_HOST") ?? "::",
+    httpPort: parseIntEnv(
+      envMap,
+      "PORT",
+      parseIntEnv(envMap, "ORCHESTRATOR_HTTP_PORT", 3000),
+    ),
     bodyLimitBytes: parseIntEnv(envMap, "ORCHESTRATOR_BODY_LIMIT_BYTES", 256_000),
     requestTimeoutMs: parseIntEnv(
       envMap,
@@ -254,11 +258,14 @@ export function loadRuntimeConfig(
     draft.staticPrincipalId = staticPrincipalId;
   }
 
-  assertProductionInvariants(draft);
+  assertProductionInvariants(draft, envMap);
   return RuntimeConfigSchema.parse(draft);
 }
 
-export function assertProductionInvariants(config: RuntimeConfig): void {
+export function assertProductionInvariants(
+  config: RuntimeConfig,
+  envMap: NodeJS.ProcessEnv = process.env,
+): void {
   if (config.controlTowerDevAllowAll) {
     if (
       config.runtimeEnvironment !== "DEVELOPMENT" &&
@@ -307,6 +314,12 @@ export function assertProductionInvariants(config: RuntimeConfig): void {
     throw new RuntimeError(
       "PRODUCTION_DATABASE_URL_REQUIRED",
       "PRODUCTION requires DATABASE_URL",
+    );
+  }
+  if (!env(envMap, "RECOVERY_PROVIDER_MODE")) {
+    throw new RuntimeError(
+      "PRODUCTION_RECOVERY_PROVIDER_MODE_REQUIRED",
+      "PRODUCTION requires RECOVERY_PROVIDER_MODE",
     );
   }
   if (config.authenticationMode === "ANONYMOUS") {

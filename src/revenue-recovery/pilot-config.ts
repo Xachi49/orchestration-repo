@@ -37,13 +37,21 @@ function env(map: NodeJS.ProcessEnv, name: string): string | undefined {
 export function loadRecoveryPilotConfig(
   map: NodeJS.ProcessEnv = process.env,
 ): RecoveryPilotConfig {
-  const modeRaw = env(map, "RECOVERY_PROVIDER_MODE") ?? "FAKE";
-  if (!RECOVERY_PROVIDER_MODES.includes(modeRaw as RecoveryProviderMode)) {
+  const runtimeEnvironment =
+    env(map, "ORCHESTRATOR_ENV") ?? "DEVELOPMENT";
+  const modeRaw = env(map, "RECOVERY_PROVIDER_MODE");
+  if (!modeRaw) {
+    if (runtimeEnvironment === "PRODUCTION") {
+      throw new Error("PRODUCTION requires RECOVERY_PROVIDER_MODE");
+    }
+  }
+  const modeResolved = modeRaw ?? "FAKE";
+  if (!RECOVERY_PROVIDER_MODES.includes(modeResolved as RecoveryProviderMode)) {
     throw new Error(
       `RECOVERY_PROVIDER_MODE must be one of ${RECOVERY_PROVIDER_MODES.join(", ")}`,
     );
   }
-  const mode = modeRaw as RecoveryProviderMode;
+  const mode = modeResolved as RecoveryProviderMode;
   const allowlistRaw = env(map, "RECOVERY_LIVE_PILOT_RECIPIENT_ALLOWLIST");
   const livePilotRecipientAllowlist = allowlistRaw
     ? allowlistRaw.split(",").map((s) => s.trim()).filter(Boolean)

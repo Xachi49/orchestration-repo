@@ -6,11 +6,18 @@ export { InMemoryVerifiedRepositoryContextStore } from "./in-memory-context-stor
 export { InMemoryRepositoryIngestionCoordinator } from "./in-memory-ingestion-coordinator.js";
 export { FakeRemoteRepository } from "./fake-remote.js";
 export { FakeRepositoryWorkspace } from "./fake-workspace.js";
-export { GitHubReadOnlyAdapter, githubTokenFromEnv } from "./github-readonly.js";
+export {
+  GitHubReadOnlyAdapter,
+  githubTokenFromEnv,
+  githubAuthModeFromEnv,
+  GITHUB_AUTH_MODES,
+  type GitHubAuthMode,
+} from "./github-readonly.js";
 export { LocalGitWorkspaceService } from "./git-workspace.js";
 export {
   selectRepositoryInfrastructure,
   resolveRepositoryAdapterMode,
+  resolveGitHubAuthMode,
   resolveRepositoryDataRoot,
   RepositoryAdapterSelectionError,
   isRepositoryAdapterSelectionError,

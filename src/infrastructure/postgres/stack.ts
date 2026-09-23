@@ -23,6 +23,7 @@ import {
   type RepositoryRemoteAdapterKind,
   type RepositoryWorkspaceAdapterKind,
 } from "../ingestion/repository-adapters.js";
+import type { GitHubAuthMode } from "../ingestion/github-readonly.js";
 import {
   PlanningReadinessService,
   PlanningService,
@@ -479,6 +480,8 @@ export interface PostgresOrchestratorStack {
    */
   repositoryRemoteAdapter: RepositoryRemoteAdapterKind;
   repositoryWorkspaceAdapter: RepositoryWorkspaceAdapterKind;
+  /** Non-secret; null when FAKE adapters are selected. */
+  githubAuthenticationMode: GitHubAuthMode | null;
   close: () => Promise<void>;
 }
 
@@ -505,7 +508,9 @@ export async function createPostgresOrchestratorStack(options: {
    * runtimeEnvironment is PRODUCTION.
    */
   repositoryAdapterMode?: "REAL" | "FAKE";
-  /** Test seam — GitHub token for REAL adapters (never logged). */
+  /** Test seam — explicit GitHub auth mode for REAL adapters. */
+  githubAuthMode?: GitHubAuthMode;
+  /** Test seam — GitHub token for TOKEN mode (never logged). */
   githubToken?: string;
   /** Test seam — deterministic GitHub HTTP transport. */
   githubFetchImpl?: typeof fetch;
@@ -695,6 +700,9 @@ export async function createPostgresOrchestratorStack(options: {
     env: envMap,
     ...(options.repositoryAdapterMode !== undefined
       ? { mode: options.repositoryAdapterMode }
+      : {}),
+    ...(options.githubAuthMode !== undefined
+      ? { githubAuthMode: options.githubAuthMode }
       : {}),
     ...(options.githubToken !== undefined
       ? { githubToken: options.githubToken }
@@ -1959,6 +1967,8 @@ export async function createPostgresOrchestratorStack(options: {
     dataRoot,
     repositoryRemoteAdapter: repositoryInfrastructure.remoteAdapter,
     repositoryWorkspaceAdapter: repositoryInfrastructure.workspaceAdapter,
+    githubAuthenticationMode:
+      repositoryInfrastructure.githubAuthenticationMode,
     close: async () => {
       await db.close();
     },

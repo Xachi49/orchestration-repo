@@ -174,10 +174,14 @@ describe("postgres production repository adapters", () => {
         githubFetchImpl: githubFetchForPilot(sha),
         allowLocalGitRemotes: true,
         dataRoot: path.join(root, "data"),
-        env: { GITHUB_TOKEN: "ghs_fixture_token" },
+        env: {
+          ORCHESTRATOR_GITHUB_AUTH_MODE: "TOKEN",
+          GITHUB_TOKEN: "ghs_fixture_token",
+        },
       });
       expect(prodStack.repositoryRemoteAdapter).toBe("GITHUB");
       expect(prodStack.repositoryWorkspaceAdapter).toBe("LOCAL_GIT");
+      expect(prodStack.githubAuthenticationMode).toBe("TOKEN");
       expect(prodStack.repositoryRemoteAdapter).not.toBe("FAKE");
       expect(prodStack.repositoryWorkspaceAdapter).not.toBe("FAKE");
       await prodStack.close();
@@ -317,10 +321,14 @@ describe("postgres production repository adapters", () => {
         githubFetchImpl: githubFetchForPilot(sha),
         allowLocalGitRemotes: true,
         dataRoot: path.join(root, "data"),
-        env: { GITHUB_TOKEN: "ghs_fixture_token" },
+        env: {
+          ORCHESTRATOR_GITHUB_AUTH_MODE: "TOKEN",
+          GITHUB_TOKEN: "ghs_fixture_token",
+        },
       });
       expect(fixedStack.repositoryRemoteAdapter).toBe("GITHUB");
       expect(fixedStack.repositoryWorkspaceAdapter).toBe("LOCAL_GIT");
+      expect(fixedStack.githubAuthenticationMode).toBe("TOKEN");
 
       // Registry supplies workspace remoteUrl (local origin) while GitHub identity
       // matches the pilot; RemoteRepositoryService remains GitHubReadOnlyAdapter.

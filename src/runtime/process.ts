@@ -235,6 +235,8 @@ export function createOrchestratorRuntime(
                     repositoryRemoteAdapter: postgres.repositoryRemoteAdapter,
                     repositoryWorkspaceAdapter:
                       postgres.repositoryWorkspaceAdapter,
+                    githubAuthenticationMode:
+                      postgres.githubAuthenticationMode,
                   }
                 : {}),
             },

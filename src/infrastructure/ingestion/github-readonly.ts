@@ -13,8 +13,18 @@ import {
   type RepositoryMetadata,
 } from "../../ingestion/remote-repository.js";
 
+/**
+ * Explicit GitHub HTTP auth mode. Never inferred from token presence/failure.
+ * TOKEN — Bearer GITHUB_TOKEN required; 401/403 fail closed; no anonymous retry.
+ * PUBLIC_ANONYMOUS — no Authorization header; public repos only.
+ */
+export const GITHUB_AUTH_MODES = ["TOKEN", "PUBLIC_ANONYMOUS"] as const;
+export type GitHubAuthMode = (typeof GITHUB_AUTH_MODES)[number];
+
 export interface GitHubReadOnlyAdapterOptions {
-  token: string | undefined;
+  authMode: GitHubAuthMode;
+  /** Required when authMode is TOKEN. Ignored for request auth when PUBLIC_ANONYMOUS. */
+  token?: string | undefined;
   fetchImpl?: typeof fetch;
   apiBaseUrl?: string;
 }
@@ -68,6 +78,22 @@ function githubTokenFromEnv(env: NodeJS.ProcessEnv = process.env): string | unde
   return token;
 }
 
+export function githubAuthModeFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): GitHubAuthMode | undefined {
+  const raw = env["ORCHESTRATOR_GITHUB_AUTH_MODE"]?.trim();
+  if (raw === undefined || raw === "") {
+    return undefined;
+  }
+  if (raw === "TOKEN" || raw === "PUBLIC_ANONYMOUS") {
+    return raw;
+  }
+  throw new IngestionError(
+    "REMOTE_AUTHENTICATION_FAILED",
+    `ORCHESTRATOR_GITHUB_AUTH_MODE must be TOKEN or PUBLIC_ANONYMOUS, got ${raw}`,
+  );
+}
+
 function toIsoDatetime(value: string | undefined): string {
   if (!value) {
     throw new IngestionError(
@@ -101,29 +127,48 @@ function mapCiState(state: string | undefined): CiStatus["state"] {
 /**
  * Read-only GitHub adapter. Issues GET requests only.
  * Never logs the token. Never exposes generic HTTP mutation.
+ * Never silently falls back from TOKEN → PUBLIC_ANONYMOUS.
  */
 export class GitHubReadOnlyAdapter implements RemoteRepositoryService {
   readonly writesEnabled = false as const;
+  readonly authMode: GitHubAuthMode;
   private readonly token: string | undefined;
   private readonly fetchImpl: typeof fetch;
   private readonly apiBaseUrl: string;
   readonly recordedMethods: string[] = [];
+  /** Test observability: whether Authorization was present on each GET. */
+  readonly recordedAuthorizationPresent: boolean[] = [];
 
   constructor(options: GitHubReadOnlyAdapterOptions) {
+    this.authMode = options.authMode;
     this.token = options.token;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.apiBaseUrl = (options.apiBaseUrl ?? "https://api.github.com").replace(
       /\/$/,
       "",
     );
+    if (this.authMode === "TOKEN" && !this.token?.trim()) {
+      throw new IngestionError(
+        "REMOTE_AUTHENTICATION_FAILED",
+        "TOKEN GitHub auth mode requires GITHUB_TOKEN",
+      );
+    }
   }
 
   static fromEnv(
     env: NodeJS.ProcessEnv = process.env,
     fetchImpl?: typeof fetch,
   ): GitHubReadOnlyAdapter {
+    const authMode = githubAuthModeFromEnv(env);
+    if (!authMode) {
+      throw new IngestionError(
+        "REMOTE_AUTHENTICATION_FAILED",
+        "ORCHESTRATOR_GITHUB_AUTH_MODE is required (TOKEN or PUBLIC_ANONYMOUS)",
+      );
+    }
     const options: GitHubReadOnlyAdapterOptions = {
-      token: githubTokenFromEnv(env),
+      authMode,
+      ...(authMode === "TOKEN" ? { token: githubTokenFromEnv(env) } : {}),
     };
     if (fetchImpl) {
       options.fetchImpl = fetchImpl;
@@ -132,7 +177,7 @@ export class GitHubReadOnlyAdapter implements RemoteRepositoryService {
   }
 
   private requireToken(): string {
-    if (!this.token) {
+    if (!this.token?.trim()) {
       throw new IngestionError(
         "REMOTE_AUTHENTICATION_FAILED",
         "GitHub credentials are unavailable",
@@ -147,22 +192,33 @@ export class GitHubReadOnlyAdapter implements RemoteRepositoryService {
     return `/repos/${owner}/${repository}`;
   }
 
+  private buildHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "orchestrator-agent-phase3",
+    };
+    if (this.authMode === "TOKEN") {
+      headers["Authorization"] = `Bearer ${this.requireToken()}`;
+    }
+    // PUBLIC_ANONYMOUS: never attach Authorization, even if a token exists in env.
+    return headers;
+  }
+
   private async getJson<T>(
     path: string,
     notFoundCode: "BRANCH_NOT_FOUND" | "COMMIT_NOT_FOUND" | "REPOSITORY_NOT_CONFIGURED",
   ): Promise<T> {
-    const token = this.requireToken();
+    const headers = this.buildHeaders();
     this.recordedMethods.push("GET");
+    this.recordedAuthorizationPresent.push(
+      Object.prototype.hasOwnProperty.call(headers, "Authorization"),
+    );
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, {
         method: "GET",
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
-          "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "orchestrator-agent-phase3",
-        },
+        headers,
       });
     } catch {
       throw new IngestionError(
@@ -172,6 +228,7 @@ export class GitHubReadOnlyAdapter implements RemoteRepositoryService {
     }
 
     if (response.status === 401 || response.status === 403) {
+      // TOKEN mode: fail closed. Never retry anonymously.
       throw new IngestionError(
         "REMOTE_AUTHENTICATION_FAILED",
         "GitHub authentication failed",
@@ -202,6 +259,13 @@ export class GitHubReadOnlyAdapter implements RemoteRepositoryService {
       this.repoPath(ref),
       "REPOSITORY_NOT_CONFIGURED",
     );
+    if (this.authMode === "PUBLIC_ANONYMOUS" && body.private !== false) {
+      throw new IngestionError(
+        "REPOSITORY_NOT_CONFIGURED",
+        "PUBLIC_ANONYMOUS GitHub mode requires a public repository (private !== false)",
+        { owner: ref.owner, repository: ref.repository, isPrivate: body.private ?? null },
+      );
+    }
     const owner = body.owner?.login ?? ref.owner;
     const repository = body.name ?? ref.repository;
     const defaultBranch = body.default_branch;

@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  resolveGitHubAuthMode,
   resolveRepositoryAdapterMode,
   selectRepositoryInfrastructure,
   RepositoryAdapterSelectionError,
@@ -52,40 +53,70 @@ describe("repository adapter selection", () => {
     });
     expect(selected.remoteAdapter).toBe("FAKE");
     expect(selected.workspaceAdapter).toBe("FAKE");
+    expect(selected.githubAuthenticationMode).toBeNull();
     expect(selected.remote).toBeInstanceOf(FakeRemoteRepository);
     expect(selected.workspace).toBeInstanceOf(FakeRepositoryWorkspace);
   });
 
-  it("PRODUCTION REAL selects GitHub + LocalGit and requires token", () => {
+  it("PRODUCTION requires explicit GitHub auth mode", () => {
+    expect(() =>
+      resolveGitHubAuthMode({
+        runtimeEnvironment: "PRODUCTION",
+        env: {},
+      }),
+    ).toThrow(/ORCHESTRATOR_GITHUB_AUTH_MODE/);
     expect(() =>
       selectRepositoryInfrastructure({
         runtimeEnvironment: "PRODUCTION",
         dataRoot,
-        env: {},
+        env: { GITHUB_TOKEN: "ghs_fixture_token" },
+      }),
+    ).toThrow(/ORCHESTRATOR_GITHUB_AUTH_MODE/);
+  });
+
+  it("TOKEN mode requires GITHUB_TOKEN; PUBLIC_ANONYMOUS does not", () => {
+    expect(() =>
+      selectRepositoryInfrastructure({
+        runtimeEnvironment: "PRODUCTION",
+        dataRoot,
+        env: { ORCHESTRATOR_GITHUB_AUTH_MODE: "TOKEN" },
       }),
     ).toThrow(/GITHUB_TOKEN/);
 
-    const selected = selectRepositoryInfrastructure({
+    const tokenSelected = selectRepositoryInfrastructure({
       runtimeEnvironment: "PRODUCTION",
       dataRoot,
-      env: { GITHUB_TOKEN: "ghs_fixture_token" },
+      env: {
+        ORCHESTRATOR_GITHUB_AUTH_MODE: "TOKEN",
+        GITHUB_TOKEN: "ghs_fixture_token",
+      },
     });
-    expect(selected.remoteAdapter).toBe("GITHUB");
-    expect(selected.workspaceAdapter).toBe("LOCAL_GIT");
-    expect(selected.remote).toBeInstanceOf(GitHubReadOnlyAdapter);
-    expect(selected.workspace).toBeInstanceOf(LocalGitWorkspaceService);
-    expect(selected.remote).not.toBeInstanceOf(FakeRemoteRepository);
-    expect(selected.workspace).not.toBeInstanceOf(FakeRepositoryWorkspace);
+    expect(tokenSelected.remoteAdapter).toBe("GITHUB");
+    expect(tokenSelected.workspaceAdapter).toBe("LOCAL_GIT");
+    expect(tokenSelected.githubAuthenticationMode).toBe("TOKEN");
+    expect(tokenSelected.remote).toBeInstanceOf(GitHubReadOnlyAdapter);
+    expect(tokenSelected.workspace).toBeInstanceOf(LocalGitWorkspaceService);
+    expect(tokenSelected.remote).not.toBeInstanceOf(FakeRemoteRepository);
+
+    const anon = selectRepositoryInfrastructure({
+      runtimeEnvironment: "PRODUCTION",
+      dataRoot,
+      env: { ORCHESTRATOR_GITHUB_AUTH_MODE: "PUBLIC_ANONYMOUS" },
+    });
+    expect(anon.githubAuthenticationMode).toBe("PUBLIC_ANONYMOUS");
+    expect(anon.remote).toBeInstanceOf(GitHubReadOnlyAdapter);
+    expect(anon.remote).not.toBeInstanceOf(FakeRemoteRepository);
   });
 
   it("never falls back from GitHub failure to FakeRemote", async () => {
     const selected = selectRepositoryInfrastructure({
       runtimeEnvironment: "PRODUCTION",
       dataRoot,
+      githubAuthMode: "TOKEN",
       githubToken: "token",
       githubFetchImpl: async () =>
         new Response(JSON.stringify({ message: "boom" }), { status: 500 }),
-      env: {},
+      env: { ORCHESTRATOR_GITHUB_AUTH_MODE: "TOKEN" },
     });
     await expect(
       selected.remote.getRepositoryMetadata({
@@ -101,7 +132,7 @@ describe("repository adapter selection", () => {
     const selected = selectRepositoryInfrastructure({
       runtimeEnvironment: "PRODUCTION",
       dataRoot,
-      githubToken: "token",
+      githubAuthMode: "PUBLIC_ANONYMOUS",
       githubFetchImpl: async (url) => {
         seen.push(String(url));
         if (String(url).endsWith("/repos/Xachi49/orchestration-repo")) {
@@ -123,8 +154,9 @@ describe("repository adapter selection", () => {
         }
         return new Response("{}", { status: 404 });
       },
-      env: {},
+      env: { ORCHESTRATOR_GITHUB_AUTH_MODE: "PUBLIC_ANONYMOUS" },
     });
+    expect(selected.githubAuthenticationMode).toBe("PUBLIC_ANONYMOUS");
     const meta = await selected.remote.getRepositoryMetadata({
       owner: "Xachi49",
       repository: "orchestration-repo",

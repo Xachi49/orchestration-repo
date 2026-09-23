@@ -315,13 +315,19 @@ timestamps) rather than inventing a second repository identity.
 
 `GitHubReadOnlyAdapter` implements `RemoteRepositoryService` with HTTP GET only.
 
-Authentication is `GITHUB_TOKEN` from the environment. Credentials are never
-hardcoded, never committed, and never written to logs. Missing credentials fail
-closed as `REMOTE_AUTHENTICATION_FAILED`.
+Authentication mode is explicit via `ORCHESTRATOR_GITHUB_AUTH_MODE`:
 
-The token must be read-only / minimum privilege (public or contents:read plus
-metadata). This adapter cannot create branches, push, open or merge pull
-requests, or edit issues.
+- `TOKEN` — requires `GITHUB_TOKEN`; sends `Authorization: Bearer`; 401/403 fail
+  closed with no anonymous retry.
+- `PUBLIC_ANONYMOUS` — no Authorization header; permitted only when GitHub
+  metadata confirms `private === false`.
+
+Credentials are never hardcoded, never committed, and never written to logs.
+Missing or invalid auth mode fails closed at production startup. Mode is never
+inferred from token presence or from authentication failure.
+
+The token (TOKEN mode) must be read-only / minimum privilege. This adapter
+cannot create branches, push, open or merge pull requests, or edit issues.
 
 `DISCONNECTED_GITHUB` continues to mean **writes are disconnected**.
 
@@ -508,14 +514,18 @@ The HTTP layer contains no repository business logic and does not proxy GitHub.
 
 ### Authentication
 
-`GITHUB_TOKEN` is read from the environment when constructing
-`GitHubReadOnlyAdapter` for the **REST** read-only API only. The local
+`ORCHESTRATOR_GITHUB_AUTH_MODE` selects GitHub HTTP auth for
+`GitHubReadOnlyAdapter` (`TOKEN` or `PUBLIC_ANONYMOUS`). Production requires the
+mode explicitly at startup.
+
+`GITHUB_TOKEN` is required only for `TOKEN` mode (REST read-only API). The local
 development stack uses fakes and does not require a token. Use a read-only,
-minimum-privilege token if wiring the real adapter. Never commit tokens.
+minimum-privilege token if wiring TOKEN mode. Never commit tokens.
 
 **Deferred:** private GitHub `git fetch` credential injection. Do not place
 `GITHUB_TOKEN` in remote URLs, git configuration, command arguments, or logs.
-Private clone/fetch auth is out of scope for Phase 3.
+Private clone/fetch auth is out of scope for Phase 3. Local git for public
+repositories uses unauthenticated HTTPS.
 
 ### Durability (future)
 

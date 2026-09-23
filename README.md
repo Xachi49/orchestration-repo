@@ -164,6 +164,7 @@ POST /v1/optimization-candidates/:candidateId/review
 
 ## Auth / live model
 
-- `GITHUB_TOKEN` — optional read-only GitHub REST
+- `ORCHESTRATOR_GITHUB_AUTH_MODE` — `TOKEN` or `PUBLIC_ANONYMOUS` (required in PRODUCTION)
+- `GITHUB_TOKEN` — required when auth mode is `TOKEN` (read-only GitHub REST)
 - `OPENAI_API_KEY` / `OPENAI_MODEL` — optional live planning via Responses API; never committed
 - `OPENAI_VALIDATION_MODEL` — optional separate model id for live validation; the default stack never constructs the live adapter

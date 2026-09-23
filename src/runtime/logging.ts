@@ -17,6 +17,7 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /RESEND_API_KEY[=:]\s*\S+/gi,
   /RESEND_WEBHOOK_SECRET[=:]\s*\S+/gi,
   /RECOVERY_WEB_INGEST_SECRET[=:]\s*\S+/gi,
+  /GITHUB_TOKEN[=:]\s*\S+/gi,
   /re_[A-Za-z0-9_]{8,}/g,
   /whsec_[A-Za-z0-9+/=_-]{8,}/g,
 ];
@@ -40,6 +41,7 @@ const SECRET_KEYS = new Set([
   "RESEND_API_KEY",
   "RESEND_WEBHOOK_SECRET",
   "RECOVERY_WEB_INGEST_SECRET",
+  "GITHUB_TOKEN",
 ]);
 
 export function redactText(input: string): string {

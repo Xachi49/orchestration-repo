@@ -16,15 +16,13 @@ import { NoopObservability } from "../../observability/index.js";
 import { RepositoryTruthService } from "../../ingestion/service.js";
 import { DeterministicProjectIndexer } from "../../ingestion/indexer.js";
 import { DeterministicRepositoryFingerprintService } from "../../ingestion/fingerprint.js";
+import { EXAMPLE_REPOSITORY_SOURCE } from "../../ingestion/fixtures.js";
 import {
-  EXAMPLE_COMMIT_METADATA,
-  EXAMPLE_COMMIT_SHA,
-  EXAMPLE_DRIFT_SHA,
-  EXAMPLE_REPOSITORY_SOURCE,
-  EXAMPLE_WORKSPACE_FILES,
-} from "../../ingestion/fixtures.js";
-import { FakeRemoteRepository } from "../ingestion/fake-remote.js";
-import { FakeRepositoryWorkspace } from "../ingestion/fake-workspace.js";
+  resolveRepositoryDataRoot,
+  selectRepositoryInfrastructure,
+  type RepositoryRemoteAdapterKind,
+  type RepositoryWorkspaceAdapterKind,
+} from "../ingestion/repository-adapters.js";
 import {
   PlanningReadinessService,
   PlanningService,
@@ -475,6 +473,12 @@ export interface PostgresOrchestratorStack {
     projectIds?: readonly string[],
   ) => Promise<readonly string[]>;
   dataRoot: string;
+  /**
+   * Non-secret repository adapter kinds active in this stack.
+   * PRODUCTION must report GITHUB + LOCAL_GIT.
+   */
+  repositoryRemoteAdapter: RepositoryRemoteAdapterKind;
+  repositoryWorkspaceAdapter: RepositoryWorkspaceAdapterKind;
   close: () => Promise<void>;
 }
 
@@ -489,6 +493,24 @@ export async function createPostgresOrchestratorStack(options: {
    */
   seedRepositorySources?: boolean;
   dataRoot?: string;
+  /**
+   * Runtime environment for repository adapter selection.
+   * PRODUCTION → GitHubReadOnlyAdapter + LocalGitWorkspaceService (required).
+   * Non-production defaults to FAKE fixtures unless mode is forced REAL.
+   */
+  runtimeEnvironment?: string;
+  env?: NodeJS.ProcessEnv;
+  /**
+   * Explicit repository adapter mode. FAKE is forbidden when
+   * runtimeEnvironment is PRODUCTION.
+   */
+  repositoryAdapterMode?: "REAL" | "FAKE";
+  /** Test seam — GitHub token for REAL adapters (never logged). */
+  githubToken?: string;
+  /** Test seam — deterministic GitHub HTTP transport. */
+  githubFetchImpl?: typeof fetch;
+  /** Test seam — LocalGit file:// remotes (never for live PRODUCTION). */
+  allowLocalGitRemotes?: boolean;
   completionFailpoint?: import("../../verification/service.js").VerificationCompletionFailpoint;
   programCompletionFailpoint?: import("../../programs/service.js").ProgramCompletionFailpoint;
   programMaterializationFailpoint?: import("../../programs/service.js").ProgramMaterializationFailpoint;
@@ -550,8 +572,13 @@ export async function createPostgresOrchestratorStack(options: {
 }): Promise<PostgresOrchestratorStack> {
   const instanceId = options.instanceId ?? options.db.instanceId;
   const clock = options.clock ?? new SystemClock();
-  const dataRoot =
-    options.dataRoot ?? mkdtempSync(path.join(tmpdir(), "orchestrator-pg-"));
+  const envMap = options.env ?? process.env;
+  const runtimeEnvironment = options.runtimeEnvironment ?? "TEST";
+  const resolvedDataRoot =
+    options.dataRoot ??
+    resolveRepositoryDataRoot(envMap) ??
+    mkdtempSync(path.join(tmpdir(), "orchestrator-pg-"));
+  const dataRoot = resolvedDataRoot;
   const db = options.db;
   const transactions = new PostgresTransactionManager(db);
   const leases = new PostgresLeaseStore(db);
@@ -661,30 +688,26 @@ export async function createPostgresOrchestratorStack(options: {
   if (options.seedRepositorySources === true) {
     await sources.seed([EXAMPLE_REPOSITORY_SOURCE]);
   }
-  const remote = new FakeRemoteRepository({
-    identity: {
-      provider: "GITHUB",
-      owner: EXAMPLE_REPOSITORY_SOURCE.owner,
-      repository: EXAMPLE_REPOSITORY_SOURCE.repository,
-    },
-    defaultBranch: EXAMPLE_REPOSITORY_SOURCE.defaultBranch,
-    branches: {
-      [EXAMPLE_REPOSITORY_SOURCE.defaultBranch]: EXAMPLE_COMMIT_SHA,
-    },
-    commits: {
-      [EXAMPLE_COMMIT_SHA]: EXAMPLE_COMMIT_METADATA,
-      [EXAMPLE_DRIFT_SHA]: {
-        ...EXAMPLE_COMMIT_METADATA,
-        sha: EXAMPLE_DRIFT_SHA,
-        message: "later commit",
-      },
-    },
+  // PRODUCTION != FAKE REPOSITORY TRUTH — selection fails closed; no Fake fallback.
+  const repositoryInfrastructure = selectRepositoryInfrastructure({
+    runtimeEnvironment,
+    dataRoot,
+    env: envMap,
+    ...(options.repositoryAdapterMode !== undefined
+      ? { mode: options.repositoryAdapterMode }
+      : {}),
+    ...(options.githubToken !== undefined
+      ? { githubToken: options.githubToken }
+      : {}),
+    ...(options.githubFetchImpl !== undefined
+      ? { githubFetchImpl: options.githubFetchImpl }
+      : {}),
+    ...(options.allowLocalGitRemotes !== undefined
+      ? { allowLocalRemotes: options.allowLocalGitRemotes }
+      : {}),
   });
-  const filesBySha = new Map([
-    [EXAMPLE_COMMIT_SHA, EXAMPLE_WORKSPACE_FILES],
-    [EXAMPLE_DRIFT_SHA, EXAMPLE_WORKSPACE_FILES],
-  ]);
-  const workspace = new FakeRepositoryWorkspace({ filesBySha });
+  const remote = repositoryInfrastructure.remote;
+  const workspace = repositoryInfrastructure.workspace;
   const lockedRepos = new PostgresLockedRepositoryStore(db);
   const evidence = new PostgresEvidenceRegistry(db);
   const contexts = new PostgresVerifiedRepositoryContextStore(db);
@@ -1934,6 +1957,8 @@ export async function createPostgresOrchestratorStack(options: {
         projectIds,
       ),
     dataRoot,
+    repositoryRemoteAdapter: repositoryInfrastructure.remoteAdapter,
+    repositoryWorkspaceAdapter: repositoryInfrastructure.workspaceAdapter,
     close: async () => {
       await db.close();
     },

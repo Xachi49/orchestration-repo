@@ -17,6 +17,9 @@ export interface HealthDeps {
   worker?: { active: number; claims: number; skippedBackpressure: number };
   recoverySummary?: () => Promise<{ items: number }>;
   outboxSummary?: () => Promise<{ pending: number }>;
+  /** Non-secret repository adapter kinds (PRODUCTION must be GITHUB + LOCAL_GIT). */
+  repositoryRemoteAdapter?: "GITHUB" | "FAKE";
+  repositoryWorkspaceAdapter?: "LOCAL_GIT" | "FAKE";
 }
 
 export function registerHealthRoutes(
@@ -57,6 +60,8 @@ export function registerHealthRoutes(
     nodeVersion: deps.build.nodeVersion,
     runtimeId: deps.config.runtimeId,
     role: deps.config.runtimeRole,
+    repositoryRemoteAdapter: deps.repositoryRemoteAdapter ?? null,
+    repositoryWorkspaceAdapter: deps.repositoryWorkspaceAdapter ?? null,
   }));
 
   app.get("/ops/diagnostics", async () => ({

@@ -11,6 +11,7 @@ const productionBase = {
   ORCHESTRATOR_STATIC_PRINCIPAL_ID: "operator_static",
   APPROVAL_DELIVERY_SECRET_KEY: Buffer.alloc(32, 7).toString("base64"),
   RECOVERY_PROVIDER_MODE: "SHADOW",
+  GITHUB_TOKEN: "ghs_test_token_not_a_secret_fixture",
   ORCHESTRATOR_DEBUG: "false",
   ORCHESTRATOR_WORKER_CONCURRENCY: "4",
 };
@@ -52,6 +53,21 @@ describe("production runtime configuration", () => {
     const env = { ...productionBase };
     delete env.RECOVERY_PROVIDER_MODE;
     expect(() => loadRuntimeConfig(env)).toThrow(/RECOVERY_PROVIDER_MODE/);
+  });
+
+  it("rejects missing GITHUB_TOKEN in PRODUCTION", () => {
+    const env = { ...productionBase };
+    delete (env as { GITHUB_TOKEN?: string }).GITHUB_TOKEN;
+    expect(() => loadRuntimeConfig(env)).toThrow(/GITHUB_TOKEN/);
+  });
+
+  it("rejects FAKE repository adapter mode in PRODUCTION", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...productionBase,
+        ORCHESTRATOR_REPOSITORY_ADAPTER_MODE: "FAKE",
+      }),
+    ).toThrow(/FAKE|REPOSITORY/);
   });
 
   it("defaults HTTP listen to :: and prefers PORT", () => {

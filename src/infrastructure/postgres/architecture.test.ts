@@ -65,6 +65,8 @@ describe("durability architecture documentation", () => {
     expect(dockerfile).toContain("COPY manifests ./manifests");
     expect(dockerfile).toContain("COPY --from=build /app/manifests ./manifests");
     expect(dockerfile).toContain("COPY --from=build /app/dist ./dist");
+    expect(dockerfile).toMatch(/apk add --no-cache git/);
+    expect(dockerfile).toContain("ORCHESTRATOR_DATA_ROOT=/tmp/orchestrator-data");
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
       scripts: Record<string, string>;
     };
@@ -79,5 +81,22 @@ describe("durability architecture documentation", () => {
       "utf8",
     );
     expect(manifest).toContain("continuum-revenue-recovery-pilot");
+  });
+
+  it("production stack selection forbids FakeRemote and FakeWorkspace", () => {
+    const selection = readFileSync(
+      "src/infrastructure/ingestion/repository-adapters.ts",
+      "utf8",
+    );
+    expect(selection).toContain("PRODUCTION != FAKE REPOSITORY TRUTH");
+    expect(selection).toContain("FAKE ADAPTER != PRODUCTION FALLBACK");
+    const stack = readFileSync(
+      "src/infrastructure/postgres/stack.ts",
+      "utf8",
+    );
+    expect(stack).toContain("selectRepositoryInfrastructure");
+    expect(stack).not.toMatch(
+      /new FakeRemoteRepository\(\{[\s\S]*EXAMPLE_REPOSITORY_SOURCE/,
+    );
   });
 });

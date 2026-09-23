@@ -367,4 +367,28 @@ export function assertProductionInvariants(
       "Enabled model provider still requires durable postgres configuration",
     );
   }
+  // GitHubReadOnlyAdapter.requireToken — even public repos need GITHUB_TOKEN
+  // under the current adapter contract. FAKE is not a production fallback.
+  if (!env(envMap, "GITHUB_TOKEN")) {
+    throw new RuntimeError(
+      "PRODUCTION_GITHUB_TOKEN_REQUIRED",
+      "PRODUCTION requires GITHUB_TOKEN for real repository truth (GitHubReadOnlyAdapter). PRODUCTION != FAKE REPOSITORY TRUTH",
+    );
+  }
+  const repositoryAdapterMode = env(envMap, "ORCHESTRATOR_REPOSITORY_ADAPTER_MODE");
+  if (repositoryAdapterMode === "FAKE") {
+    throw new RuntimeError(
+      "PRODUCTION_FAKE_REPOSITORY_FORBIDDEN",
+      "PRODUCTION cannot set ORCHESTRATOR_REPOSITORY_ADAPTER_MODE=FAKE",
+    );
+  }
+  if (
+    repositoryAdapterMode !== undefined &&
+    repositoryAdapterMode !== "REAL"
+  ) {
+    throw new RuntimeError(
+      "RUNTIME_CONFIG_INVALID",
+      "ORCHESTRATOR_REPOSITORY_ADAPTER_MODE must be REAL or FAKE",
+    );
+  }
 }

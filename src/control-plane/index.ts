@@ -78,3 +78,14 @@ export {
   type ControlPlaneServiceDeps,
   type ControlPlaneClock,
 } from "./service.js";
+
+export {
+  ControlPlaneProvisionManifestSchema,
+  parseControlPlaneProvisionManifest,
+  materializeControlPlaneManifest,
+  computePolicyBundleHash,
+  type ControlPlaneProvisionManifest,
+  type MaterializedControlPlane,
+  type ControlPlaneInspectResult,
+  type ControlPlaneProvisionResult,
+} from "./provisioning/index.js";

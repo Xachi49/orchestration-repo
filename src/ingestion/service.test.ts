@@ -139,6 +139,46 @@ describe("RepositoryTruthService", () => {
     ).rejects.toMatchObject({ code: "REPOSITORY_NOT_CONFIGURED" });
   });
 
+  it("synthesizes GITHUB identity from Project.repositoryUrl when Registry has no entry", async () => {
+    // Phase 3 resolveSource: Registry optional when project.repositoryUrl is a
+    // parseable GitHub remote. PostgresRepositorySourceRegistry participates
+    // only when an enabled row exists for the projectId.
+    const stack = createLocalIngestionStack();
+    const admitted = await stack.admission.admit(exampleAdmissionRequest());
+    if (admitted.outcome !== "ADMITTED") {
+      throw new Error("expected ADMITTED");
+    }
+    const ingestion = new RepositoryTruthService({
+      runs: stack.runs,
+      controlPlane: stack.controlPlane,
+      sources: new InMemoryRepositorySourceRegistry([]),
+      remote: stack.remote,
+      locks: stack.locks,
+      workspace: stack.workspace,
+      indexer: new DeterministicProjectIndexer(),
+      fingerprints: new DeterministicRepositoryFingerprintService(),
+      indexStore: stack.indexStore,
+      evidence: stack.evidence,
+      contexts: stack.contexts,
+      coordinator: stack.coordinator,
+      clock: stack.clock,
+    });
+    const context = await ingestion.ingest(
+      admitted.runId,
+      EXAMPLE_PROJECT_ID,
+      EXAMPLE_ENVIRONMENT,
+    );
+    expect(context.status).toBe("VERIFIED");
+    expect(context.lockedRepository.repositoryIdentity).toEqual({
+      provider: "GITHUB",
+      owner: EXAMPLE_REPOSITORY_SOURCE.owner,
+      repository: EXAMPLE_REPOSITORY_SOURCE.repository,
+    });
+    expect(await new InMemoryRepositorySourceRegistry([]).getByProjectId(
+      EXAMPLE_PROJECT_ID,
+    )).toBeNull();
+  });
+
   it("fails closed when the branch is missing", async () => {
     const stack = createLocalIngestionStack({
       remote: new FakeRemoteRepository({

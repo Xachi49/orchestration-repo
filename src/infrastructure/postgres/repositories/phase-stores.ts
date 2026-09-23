@@ -3140,6 +3140,18 @@ export class PostgresRepositorySourceRegistry
     }
   }
 
+  /** Operator provisioning insert — never overwrites an existing source. */
+  async insertExclusive(source: RepositorySource): Promise<void> {
+    const parsed = parseRepositorySource(source);
+    await this.docs.insert({
+      collection: C.repositorySources,
+      documentId: parsed.projectId,
+      uniqueKey: parsed.projectId,
+      projectId: parsed.projectId,
+      payload: parsed,
+    });
+  }
+
   async getByProjectId(projectId: string): Promise<RepositorySource | null> {
     return this.docs.get(C.repositorySources, projectId, parseRepositorySource);
   }

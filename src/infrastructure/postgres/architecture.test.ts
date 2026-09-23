@@ -59,4 +59,25 @@ describe("durability architecture documentation", () => {
     expect(interfaceBody).toContain("governanceProofs: PostgresInstitutionalAuthorizationProofRepository");
     expect(interfaceBody).toContain("governanceHolds: PostgresGovernanceHoldRepository");
   });
+
+  it("production image copies control-plane CLI scripts and pilot manifest", () => {
+    const dockerfile = readFileSync("Dockerfile", "utf8");
+    expect(dockerfile).toContain("COPY manifests ./manifests");
+    expect(dockerfile).toContain("COPY --from=build /app/manifests ./manifests");
+    expect(dockerfile).toContain("COPY --from=build /app/dist ./dist");
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts["control-plane:inspect"]).toContain(
+      "dist/infrastructure/postgres/control-plane-cli.js inspect",
+    );
+    expect(pkg.scripts["control-plane:provision"]).toContain(
+      "dist/infrastructure/postgres/control-plane-cli.js provision",
+    );
+    const manifest = readFileSync(
+      "manifests/control-plane/continuum-revenue-recovery-pilot.json",
+      "utf8",
+    );
+    expect(manifest).toContain("continuum-revenue-recovery-pilot");
+  });
 });

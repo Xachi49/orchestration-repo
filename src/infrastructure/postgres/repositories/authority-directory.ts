@@ -79,6 +79,130 @@ export class PostgresAuthorityDirectory {
     }
   }
 
+  /**
+   * Operator provisioning insert for a Phase 2/6 grant.
+   * Never resurrects a revoked grant identity path silently — caller must
+   * precheck REVOKED_ONLY and fail closed.
+   */
+  async insertExclusiveGrant(grant: AuthorityGrantSeed): Promise<string> {
+    const grantId = randomUUID();
+    await this.db.query(
+      `INSERT INTO authority_grants (
+         grant_id, principal_id, principal_type, project_id,
+         authorized_environments, enabled, authority_version
+       ) VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, '1')`,
+      [
+        grantId,
+        grant.principalId,
+        grant.principalType,
+        grant.projectId,
+        JSON.stringify([...grant.environments]),
+      ],
+    );
+    return grantId;
+  }
+
+  async getUnrevokedGrantEnvironments(
+    principalId: string,
+    principalType: "REQUESTER" | "APPROVER",
+    projectId: string,
+  ): Promise<readonly string[] | null> {
+    const result = await this.db.query<{
+      authorized_environments: string[];
+    }>(
+      `SELECT g.authorized_environments
+       FROM authority_grants g
+       WHERE g.principal_id = $1
+         AND g.principal_type = $2
+         AND g.project_id = $3
+         AND g.enabled = TRUE
+         AND NOT EXISTS (
+           SELECT 1 FROM authority_revocations r
+           WHERE r.target_type = 'DIRECT_GRANT'
+             AND r.target_id = g.grant_id
+             AND r.effective_at <= NOW()
+         )
+       ORDER BY g.created_at ASC, g.grant_id ASC
+       LIMIT 1`,
+      [principalId, principalType, projectId],
+    );
+    const row = result.rows[0];
+    return row ? row.authorized_environments : null;
+  }
+
+  async hasRevokedGrantOnly(
+    principalId: string,
+    principalType: "REQUESTER" | "APPROVER",
+    projectId: string,
+  ): Promise<boolean> {
+    const unrevoked = await this.getUnrevokedGrantEnvironments(
+      principalId,
+      principalType,
+      projectId,
+    );
+    if (unrevoked !== null) return false;
+    const result = await this.db.query(
+      `SELECT 1
+       FROM authority_grants g
+       WHERE g.principal_id = $1
+         AND g.principal_type = $2
+         AND g.project_id = $3
+         AND EXISTS (
+           SELECT 1 FROM authority_revocations r
+           WHERE r.target_type = 'DIRECT_GRANT'
+             AND r.target_id = g.grant_id
+             AND r.effective_at <= NOW()
+         )
+       LIMIT 1`,
+      [principalId, principalType, projectId],
+    );
+    return result.rows.length > 0;
+  }
+
+  async listProjectAuthorityGrants(projectId: string): Promise<
+    readonly {
+      grantId: string;
+      principalId: string;
+      principalType: string;
+      environments: readonly string[];
+      enabled: boolean;
+      revoked: boolean;
+    }[]
+  > {
+    const result = await this.db.query<{
+      grant_id: string;
+      principal_id: string;
+      principal_type: string;
+      authorized_environments: string[];
+      enabled: boolean;
+      revoked: boolean;
+    }>(
+      `SELECT g.grant_id,
+              g.principal_id,
+              g.principal_type,
+              g.authorized_environments,
+              g.enabled,
+              EXISTS (
+                SELECT 1 FROM authority_revocations r
+                WHERE r.target_type = 'DIRECT_GRANT'
+                  AND r.target_id = g.grant_id
+                  AND r.effective_at <= NOW()
+              ) AS revoked
+       FROM authority_grants g
+       WHERE g.project_id = $1
+       ORDER BY g.principal_type ASC, g.principal_id ASC, g.created_at ASC`,
+      [projectId],
+    );
+    return result.rows.map((row) => ({
+      grantId: row.grant_id,
+      principalId: row.principal_id,
+      principalType: row.principal_type,
+      environments: row.authorized_environments,
+      enabled: row.enabled,
+      revoked: row.revoked,
+    }));
+  }
+
   private async findCurrentUnrevokedGrant(
     principalId: string,
     principalType: string,

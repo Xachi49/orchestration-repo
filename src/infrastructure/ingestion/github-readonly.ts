@@ -177,6 +177,12 @@ export class GitHubReadOnlyAdapter implements RemoteRepositoryService {
         "GitHub authentication failed",
       );
     }
+    if (response.status === 429) {
+      throw new IngestionError(
+        "REMOTE_REPOSITORY_UNAVAILABLE",
+        "GitHub rate limit exceeded",
+      );
+    }
     if (response.status === 404) {
       throw new IngestionError(notFoundCode, "GitHub resource was not found");
     }

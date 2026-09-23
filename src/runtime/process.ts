@@ -100,6 +100,8 @@ export function createOrchestratorRuntime(
           poolMax: config.poolMax,
           connectionTimeoutMs: config.connectionTimeoutMs,
           idleTimeoutMs: config.idleTimeoutMs,
+          runtimeEnvironment: config.runtimeEnvironment,
+          env: envMap,
           ...(config.databaseUrl !== undefined
             ? { databaseUrl: config.databaseUrl }
             : {}),
@@ -230,6 +232,9 @@ export function createOrchestratorRuntime(
                     outboxSummary: async () => ({
                       pending: await postgres.outbox.countPending(),
                     }),
+                    repositoryRemoteAdapter: postgres.repositoryRemoteAdapter,
+                    repositoryWorkspaceAdapter:
+                      postgres.repositoryWorkspaceAdapter,
                   }
                 : {}),
             },

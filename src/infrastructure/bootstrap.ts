@@ -26,6 +26,9 @@ export interface BootstrapOptions {
   poolMax?: number;
   connectionTimeoutMs?: number;
   idleTimeoutMs?: number;
+  /** Drives repository adapter selection. PRODUCTION → REAL GitHub + LocalGit. */
+  runtimeEnvironment?: string;
+  env?: NodeJS.ProcessEnv;
   onPhase?: (phase: BootstrapPhase) => void;
 }
 
@@ -88,11 +91,18 @@ export async function bootstrapOrchestratorStack(
         health as unknown as Record<string, unknown>,
       );
     }
+    const runtimeEnvironment =
+      options.runtimeEnvironment ??
+      options.env?.["ORCHESTRATOR_ENV"] ??
+      process.env["ORCHESTRATOR_ENV"] ??
+      "PRODUCTION";
     const stack = await createPostgresOrchestratorStack({
       db,
       instanceId: options.instanceId ?? fileConfig.instanceId,
       seedControlPlane: false,
       seedRepositorySources: false,
+      runtimeEnvironment,
+      env: options.env ?? process.env,
     });
     options.onPhase?.("RECOVERY_RUNNING");
     const recoveryItems = await stack.recovery.recover();

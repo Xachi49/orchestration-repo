@@ -9,6 +9,17 @@ export { FakeRepositoryWorkspace } from "./fake-workspace.js";
 export { GitHubReadOnlyAdapter, githubTokenFromEnv } from "./github-readonly.js";
 export { LocalGitWorkspaceService } from "./git-workspace.js";
 export {
+  selectRepositoryInfrastructure,
+  resolveRepositoryAdapterMode,
+  resolveRepositoryDataRoot,
+  RepositoryAdapterSelectionError,
+  isRepositoryAdapterSelectionError,
+  type RepositoryRemoteAdapterKind,
+  type RepositoryWorkspaceAdapterKind,
+  type RepositoryAdapterMode,
+  type RepositoryInfrastructureSelection,
+} from "./repository-adapters.js";
+export {
   createLocalIngestionStack,
   type LocalIngestionStack,
 } from "./local-stack.js";

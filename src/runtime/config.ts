@@ -367,12 +367,26 @@ export function assertProductionInvariants(
       "Enabled model provider still requires durable postgres configuration",
     );
   }
-  // GitHubReadOnlyAdapter.requireToken — even public repos need GITHUB_TOKEN
-  // under the current adapter contract. FAKE is not a production fallback.
-  if (!env(envMap, "GITHUB_TOKEN")) {
+  // Explicit GitHub auth mode — never inferred from token presence/absence.
+  // TOKEN → GITHUB_TOKEN required. PUBLIC_ANONYMOUS → no token required.
+  // FAKE is not a production fallback. No silent TOKEN → anonymous transition.
+  const githubAuthMode = env(envMap, "ORCHESTRATOR_GITHUB_AUTH_MODE");
+  if (!githubAuthMode) {
+    throw new RuntimeError(
+      "PRODUCTION_GITHUB_AUTH_MODE_REQUIRED",
+      "PRODUCTION requires explicit ORCHESTRATOR_GITHUB_AUTH_MODE (TOKEN or PUBLIC_ANONYMOUS)",
+    );
+  }
+  if (githubAuthMode !== "TOKEN" && githubAuthMode !== "PUBLIC_ANONYMOUS") {
+    throw new RuntimeError(
+      "PRODUCTION_GITHUB_AUTH_MODE_INVALID",
+      "ORCHESTRATOR_GITHUB_AUTH_MODE must be TOKEN or PUBLIC_ANONYMOUS",
+    );
+  }
+  if (githubAuthMode === "TOKEN" && !env(envMap, "GITHUB_TOKEN")) {
     throw new RuntimeError(
       "PRODUCTION_GITHUB_TOKEN_REQUIRED",
-      "PRODUCTION requires GITHUB_TOKEN for real repository truth (GitHubReadOnlyAdapter). PRODUCTION != FAKE REPOSITORY TRUTH",
+      "PRODUCTION TOKEN GitHub auth mode requires GITHUB_TOKEN for real repository truth. PRODUCTION != FAKE REPOSITORY TRUTH",
     );
   }
   const repositoryAdapterMode = env(envMap, "ORCHESTRATOR_REPOSITORY_ADAPTER_MODE");

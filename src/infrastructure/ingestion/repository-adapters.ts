@@ -21,7 +21,9 @@ import { FakeRemoteRepository } from "./fake-remote.js";
 import { FakeRepositoryWorkspace } from "./fake-workspace.js";
 import {
   GitHubReadOnlyAdapter,
+  githubAuthModeFromEnv,
   githubTokenFromEnv,
+  type GitHubAuthMode,
 } from "./github-readonly.js";
 import { LocalGitWorkspaceService } from "./git-workspace.js";
 
@@ -59,6 +61,8 @@ export interface RepositoryInfrastructureSelection {
   remoteAdapter: RepositoryRemoteAdapterKind;
   workspaceAdapter: RepositoryWorkspaceAdapterKind;
   mode: RepositoryAdapterMode;
+  /** Present when remoteAdapter is GITHUB; null for FAKE. */
+  githubAuthenticationMode: GitHubAuthMode | null;
 }
 
 export interface SelectRepositoryInfrastructureInput {
@@ -70,6 +74,8 @@ export interface SelectRepositoryInfrastructureInput {
    * PRODUCTION → REAL; otherwise → FAKE (deterministic fixtures).
    */
   mode?: RepositoryAdapterMode;
+  /** Explicit GitHub HTTP auth mode for REAL adapters. */
+  githubAuthMode?: GitHubAuthMode;
   /** Test seam — injected GitHub token (never logged). */
   githubToken?: string;
   /** Test seam — deterministic GitHub transport. */
@@ -117,6 +123,41 @@ export function resolveRepositoryAdapterMode(input: {
   return mode;
 }
 
+/**
+ * Resolve GitHub auth mode. Never infers PUBLIC_ANONYMOUS from missing token.
+ * PRODUCTION REAL requires an explicit mode (env or option).
+ */
+export function resolveGitHubAuthMode(input: {
+  runtimeEnvironment: string;
+  githubAuthMode?: GitHubAuthMode;
+  env?: NodeJS.ProcessEnv;
+}): GitHubAuthMode {
+  const env = input.env ?? process.env;
+  if (input.githubAuthMode !== undefined) {
+    return input.githubAuthMode;
+  }
+  try {
+    const fromEnv = githubAuthModeFromEnv(env);
+    if (fromEnv) return fromEnv;
+  } catch (error) {
+    if (error instanceof Error && error.name === "IngestionError") {
+      throw new RepositoryAdapterSelectionError(
+        "GITHUB_AUTH_MODE_INVALID",
+        error.message,
+      );
+    }
+    throw error;
+  }
+  if (input.runtimeEnvironment === "PRODUCTION") {
+    throw new RepositoryAdapterSelectionError(
+      "GITHUB_AUTH_MODE_REQUIRED",
+      "PRODUCTION requires explicit ORCHESTRATOR_GITHUB_AUTH_MODE (TOKEN or PUBLIC_ANONYMOUS); never inferred from token presence",
+    );
+  }
+  // Non-production REAL tests default to TOKEN (token still required separately).
+  return "TOKEN";
+}
+
 export function selectRepositoryInfrastructure(
   input: SelectRepositoryInfrastructureInput,
 ): RepositoryInfrastructureSelection {
@@ -128,18 +169,30 @@ export function selectRepositoryInfrastructure(
   });
 
   if (mode === "REAL") {
+    const githubAuthMode = resolveGitHubAuthMode({
+      runtimeEnvironment: input.runtimeEnvironment,
+      ...(input.githubAuthMode !== undefined
+        ? { githubAuthMode: input.githubAuthMode }
+        : {}),
+      env,
+    });
     const token =
       input.githubToken !== undefined
         ? input.githubToken.trim() || undefined
         : githubTokenFromEnv(env);
-    if (!token) {
+
+    if (githubAuthMode === "TOKEN" && !token) {
       throw new RepositoryAdapterSelectionError(
         "GITHUB_TOKEN_REQUIRED",
-        "PRODUCTION REAL repository adapters require GITHUB_TOKEN (read-only). Missing credentials fail closed; FAKE is not a fallback.",
+        "TOKEN GitHub auth mode requires GITHUB_TOKEN. Missing credentials fail closed; FAKE and PUBLIC_ANONYMOUS are not fallbacks.",
       );
     }
+
     const githubOptions: ConstructorParameters<typeof GitHubReadOnlyAdapter>[0] =
-      { token };
+      {
+        authMode: githubAuthMode,
+        ...(githubAuthMode === "TOKEN" && token ? { token } : {}),
+      };
     if (input.githubFetchImpl) {
       githubOptions.fetchImpl = input.githubFetchImpl;
     }
@@ -155,6 +208,7 @@ export function selectRepositoryInfrastructure(
       remoteAdapter: "GITHUB",
       workspaceAdapter: "LOCAL_GIT",
       mode,
+      githubAuthenticationMode: githubAuthMode,
     };
   }
 
@@ -188,6 +242,7 @@ export function selectRepositoryInfrastructure(
     remoteAdapter: "FAKE",
     workspaceAdapter: "FAKE",
     mode,
+    githubAuthenticationMode: null,
   };
 }
 

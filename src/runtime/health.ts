@@ -20,6 +20,8 @@ export interface HealthDeps {
   /** Non-secret repository adapter kinds (PRODUCTION must be GITHUB + LOCAL_GIT). */
   repositoryRemoteAdapter?: "GITHUB" | "FAKE";
   repositoryWorkspaceAdapter?: "LOCAL_GIT" | "FAKE";
+  /** Non-secret GitHub HTTP auth mode; null when FAKE adapters are selected. */
+  githubAuthenticationMode?: "TOKEN" | "PUBLIC_ANONYMOUS" | null;
 }
 
 export function registerHealthRoutes(
@@ -62,6 +64,7 @@ export function registerHealthRoutes(
     role: deps.config.runtimeRole,
     repositoryRemoteAdapter: deps.repositoryRemoteAdapter ?? null,
     repositoryWorkspaceAdapter: deps.repositoryWorkspaceAdapter ?? null,
+    githubAuthenticationMode: deps.githubAuthenticationMode ?? null,
   }));
 
   app.get("/ops/diagnostics", async () => ({

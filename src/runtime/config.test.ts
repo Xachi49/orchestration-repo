@@ -11,6 +11,7 @@ const productionBase = {
   ORCHESTRATOR_STATIC_PRINCIPAL_ID: "operator_static",
   APPROVAL_DELIVERY_SECRET_KEY: Buffer.alloc(32, 7).toString("base64"),
   RECOVERY_PROVIDER_MODE: "SHADOW",
+  ORCHESTRATOR_GITHUB_AUTH_MODE: "TOKEN",
   GITHUB_TOKEN: "ghs_test_token_not_a_secret_fixture",
   ORCHESTRATOR_DEBUG: "false",
   ORCHESTRATOR_WORKER_CONCURRENCY: "4",
@@ -55,10 +56,36 @@ describe("production runtime configuration", () => {
     expect(() => loadRuntimeConfig(env)).toThrow(/RECOVERY_PROVIDER_MODE/);
   });
 
-  it("rejects missing GITHUB_TOKEN in PRODUCTION", () => {
+  it("rejects missing ORCHESTRATOR_GITHUB_AUTH_MODE in PRODUCTION", () => {
+    const env = { ...productionBase };
+    delete (env as { ORCHESTRATOR_GITHUB_AUTH_MODE?: string })
+      .ORCHESTRATOR_GITHUB_AUTH_MODE;
+    expect(() => loadRuntimeConfig(env)).toThrow(/ORCHESTRATOR_GITHUB_AUTH_MODE/);
+  });
+
+  it("rejects invalid ORCHESTRATOR_GITHUB_AUTH_MODE in PRODUCTION", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...productionBase,
+        ORCHESTRATOR_GITHUB_AUTH_MODE: "AUTO",
+      }),
+    ).toThrow(/ORCHESTRATOR_GITHUB_AUTH_MODE/);
+  });
+
+  it("rejects missing GITHUB_TOKEN when auth mode is TOKEN", () => {
     const env = { ...productionBase };
     delete (env as { GITHUB_TOKEN?: string }).GITHUB_TOKEN;
     expect(() => loadRuntimeConfig(env)).toThrow(/GITHUB_TOKEN/);
+  });
+
+  it("accepts PUBLIC_ANONYMOUS without GITHUB_TOKEN", () => {
+    const env = {
+      ...productionBase,
+      ORCHESTRATOR_GITHUB_AUTH_MODE: "PUBLIC_ANONYMOUS",
+    };
+    delete (env as { GITHUB_TOKEN?: string }).GITHUB_TOKEN;
+    const config = loadRuntimeConfig(env);
+    expect(config.runtimeEnvironment).toBe("PRODUCTION");
   });
 
   it("rejects FAKE repository adapter mode in PRODUCTION", () => {

@@ -1,0 +1,83 @@
+{
+  "project": {
+    "projectId": "continuum-revenue-recovery-pilot",
+    "projectName": "Continuum Revenue Recovery Pilot",
+    "repositoryUrl": "https://github.com/Xachi49/orchestration-repo.git",
+    "defaultBranch": "main",
+    "workspaceRoot": "/workspace/continuum-revenue-recovery-pilot",
+    "allowedEnvironments": ["production"],
+    "executionMode": "SUPERVISED",
+    "activePolicyBundleId": "pol_continuum_rr_pilot_v1",
+    "resourceBudgetProfileId": "budget_continuum_rr_pilot",
+    "authorizedApproverIds": ["approver_rr_pilot"],
+    "sensitivityClassification": "INTERNAL",
+    "status": "ACTIVE"
+  },
+  "policyBundle": {
+    "policyBundleId": "pol_continuum_rr_pilot_v1",
+    "semanticVersion": "1.0.0",
+    "supersedes": null,
+    "applicableProjectIds": ["continuum-revenue-recovery-pilot"],
+    "applicableEnvironments": ["production"],
+    "approvedBy": "approver_rr_pilot",
+    "status": "ACTIVE",
+    "rules": [
+      {
+        "ruleId": "require_approval_recovery_email",
+        "description": "Recovery email requires human Phase 6 approval",
+        "effect": "REQUIRE_APPROVAL",
+        "actionTypes": ["SEND_RECOVERY_EMAIL"],
+        "environments": ["production"],
+        "conditions": [],
+        "reasonCode": "RECOVERY_EMAIL_REQUIRES_APPROVAL"
+      }
+    ]
+  },
+  "budgetProfile": {
+    "budgetProfileId": "budget_continuum_rr_pilot",
+    "maximumLlmCalls": 10,
+    "maximumTotalTokens": 50000,
+    "maximumApiCalls": 50,
+    "maximumExecutionMinutes": 30,
+    "maximumEstimatedCost": 10,
+    "maximumHumanReviewMinutes": 60,
+    "maximumPlanSteps": 20,
+    "maximumParallelWorkstreams": 1,
+    "maximumRevisionAttempts": 3,
+    "allowedExecutionWindows": [
+      {
+        "windowId": "always_utc",
+        "daysOfWeek": [0, 1, 2, 3, 4, 5, 6],
+        "startTimeUtc": "00:00",
+        "endTimeUtc": "23:59"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "capabilityId": "SEND_RECOVERY_EMAIL",
+      "version": "1.0.0",
+      "description": "Send bounded recovery email via Revenue Recovery Phase 7 actuator",
+      "allowedActions": ["SEND_RECOVERY_EMAIL"],
+      "forbiddenActions": ["EXECUTE_SHELL", "RUN_ARBITRARY_COMMAND"],
+      "allowedEnvironments": ["production"],
+      "approvalRequirement": "REQUIRED",
+      "maximumRuntimeSeconds": 30,
+      "enabled": true
+    }
+  ],
+  "requesterGrants": [
+    {
+      "requesterId": "requester_rr_pilot",
+      "projectId": "continuum-revenue-recovery-pilot",
+      "environments": ["production"]
+    }
+  ],
+  "approverGrants": [
+    {
+      "approverId": "approver_rr_pilot",
+      "projectId": "continuum-revenue-recovery-pilot",
+      "environments": ["production"]
+    }
+  ]
+}

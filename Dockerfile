@@ -6,6 +6,7 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 COPY migrations ./migrations
+COPY manifests ./manifests
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-alpine
@@ -15,6 +16,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./
 COPY --from=build /app/migrations ./migrations
+COPY --from=build /app/manifests ./manifests
 USER 10001
 ENV NODE_ENV=production
 EXPOSE 3000

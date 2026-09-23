@@ -25,7 +25,9 @@ function isNormalizedApplicationError(error: unknown): boolean {
     error instanceof AssuranceError ||
     error instanceof QualificationError ||
     (error instanceof Error &&
-      (error.name === "SchedulingError" || error.name === "AdmissionError"))
+      (error.name === "SchedulingError" ||
+        error.name === "AdmissionError" ||
+        error.name === "ControlPlaneProvisionError"))
   );
 }
 

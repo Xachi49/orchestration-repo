@@ -57,6 +57,7 @@ try {
       "src/infrastructure/postgres/postgres.phase24.test.ts",
       "src/infrastructure/postgres/postgres.revenue-recovery.test.ts",
       "src/infrastructure/postgres/postgres.revenue-recovery-live-pilot.test.ts",
+      "src/infrastructure/postgres/postgres.control-plane-ops.test.ts",
     ].join(" "),
     {
       stdio: "inherit",

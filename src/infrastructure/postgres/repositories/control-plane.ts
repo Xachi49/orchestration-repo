@@ -36,6 +36,18 @@ export class PostgresProjectRegistry implements ProjectRegistry {
     }
   }
 
+  /**
+   * Operator provisioning insert — never overwrites an existing project.
+   * Fail closed on identity collision (caller must precheck semantic equality).
+   */
+  async insertExclusive(project: Project): Promise<void> {
+    const parsed = parseProject(project);
+    await this.db.query(
+      `INSERT INTO projects (project_id, payload) VALUES ($1, $2::jsonb)`,
+      [parsed.projectId, JSON.stringify(parsed)],
+    );
+  }
+
   async getById(projectId: string): Promise<Project | null> {
     const result = await this.db.query<{ payload: unknown }>(
       `SELECT payload FROM projects WHERE project_id = $1`,
@@ -79,6 +91,16 @@ export class PostgresCapabilityRegistry implements CapabilityRegistry {
         [parsed.capabilityId, parsed.version, JSON.stringify(parsed)],
       );
     }
+  }
+
+  /** Operator provisioning insert — never overwrites an existing capability. */
+  async insertExclusive(capability: Capability): Promise<void> {
+    const parsed = parseCapability(capability);
+    await this.db.query(
+      `INSERT INTO capabilities (capability_id, version, payload)
+       VALUES ($1, $2, $3::jsonb)`,
+      [parsed.capabilityId, parsed.version, JSON.stringify(parsed)],
+    );
   }
 
   async getById(capabilityId: string): Promise<Capability | null> {
@@ -146,6 +168,21 @@ export class PostgresPolicyRegistry implements PolicyRegistry {
         ],
       );
     }
+  }
+
+  /** Operator provisioning insert — never overwrites an existing policy bundle. */
+  async insertExclusive(bundle: PolicyBundle): Promise<void> {
+    const parsed = parsePolicyBundle(bundle);
+    await this.db.query(
+      `INSERT INTO policy_bundles (policy_bundle_id, policy_hash, status, payload)
+       VALUES ($1, $2, $3, $4::jsonb)`,
+      [
+        parsed.policyBundleId,
+        parsed.policyHash,
+        parsed.status,
+        JSON.stringify(parsed),
+      ],
+    );
   }
 
   async getBundleById(policyBundleId: string): Promise<PolicyBundle | null> {
@@ -266,6 +303,16 @@ export class PostgresResourceBudgetRegistry implements ResourceBudgetRegistry {
         [parsed.budgetProfileId, JSON.stringify(parsed)],
       );
     }
+  }
+
+  /** Operator provisioning insert — never overwrites an existing budget profile. */
+  async insertExclusive(profile: ResourceBudgetProfile): Promise<void> {
+    const parsed = parseResourceBudgetProfile(profile);
+    await this.db.query(
+      `INSERT INTO budget_profiles (budget_profile_id, payload)
+       VALUES ($1, $2::jsonb)`,
+      [parsed.budgetProfileId, JSON.stringify(parsed)],
+    );
   }
 
   async getById(

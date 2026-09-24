@@ -973,6 +973,11 @@ Corrections require a new record, never an edit.
 - `GET  /v1/runs/{runId}/approval-request`
 - `GET  /v1/runs/{runId}/authorization-readiness`
 - `POST /v1/approval-requests/{approvalRequestId}/decision`
+- `POST /v1/approval-requests/{approvalRequestId}/reissue` — operator recovery when
+  delivery is unreachable (`{ "reason": "DELIVERY_UNREACHABLE" }`); invalidates the
+  old nonce, cancels the PENDING request, issues a replacement with a new nonce
+  via the configured delivery provider. `REISSUE != APPROVAL`. Response never
+  includes the plaintext nonce.
 - `GET  /v1/runs/{runId}/authorization`
 - `POST /v1/approval-requests/expire`
 

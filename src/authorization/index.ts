@@ -69,8 +69,13 @@ export {
 
 export {
   HumanAuthorizationService,
+  APPROVAL_REISSUE_REASONS,
+  APPROVAL_DELIVERY_UNREACHABLE_REASON,
+  APPROVAL_REISSUE_AUDIT_EVENT,
   type HumanAuthorizationServiceDeps,
   type ApprovalReissueResult,
+  type ApprovalDeliveryRecoveryResult,
+  type ApprovalReissueReason,
 } from "./service.js";
 
 export {

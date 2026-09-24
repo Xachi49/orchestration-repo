@@ -23,6 +23,7 @@ import type { ModificationRequestRepository } from "./modification-request-repos
 import type { AuthorizationCoordinator } from "./coordinator.js";
 import type { DecisionCardStore } from "./decision-card-store.js";
 import type { ApprovalDeliveryService } from "./delivery.js";
+import type { ApprovalDeliverySecretStore } from "./delivery-secret-store.js";
 import {
   Sha256DecisionCardHasher,
   type DecisionCardHasher,
@@ -58,6 +59,22 @@ import {
   withOptionalTransaction,
   type TransactionManager,
 } from "../durability/transaction.js";
+import type { EventStore } from "../admission/event-store.js";
+import {
+  APPROVAL_DELIVERY_EVENT,
+  type ApprovalDeliveryOutboxPayload,
+} from "./outbox-consumer.js";
+import type { TransactionalOutboxPort } from "./routing.js";
+import { randomUUID } from "node:crypto";
+
+/** Allowlisted operator recovery reasons for unreachable delivery. */
+export const APPROVAL_REISSUE_REASONS = ["DELIVERY_UNREACHABLE"] as const;
+export type ApprovalReissueReason = (typeof APPROVAL_REISSUE_REASONS)[number];
+
+export const APPROVAL_DELIVERY_UNREACHABLE_REASON =
+  "APPROVAL_DELIVERY_UNREACHABLE" as const;
+
+export const APPROVAL_REISSUE_AUDIT_EVENT = "APPROVAL_REQUEST_REISSUED" as const;
 
 export interface HumanAuthorizationServiceDeps {
   runs: RunRepository;
@@ -86,6 +103,11 @@ export interface HumanAuthorizationServiceDeps {
    * When absent or no active mandate/hold: Phase 6 behavior unchanged.
    */
   institutionalGovernance?: import("../governance/port.js").InstitutionalGovernancePort;
+  /** Durable outbox path (postgres). When set with transactions, preferred over sync delivery. */
+  outbox?: TransactionalOutboxPort;
+  deliverySecrets?: ApprovalDeliverySecretStore;
+  dispatchPendingDeliveries?: () => Promise<{ delivered: number; failed: number }>;
+  events?: EventStore;
 }
 
 export interface ApprovalReissueResult {
@@ -99,6 +121,24 @@ export interface ApprovalReissueResult {
   runState: "AWAITING_APPROVAL";
   replacesApprovalRequestId: string;
 }
+
+/** HTTP-safe recovery result — never includes nonce material. */
+export type ApprovalDeliveryRecoveryResult =
+  | {
+      outcome: "REISSUED";
+      runId: string;
+      originalApprovalRequestId: string;
+      replacementApprovalRequestId: string;
+      replacesApprovalRequestId: string;
+      runState: "AWAITING_APPROVAL";
+    }
+  | {
+      outcome: "ALREADY_REISSUED";
+      runId: string;
+      originalApprovalRequestId: string;
+      replacementApprovalRequestId: string;
+      runState: "AWAITING_APPROVAL";
+    };
 
 /**
  * Deterministic human authorization. No model calls.
@@ -379,6 +419,332 @@ export class HumanAuthorizationService {
   }
 
   /**
+   * Operator recovery for PENDING (or delivery-failed CANCELLED) ApprovalRequests
+   * whose plaintext decision nonce is unreachable via the human delivery channel.
+   *
+   * LOST DELIVERY != AUTHORIZATION
+   * REISSUE != APPROVAL
+   * OLD NONCE != VALID AFTER REISSUE
+   *
+   * Composes preparatory invalidation with the existing reissue claim +
+   * createReplacementRequest path. Does not call AuthorizationRoutingService.route().
+   */
+  async recoverUnreachableApprovalDelivery(input: {
+    approvalRequestId: string;
+    reason: ApprovalReissueReason;
+    operatorPrincipalId?: string;
+  }): Promise<ApprovalDeliveryRecoveryResult> {
+    if (
+      !(APPROVAL_REISSUE_REASONS as readonly string[]).includes(input.reason)
+    ) {
+      throw new AuthorizationError(
+        "APPROVAL_REISSUE_NOT_ELIGIBLE",
+        `Unsupported approval reissue reason: ${input.reason}`,
+        { reason: input.reason },
+      );
+    }
+
+    const original = await this.deps.requests.getById(input.approvalRequestId);
+    if (!original) {
+      throw new AuthorizationError(
+        "APPROVAL_REQUEST_NOT_FOUND",
+        `Unknown approval request: ${input.approvalRequestId}`,
+      );
+    }
+
+    const existingLive = await this.findLiveReplacement(
+      original.runId,
+      original.approvalRequestId,
+    );
+    if (existingLive) {
+      return {
+        outcome: "ALREADY_REISSUED",
+        runId: original.runId,
+        originalApprovalRequestId: original.approvalRequestId,
+        replacementApprovalRequestId: existingLive.approvalRequestId,
+        runState: "AWAITING_APPROVAL",
+      };
+    }
+
+    await this.assertUnreachableDeliveryRecoveryEligible(original);
+
+    const claim = await this.deps.coordinator.beginReissue(
+      original.approvalRequestId,
+    );
+    if (claim.outcome === "ALREADY") {
+      const already = await this.deps.requests.getById(claim.approvalRequestId);
+      if (already && already.status === "PENDING") {
+        return {
+          outcome: "ALREADY_REISSUED",
+          runId: original.runId,
+          originalApprovalRequestId: original.approvalRequestId,
+          replacementApprovalRequestId: already.approvalRequestId,
+          runState: "AWAITING_APPROVAL",
+        };
+      }
+      const afterWait = await this.findLiveReplacement(
+        original.runId,
+        original.approvalRequestId,
+      );
+      if (afterWait) {
+        return {
+          outcome: "ALREADY_REISSUED",
+          runId: original.runId,
+          originalApprovalRequestId: original.approvalRequestId,
+          replacementApprovalRequestId: afterWait.approvalRequestId,
+          runState: "AWAITING_APPROVAL",
+        };
+      }
+      throw new AuthorizationError(
+        "APPROVAL_REISSUE_NOT_ELIGIBLE",
+        "Concurrent reissue completed without a live replacement",
+        { replacedApprovalRequestId: original.approvalRequestId },
+      );
+    }
+
+    try {
+      const run = await this.deps.runs.getById(original.runId);
+      if (!run || run.state !== "AWAITING_APPROVAL") {
+        throw new AuthorizationError(
+          "INVALID_AUTHORIZATION_STATE",
+          "Approval reissue requires run state AWAITING_APPROVAL",
+          { runId: original.runId, state: run?.state },
+        );
+      }
+
+      // Atomic authority invalidation BEFORE any replacement nonce is usable.
+      if (original.status === "PENDING") {
+        await this.invalidateUnreachablePendingRequest(original);
+      }
+
+      const afterInvalidate = await this.findLiveReplacement(
+        original.runId,
+        original.approvalRequestId,
+      );
+      if (afterInvalidate) {
+        await this.deps.coordinator.completeReissue(
+          original.approvalRequestId,
+          afterInvalidate.approvalRequestId,
+        );
+        await this.appendReissueAudit({
+          original,
+          replacement: afterInvalidate,
+          reason: input.reason,
+          ...(input.operatorPrincipalId !== undefined
+            ? { operatorPrincipalId: input.operatorPrincipalId }
+            : {}),
+        });
+        return {
+          outcome: "ALREADY_REISSUED",
+          runId: original.runId,
+          originalApprovalRequestId: original.approvalRequestId,
+          replacementApprovalRequestId: afterInvalidate.approvalRequestId,
+          runState: "AWAITING_APPROVAL",
+        };
+      }
+
+      const live = await this.deps.requests.getPendingByRun(original.runId);
+      if (live) {
+        if (live.replacesApprovalRequestId === original.approvalRequestId) {
+          await this.deps.coordinator.completeReissue(
+            original.approvalRequestId,
+            live.approvalRequestId,
+          );
+          await this.appendReissueAudit({
+            original,
+            replacement: live,
+            reason: input.reason,
+            ...(input.operatorPrincipalId !== undefined
+              ? { operatorPrincipalId: input.operatorPrincipalId }
+              : {}),
+          });
+          return {
+            outcome: "ALREADY_REISSUED",
+            runId: original.runId,
+            originalApprovalRequestId: original.approvalRequestId,
+            replacementApprovalRequestId: live.approvalRequestId,
+            runState: "AWAITING_APPROVAL",
+          };
+        }
+        throw new AuthorizationError(
+          "APPROVAL_REQUEST_ALREADY_EXISTS",
+          "A different PENDING approval request already exists for this run",
+          { approvalRequestId: live.approvalRequestId },
+        );
+      }
+
+      const created = await this.createReplacementRequest(run, original);
+      await this.deps.coordinator.completeReissue(
+        original.approvalRequestId,
+        created.approvalRequestId,
+      );
+      await this.appendReissueAudit({
+        original,
+        replacement: created,
+        reason: input.reason,
+        ...(input.operatorPrincipalId !== undefined
+          ? { operatorPrincipalId: input.operatorPrincipalId }
+          : {}),
+      });
+      return {
+        outcome: "REISSUED",
+        runId: original.runId,
+        originalApprovalRequestId: original.approvalRequestId,
+        replacementApprovalRequestId: created.approvalRequestId,
+        replacesApprovalRequestId: original.approvalRequestId,
+        runState: "AWAITING_APPROVAL",
+      };
+    } catch (error) {
+      await this.deps.coordinator.failReissue(original.approvalRequestId);
+      throw error;
+    }
+  }
+
+  /**
+   * Invalidate a PENDING unreachable request so old authority cannot authorize.
+   * Must complete before replacement nonce issuance.
+   */
+  private async invalidateUnreachablePendingRequest(
+    request: ApprovalRequest,
+  ): Promise<void> {
+    await withOptionalTransaction(this.deps.transactions, async () => {
+      // 1) Invalidate nonce state first — old plaintext can never authorize again.
+      await this.deps.coordinator.invalidateNonce(request.approvalRequestId);
+      // 2) Invalidate any remaining encrypted delivery secret.
+      await this.deps.deliverySecrets?.invalidate(request.approvalRequestId);
+      // 3) Terminal CANCELLED — never returns to PENDING.
+      await this.deps.requests.updateStatus(
+        request.approvalRequestId,
+        "CANCELLED",
+        {
+          failureReasonCode: APPROVAL_DELIVERY_UNREACHABLE_REASON,
+        },
+      );
+    });
+  }
+
+  private async assertUnreachableDeliveryRecoveryEligible(
+    request: ApprovalRequest,
+  ): Promise<void> {
+    const deliveryFailedRetry =
+      request.status === "CANCELLED" &&
+      request.deliveryFailureCode === "APPROVAL_DELIVERY_FAILED";
+
+    if (request.status === "APPROVED" || request.status === "REJECTED") {
+      throw new AuthorizationError(
+        "APPROVAL_REISSUE_NOT_ELIGIBLE",
+        `Cannot reissue from approval request status ${request.status}`,
+        {
+          approvalRequestId: request.approvalRequestId,
+          status: request.status,
+        },
+      );
+    }
+    if (request.status === "EXPIRED") {
+      throw new AuthorizationError(
+        "APPROVAL_REQUEST_EXPIRED",
+        "Expired approval request cannot use unreachable-delivery recovery",
+        { approvalRequestId: request.approvalRequestId },
+      );
+    }
+    if (request.status !== "PENDING" && !deliveryFailedRetry) {
+      throw new AuthorizationError(
+        "APPROVAL_REISSUE_NOT_ELIGIBLE",
+        `Cannot reissue from approval request status ${request.status}`,
+        {
+          approvalRequestId: request.approvalRequestId,
+          status: request.status,
+        },
+      );
+    }
+
+    const run = await this.deps.runs.getById(request.runId);
+    if (!run) {
+      throw new AuthorizationError(
+        "INVALID_AUTHORIZATION_STATE",
+        `Run not found for approval request ${request.approvalRequestId}`,
+      );
+    }
+    if (run.state !== "AWAITING_APPROVAL") {
+      throw new AuthorizationError(
+        "INVALID_AUTHORIZATION_STATE",
+        "Approval reissue requires run state AWAITING_APPROVAL",
+        { runId: run.runId, state: run.state },
+      );
+    }
+
+    const now = this.deps.clock.nowIso();
+    if (request.status === "PENDING" && isExpired(request.expiresAt, now)) {
+      throw new AuthorizationError(
+        "APPROVAL_REQUEST_EXPIRED",
+        "Expired approval request cannot use unreachable-delivery recovery",
+        { approvalRequestId: request.approvalRequestId },
+      );
+    }
+
+    const existingRecord = await this.deps.records.getByApprovalRequest(
+      request.approvalRequestId,
+    );
+    if (existingRecord) {
+      throw new AuthorizationError(
+        "AUTHORIZATION_ALREADY_DECIDED",
+        "Approval request already has an AuthorizationRecord",
+        {
+          approvalRequestId: request.approvalRequestId,
+          authorizationRecordId: existingRecord.authorizationRecordId,
+        },
+      );
+    }
+
+    // Phase 6 binding freshness — same gates as decide/APPROVE.
+    await this.verifyBindingFreshness(request);
+  }
+
+  private async appendReissueAudit(input: {
+    original: ApprovalRequest;
+    replacement: ApprovalRequest;
+    reason: ApprovalReissueReason;
+    operatorPrincipalId?: string;
+  }): Promise<void> {
+    if (!this.deps.events) {
+      return;
+    }
+    const run = await this.deps.runs.getById(input.original.runId);
+    if (!run) {
+      return;
+    }
+    const now = this.deps.clock.nowIso();
+    const eventId = `evt_${randomUUID()}`;
+    await this.deps.events.append({
+      eventId,
+      eventType: APPROVAL_REISSUE_AUDIT_EVENT,
+      eventVersion: "1",
+      runId: run.runId,
+      correlationId: run.correlationId,
+      causationId: input.original.approvalRequestId,
+      idempotencyKey: `${APPROVAL_REISSUE_AUDIT_EVENT}:${input.original.approvalRequestId}:${input.replacement.approvalRequestId}`,
+      projectId: run.projectId,
+      objectiveId: run.objectiveId,
+      objectiveVersion: run.objectiveVersion,
+      traceId: run.traceId,
+      createdAt: now,
+      expiresAt: now,
+      schemaVersion: "1",
+      data: {
+        originalApprovalRequestId: input.original.approvalRequestId,
+        replacementApprovalRequestId: input.replacement.approvalRequestId,
+        runId: run.runId,
+        recoveryReason: input.reason,
+        failureReasonCode: APPROVAL_DELIVERY_UNREACHABLE_REASON,
+        timestamp: now,
+        ...(input.operatorPrincipalId !== undefined
+          ? { operatorPrincipalId: input.operatorPrincipalId }
+          : {}),
+      },
+    });
+  }
+
+  /**
    * Replace an unusable ApprovalRequest while the run remains AWAITING_APPROVAL.
    *
    * Used after a burned nonce (e.g. UNKNOWN_APPROVER) leaves PENDING A unusable.
@@ -651,7 +1017,8 @@ export class HumanAuthorizationService {
       validationDecisionId: decision.validationDecisionId,
       validationDecision: decision.decision,
       requestReason: replaced.requestReason,
-      requestedApproverIds: [...resolved.project.authorizedApproverIds],
+      // Preserve original operator-facing approver roster (authority binding).
+      requestedApproverIds: [...replaced.requestedApproverIds],
       createdAt: now,
       expiresAt,
       status: "PENDING",
@@ -660,6 +1027,53 @@ export class HumanAuthorizationService {
       decisionNonceHash: issued.nonceHash,
       replacesApprovalRequestId: replaced.approvalRequestId,
     });
+
+    // Durable path: persist + encrypt secret + outbox, then dispatch outside txn.
+    if (this.deps.outbox && this.deps.transactions) {
+      const outboxId = this.identities.nextApprovalRequestId();
+      await withOptionalTransaction(this.deps.transactions, async () => {
+        await this.deps.requests.save(request);
+        await this.deps.cards.save(request.approvalRequestId, card);
+        await this.deps.deliverySecrets?.storePending(
+          request.approvalRequestId,
+          issued.plaintext,
+        );
+        const payload: ApprovalDeliveryOutboxPayload = {
+          approvalRequestId: request.approvalRequestId,
+          runId: run.runId,
+          projectId: run.projectId,
+          bindingKey,
+          card,
+        };
+        await this.deps.outbox!.enqueue({
+          outboxId,
+          aggregateType: "approval_request",
+          aggregateId: request.approvalRequestId,
+          eventType: APPROVAL_DELIVERY_EVENT,
+          payload,
+        });
+      });
+      if (this.deps.dispatchPendingDeliveries) {
+        await this.deps.dispatchPendingDeliveries();
+      }
+      const refreshed = await this.deps.runs.getById(run.runId);
+      if (!refreshed || refreshed.state !== "AWAITING_APPROVAL") {
+        throw new AuthorizationError(
+          "INVALID_AUTHORIZATION_STATE",
+          "Run left AWAITING_APPROVAL during approval reissue",
+          { runId: run.runId, state: refreshed?.state },
+        );
+      }
+      const live = await this.deps.requests.getById(request.approvalRequestId);
+      if (!live || live.status !== "PENDING") {
+        throw new AuthorizationError(
+          "APPROVAL_DELIVERY_FAILED",
+          "Replacement approval delivery failed; request is not PENDING",
+          { approvalRequestId: request.approvalRequestId, status: live?.status },
+        );
+      }
+      return live;
+    }
 
     await this.deps.requests.save(request);
     await this.deps.cards.save(request.approvalRequestId, card);

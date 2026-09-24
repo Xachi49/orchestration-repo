@@ -235,7 +235,7 @@ export class InMemoryAuthorizationCoordinator
     | { outcome: "PROCEED" }
     | { outcome: "ALREADY"; approvalRequestId: string }
   > {
-    const existing = this.reissueReplacementByReplaced.get(
+    const existing = await this.getReissueReplacementId(
       replacedApprovalRequestId,
     );
     if (existing) {
@@ -252,6 +252,8 @@ export class InMemoryAuthorizationCoordinator
       resolve = res;
       reject = rej;
     });
+    // Prevent unhandled rejection when the sole claimant fails with no waiter.
+    void deferred.catch(() => undefined);
     this.reissueResolvers.set(replacedApprovalRequestId, { resolve, reject });
     this.reissueInFlight.set(replacedApprovalRequestId, deferred);
     return { outcome: "PROCEED" };
@@ -287,8 +289,17 @@ export class InMemoryAuthorizationCoordinator
   async getReissueReplacementId(
     replacedApprovalRequestId: string,
   ): Promise<string | null> {
-    return (
-      this.reissueReplacementByReplaced.get(replacedApprovalRequestId) ?? null
-    );
+    const mapped =
+      this.reissueReplacementByReplaced.get(replacedApprovalRequestId) ?? null;
+    if (!mapped) {
+      return null;
+    }
+    const request = await this.requests.getById(mapped);
+    if (!request || request.status !== "PENDING") {
+      // Terminal / missing replacement is not a live reissue — allow a new claim.
+      this.reissueReplacementByReplaced.delete(replacedApprovalRequestId);
+      return null;
+    }
+    return mapped;
   }
 }

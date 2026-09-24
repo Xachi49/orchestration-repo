@@ -13,6 +13,8 @@ const productionBase = {
   RECOVERY_PROVIDER_MODE: "SHADOW",
   ORCHESTRATOR_GITHUB_AUTH_MODE: "TOKEN",
   GITHUB_TOKEN: "ghs_test_token_not_a_secret_fixture",
+  ORCHESTRATOR_MODEL_PROVIDER: "openai",
+  OPENAI_API_KEY: "sk-test-fixture-not-a-secret",
   ORCHESTRATOR_DEBUG: "false",
   ORCHESTRATOR_WORKER_CONCURRENCY: "4",
 };
@@ -86,6 +88,44 @@ describe("production runtime configuration", () => {
     delete (env as { GITHUB_TOKEN?: string }).GITHUB_TOKEN;
     const config = loadRuntimeConfig(env);
     expect(config.runtimeEnvironment).toBe("PRODUCTION");
+  });
+
+  it("rejects missing ORCHESTRATOR_MODEL_PROVIDER in PRODUCTION", () => {
+    const env = { ...productionBase };
+    delete (env as { ORCHESTRATOR_MODEL_PROVIDER?: string })
+      .ORCHESTRATOR_MODEL_PROVIDER;
+    expect(() => loadRuntimeConfig(env)).toThrow(/ORCHESTRATOR_MODEL_PROVIDER/);
+  });
+
+  it("rejects fake planning provider in PRODUCTION", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...productionBase,
+        ORCHESTRATOR_MODEL_PROVIDER: "fake",
+      }),
+    ).toThrow(/FAKE PLANNING|fake/i);
+  });
+
+  it("rejects unsupported planning provider in PRODUCTION", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...productionBase,
+        ORCHESTRATOR_MODEL_PROVIDER: "anthropic",
+      }),
+    ).toThrow(/unsupported|openai/i);
+  });
+
+  it("rejects openai without OPENAI_API_KEY in PRODUCTION", () => {
+    const env = { ...productionBase };
+    delete (env as { OPENAI_API_KEY?: string }).OPENAI_API_KEY;
+    expect(() => loadRuntimeConfig(env)).toThrow(/OPENAI_API_KEY/);
+  });
+
+  it("does not accept PRODUCTION solely because OPENAI_API_KEY is set", () => {
+    const env = { ...productionBase, OPENAI_API_KEY: "sk-present" };
+    delete (env as { ORCHESTRATOR_MODEL_PROVIDER?: string })
+      .ORCHESTRATOR_MODEL_PROVIDER;
+    expect(() => loadRuntimeConfig(env)).toThrow(/ORCHESTRATOR_MODEL_PROVIDER/);
   });
 
   it("rejects FAKE repository adapter mode in PRODUCTION", () => {

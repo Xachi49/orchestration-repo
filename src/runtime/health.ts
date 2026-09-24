@@ -22,6 +22,10 @@ export interface HealthDeps {
   repositoryWorkspaceAdapter?: "LOCAL_GIT" | "FAKE";
   /** Non-secret GitHub HTTP auth mode; null when FAKE adapters are selected. */
   githubAuthenticationMode?: "TOKEN" | "PUBLIC_ANONYMOUS" | null;
+  /** Non-secret planning model provider actually wired (not toolsEnabled). */
+  planningModelProvider?: "OPENAI" | "FAKE" | null;
+  planningModelConfigured?: boolean | null;
+  planningModelId?: string | null;
 }
 
 export function registerHealthRoutes(
@@ -65,6 +69,9 @@ export function registerHealthRoutes(
     repositoryRemoteAdapter: deps.repositoryRemoteAdapter ?? null,
     repositoryWorkspaceAdapter: deps.repositoryWorkspaceAdapter ?? null,
     githubAuthenticationMode: deps.githubAuthenticationMode ?? null,
+    planningModelProvider: deps.planningModelProvider ?? null,
+    planningModelConfigured: deps.planningModelConfigured ?? null,
+    planningModelId: deps.planningModelId ?? null,
   }));
 
   app.get("/ops/diagnostics", async () => ({

@@ -361,12 +361,41 @@ export function assertProductionInvariants(
       "PRODUCTION worker concurrency must be a positive bound",
     );
   }
-  if (config.modelProviderEnabled && !config.databaseUrl) {
+
+  // Explicit planning provider — never inferred from OPENAI_API_KEY presence.
+  // PRODUCTION != FAKE PLANNING. MODEL CONFIGURATION != MODEL SELECTION.
+  const modelProvider = env(envMap, "ORCHESTRATOR_MODEL_PROVIDER")?.toLowerCase();
+  if (!modelProvider) {
+    throw new RuntimeError(
+      "PRODUCTION_MODEL_PROVIDER_REQUIRED",
+      "PRODUCTION requires explicit ORCHESTRATOR_MODEL_PROVIDER=openai",
+    );
+  }
+  if (modelProvider === "fake") {
+    throw new RuntimeError(
+      "PRODUCTION_FAKE_PLANNING_FORBIDDEN",
+      "PRODUCTION != FAKE PLANNING; ORCHESTRATOR_MODEL_PROVIDER=fake is forbidden",
+    );
+  }
+  if (modelProvider !== "openai") {
+    throw new RuntimeError(
+      "PRODUCTION_MODEL_PROVIDER_UNSUPPORTED",
+      "PRODUCTION supports only ORCHESTRATOR_MODEL_PROVIDER=openai",
+    );
+  }
+  if (!env(envMap, "OPENAI_API_KEY")) {
+    throw new RuntimeError(
+      "PRODUCTION_OPENAI_API_KEY_REQUIRED",
+      "PRODUCTION ORCHESTRATOR_MODEL_PROVIDER=openai requires OPENAI_API_KEY; never fall back to Fake",
+    );
+  }
+  if (!config.databaseUrl) {
     throw new RuntimeError(
       "RUNTIME_CONFIG_INVALID",
       "Enabled model provider still requires durable postgres configuration",
     );
   }
+
   // Explicit GitHub auth mode — never inferred from token presence/absence.
   // TOKEN → GITHUB_TOKEN required. PUBLIC_ANONYMOUS → no token required.
   // FAKE is not a production fallback. No silent TOKEN → anonymous transition.

@@ -177,11 +177,21 @@ describe("postgres production repository adapters", () => {
         env: {
           ORCHESTRATOR_GITHUB_AUTH_MODE: "TOKEN",
           GITHUB_TOKEN: "ghs_fixture_token",
+          ORCHESTRATOR_MODEL_PROVIDER: "openai",
+          OPENAI_API_KEY: "sk-test-fixture",
         },
+        openaiClient: {
+          responses: {
+            parse: async () => {
+              throw new Error("planning must not be invoked in adapter tests");
+            },
+          },
+        } as never,
       });
       expect(prodStack.repositoryRemoteAdapter).toBe("GITHUB");
       expect(prodStack.repositoryWorkspaceAdapter).toBe("LOCAL_GIT");
       expect(prodStack.githubAuthenticationMode).toBe("TOKEN");
+      expect(prodStack.planningModelProvider).toBe("OPENAI");
       expect(prodStack.repositoryRemoteAdapter).not.toBe("FAKE");
       expect(prodStack.repositoryWorkspaceAdapter).not.toBe("FAKE");
       await prodStack.close();
@@ -324,11 +334,21 @@ describe("postgres production repository adapters", () => {
         env: {
           ORCHESTRATOR_GITHUB_AUTH_MODE: "TOKEN",
           GITHUB_TOKEN: "ghs_fixture_token",
+          ORCHESTRATOR_MODEL_PROVIDER: "openai",
+          OPENAI_API_KEY: "sk-test-fixture",
         },
+        openaiClient: {
+          responses: {
+            parse: async () => {
+              throw new Error("planning must not be invoked in adapter tests");
+            },
+          },
+        } as never,
       });
       expect(fixedStack.repositoryRemoteAdapter).toBe("GITHUB");
       expect(fixedStack.repositoryWorkspaceAdapter).toBe("LOCAL_GIT");
       expect(fixedStack.githubAuthenticationMode).toBe("TOKEN");
+      expect(fixedStack.planningModelProvider).toBe("OPENAI");
 
       // Registry supplies workspace remoteUrl (local origin) while GitHub identity
       // matches the pilot; RemoteRepositoryService remains GitHubReadOnlyAdapter.

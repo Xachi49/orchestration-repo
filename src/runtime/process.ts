@@ -240,6 +240,10 @@ export function createOrchestratorRuntime(
                     planningModelProvider: postgres.planningModelProvider,
                     planningModelConfigured: postgres.planningModelConfigured,
                     planningModelId: postgres.planningModelId,
+                    validationModelProvider: postgres.validationModelProvider,
+                    validationModelConfigured:
+                      postgres.validationModelConfigured,
+                    validationModelId: postgres.validationModelId,
                   }
                 : {}),
             },

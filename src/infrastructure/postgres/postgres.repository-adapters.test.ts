@@ -192,6 +192,7 @@ describe("postgres production repository adapters", () => {
       expect(prodStack.repositoryWorkspaceAdapter).toBe("LOCAL_GIT");
       expect(prodStack.githubAuthenticationMode).toBe("TOKEN");
       expect(prodStack.planningModelProvider).toBe("OPENAI");
+      expect(prodStack.validationModelProvider).toBe("OPENAI");
       expect(prodStack.repositoryRemoteAdapter).not.toBe("FAKE");
       expect(prodStack.repositoryWorkspaceAdapter).not.toBe("FAKE");
       await prodStack.close();
@@ -349,6 +350,7 @@ describe("postgres production repository adapters", () => {
       expect(fixedStack.repositoryWorkspaceAdapter).toBe("LOCAL_GIT");
       expect(fixedStack.githubAuthenticationMode).toBe("TOKEN");
       expect(fixedStack.planningModelProvider).toBe("OPENAI");
+      expect(fixedStack.validationModelProvider).toBe("OPENAI");
 
       // Registry supplies workspace remoteUrl (local origin) while GitHub identity
       // matches the pilot; RemoteRepositoryService remains GitHubReadOnlyAdapter.

@@ -5,8 +5,8 @@ import { loadRuntimeConfig } from "./config.js";
 import { StartupLifecycle, DrainController } from "./startup.js";
 import { OperationalMetrics } from "./metrics.js";
 
-describe("/health/info planning model fields", () => {
-  it("reports OpenAI provider without secrets", async () => {
+describe("/health/info planning and validation model fields", () => {
+  it("reports OpenAI planning and validation providers without secrets", async () => {
     const config = loadRuntimeConfig({
       ORCHESTRATOR_ENV: "PRODUCTION",
       ORCHESTRATOR_STORAGE: "postgres",
@@ -36,6 +36,9 @@ describe("/health/info planning model fields", () => {
       planningModelProvider: "OPENAI",
       planningModelConfigured: true,
       planningModelId: "gpt-4.1-mini",
+      validationModelProvider: "OPENAI",
+      validationModelConfigured: true,
+      validationModelId: "gpt-4.1-mini",
     });
     const res = await app.inject({ method: "GET", url: "/health/info" });
     expect(res.statusCode).toBe(200);
@@ -43,6 +46,9 @@ describe("/health/info planning model fields", () => {
     expect(body.planningModelProvider).toBe("OPENAI");
     expect(body.planningModelConfigured).toBe(true);
     expect(body.planningModelId).toBe("gpt-4.1-mini");
+    expect(body.validationModelProvider).toBe("OPENAI");
+    expect(body.validationModelConfigured).toBe(true);
+    expect(body.validationModelId).toBe("gpt-4.1-mini");
     expect(JSON.stringify(body)).not.toContain("sk-secret");
     expect(JSON.stringify(body)).not.toContain("OPENAI_API_KEY");
     await app.close();

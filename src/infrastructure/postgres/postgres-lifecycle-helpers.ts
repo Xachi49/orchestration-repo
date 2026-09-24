@@ -1,13 +1,27 @@
 import type { AdmissionRequest } from "../../admission/request.js";
 import { EXAMPLE_ENVIRONMENT } from "../../control-plane/fixtures.js";
 import type { PostgresOrchestratorStack } from "./stack.js";
-import { FakeApprovalDeliveryService } from "../../authorization/delivery.js";
+import {
+  FakeApprovalDeliveryService,
+  type ApprovalDeliveryService,
+} from "../../authorization/delivery.js";
 
 export interface ApprovedRunContext {
   runId: string;
   approvalRequestId: string;
   decisionNonce: string;
   request: AdmissionRequest;
+}
+
+function assertFakeApprovalDelivery(
+  delivery: ApprovalDeliveryService,
+): FakeApprovalDeliveryService {
+  if (!(delivery instanceof FakeApprovalDeliveryService)) {
+    throw new Error(
+      "postgres lifecycle helpers require FakeApprovalDeliveryService (TEST only)",
+    );
+  }
+  return delivery;
 }
 
 export async function advanceToAwaitingApproval(
@@ -80,7 +94,7 @@ export async function approveAwaitingRun(
   },
 ): Promise<ApprovedRunContext> {
   const decisionNonce = deliveredNonce(
-    stack.approvalDelivery,
+    assertFakeApprovalDelivery(stack.approvalDelivery),
     awaiting.approvalRequestId,
   );
   const approved = await stack.humanAuthorization.decide({

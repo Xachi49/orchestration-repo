@@ -396,6 +396,64 @@ export function assertProductionInvariants(
     );
   }
 
+  // Explicit approval delivery — never inferred from RESEND_API_KEY presence.
+  // PRODUCTION != FAKE DELIVERY. DELIVERY != AUTHORIZATION. EMAIL RECEIVED != APPROVED.
+  // Independent of RECOVERY_PROVIDER_MODE (must remain SHADOW for customer outreach).
+  const approvalDeliveryProvider = env(
+    envMap,
+    "ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER",
+  )?.toLowerCase();
+  if (!approvalDeliveryProvider) {
+    throw new RuntimeError(
+      "PRODUCTION_APPROVAL_DELIVERY_PROVIDER_REQUIRED",
+      "PRODUCTION requires explicit ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER=resend; never inferred from RESEND_API_KEY",
+    );
+  }
+  if (approvalDeliveryProvider === "fake") {
+    throw new RuntimeError(
+      "PRODUCTION_FAKE_APPROVAL_DELIVERY_FORBIDDEN",
+      "PRODUCTION != FAKE DELIVERY; ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER=fake is forbidden",
+    );
+  }
+  if (approvalDeliveryProvider !== "resend") {
+    throw new RuntimeError(
+      "PRODUCTION_APPROVAL_DELIVERY_PROVIDER_UNSUPPORTED",
+      "PRODUCTION supports only ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER=resend",
+    );
+  }
+  if (!env(envMap, "RESEND_API_KEY")) {
+    throw new RuntimeError(
+      "PRODUCTION_RESEND_API_KEY_REQUIRED",
+      "PRODUCTION ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER=resend requires RESEND_API_KEY; never fall back to Fake",
+    );
+  }
+  const approvalFrom = env(envMap, "APPROVAL_DELIVERY_EMAIL_FROM");
+  if (!approvalFrom) {
+    throw new RuntimeError(
+      "PRODUCTION_APPROVAL_DELIVERY_EMAIL_FROM_REQUIRED",
+      "PRODUCTION Resend approval delivery requires APPROVAL_DELIVERY_EMAIL_FROM",
+    );
+  }
+  if (!z.string().email().safeParse(approvalFrom).success) {
+    throw new RuntimeError(
+      "PRODUCTION_APPROVAL_DELIVERY_EMAIL_FROM_INVALID",
+      "APPROVAL_DELIVERY_EMAIL_FROM must be a valid email address",
+    );
+  }
+  const approvalTo = env(envMap, "APPROVAL_DELIVERY_EMAIL_TO");
+  if (!approvalTo) {
+    throw new RuntimeError(
+      "PRODUCTION_APPROVAL_DELIVERY_EMAIL_TO_REQUIRED",
+      "PRODUCTION Resend approval delivery requires APPROVAL_DELIVERY_EMAIL_TO (operator inbox; not Lead.email)",
+    );
+  }
+  if (!z.string().email().safeParse(approvalTo).success) {
+    throw new RuntimeError(
+      "PRODUCTION_APPROVAL_DELIVERY_EMAIL_TO_INVALID",
+      "APPROVAL_DELIVERY_EMAIL_TO must be a valid email address",
+    );
+  }
+
   // Explicit GitHub auth mode — never inferred from token presence/absence.
   // TOKEN → GITHUB_TOKEN required. PUBLIC_ANONYMOUS → no token required.
   // FAKE is not a production fallback. No silent TOKEN → anonymous transition.

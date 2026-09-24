@@ -22,6 +22,9 @@ Roles do not change domain authority.
 | `ORCHESTRATOR_ACCESS_BINDINGS` | `principal:project[,project];...` HTTP access only |
 | `ORCHESTRATOR_CONTROL_TOWER_DEV_ALLOW_ALL` | Explicit DEVELOPMENT/TEST Control Tower unrestricted reads; default `false`; forbidden in PRODUCTION/STAGING |
 | `APPROVAL_DELIVERY_SECRET_KEY` | 32-byte base64; never log |
+| `ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER` | PRODUCTION requires `resend` (Fake forbidden; never inferred from `RESEND_API_KEY`) |
+| `RESEND_API_KEY` | required when approval delivery provider is `resend` |
+| `APPROVAL_DELIVERY_EMAIL_FROM` / `APPROVAL_DELIVERY_EMAIL_TO` | operator inbox for Phase 6 delivery only; not Lead.email; independent of recovery |
 | `ORCHESTRATOR_INSTANCE_ID` | unique per process; default random UUID |
 | `ORCHESTRATOR_WORKER_CONCURRENCY` | 1–64 |
 | `ORCHESTRATOR_SHUTDOWN_GRACE_MS` | drain bound |

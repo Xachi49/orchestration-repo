@@ -19,6 +19,10 @@ describe("/health/info planning and validation model fields", () => {
       ORCHESTRATOR_MODEL_PROVIDER: "openai",
       OPENAI_API_KEY: "sk-secret-must-not-leak",
       OPENAI_MODEL: "gpt-4.1-mini",
+      ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER: "resend",
+      RESEND_API_KEY: "re_secret-must-not-leak",
+      APPROVAL_DELIVERY_EMAIL_FROM: "orch-secret@example.com",
+      APPROVAL_DELIVERY_EMAIL_TO: "ops-secret@example.com",
       ORCHESTRATOR_DEBUG: "false",
       ORCHESTRATOR_WORKER_CONCURRENCY: "4",
     });
@@ -39,6 +43,8 @@ describe("/health/info planning and validation model fields", () => {
       validationModelProvider: "OPENAI",
       validationModelConfigured: true,
       validationModelId: "gpt-4.1-mini",
+      approvalDeliveryProvider: "RESEND",
+      approvalDeliveryConfigured: true,
     });
     const res = await app.inject({ method: "GET", url: "/health/info" });
     expect(res.statusCode).toBe(200);
@@ -49,8 +55,15 @@ describe("/health/info planning and validation model fields", () => {
     expect(body.validationModelProvider).toBe("OPENAI");
     expect(body.validationModelConfigured).toBe(true);
     expect(body.validationModelId).toBe("gpt-4.1-mini");
+    expect(body.approvalDeliveryProvider).toBe("RESEND");
+    expect(body.approvalDeliveryConfigured).toBe(true);
     expect(JSON.stringify(body)).not.toContain("sk-secret");
     expect(JSON.stringify(body)).not.toContain("OPENAI_API_KEY");
+    expect(JSON.stringify(body)).not.toContain("re_secret");
+    expect(JSON.stringify(body)).not.toContain("RESEND_API_KEY");
+    expect(JSON.stringify(body)).not.toContain("orch-secret");
+    expect(JSON.stringify(body)).not.toContain("ops-secret");
+    expect(JSON.stringify(body)).not.toContain("decisionNonce");
     await app.close();
   });
 });

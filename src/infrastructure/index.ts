@@ -91,7 +91,11 @@ export {
 
 export {
   createLocalAuthorizationStack,
+  ResendApprovalDeliveryService,
+  selectApprovalDelivery,
+  ApprovalDeliverySelectionError,
   type LocalAuthorizationStack,
+  type ApprovalDeliveryProviderLabel,
 } from "./authorization/index.js";
 
 export {

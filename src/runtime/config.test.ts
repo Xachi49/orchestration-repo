@@ -15,6 +15,10 @@ const productionBase = {
   GITHUB_TOKEN: "ghs_test_token_not_a_secret_fixture",
   ORCHESTRATOR_MODEL_PROVIDER: "openai",
   OPENAI_API_KEY: "sk-test-fixture-not-a-secret",
+  ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER: "resend",
+  RESEND_API_KEY: "re_test_fixture_not_a_secret",
+  APPROVAL_DELIVERY_EMAIL_FROM: "orchestrator@example.com",
+  APPROVAL_DELIVERY_EMAIL_TO: "approvers@example.com",
   ORCHESTRATOR_DEBUG: "false",
   ORCHESTRATOR_WORKER_CONCURRENCY: "4",
 };
@@ -187,6 +191,60 @@ describe("production runtime configuration", () => {
     const env = { ...productionBase };
     delete env.APPROVAL_DELIVERY_SECRET_KEY;
     expect(() => loadRuntimeConfig(env)).toThrow(/APPROVAL_DELIVERY_SECRET_KEY/);
+  });
+
+  it("rejects missing approval delivery provider in PRODUCTION", () => {
+    const env = { ...productionBase };
+    delete env.ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER;
+    expect(() => loadRuntimeConfig(env)).toThrow(
+      /ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER/,
+    );
+  });
+
+  it("rejects Fake approval delivery in PRODUCTION", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...productionBase,
+        ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER: "fake",
+      }),
+    ).toThrow(/FAKE DELIVERY|fake is forbidden/i);
+  });
+
+  it("rejects unsupported approval delivery provider in PRODUCTION", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...productionBase,
+        ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER: "sendgrid",
+      }),
+    ).toThrow(/resend/i);
+  });
+
+  it("rejects missing Resend key for approval delivery in PRODUCTION", () => {
+    const env = { ...productionBase };
+    delete env.RESEND_API_KEY;
+    expect(() => loadRuntimeConfig(env)).toThrow(/RESEND_API_KEY/);
+  });
+
+  it("rejects missing approval delivery emails in PRODUCTION", () => {
+    const missingFrom = { ...productionBase };
+    delete missingFrom.APPROVAL_DELIVERY_EMAIL_FROM;
+    expect(() => loadRuntimeConfig(missingFrom)).toThrow(
+      /APPROVAL_DELIVERY_EMAIL_FROM/,
+    );
+    const missingTo = { ...productionBase };
+    delete missingTo.APPROVAL_DELIVERY_EMAIL_TO;
+    expect(() => loadRuntimeConfig(missingTo)).toThrow(
+      /APPROVAL_DELIVERY_EMAIL_TO/,
+    );
+  });
+
+  it("keeps RECOVERY_PROVIDER_MODE=SHADOW independent of approval delivery", () => {
+    const config = loadRuntimeConfig(productionBase);
+    expect(config.runtimeEnvironment).toBe("PRODUCTION");
+    expect(productionBase.RECOVERY_PROVIDER_MODE).toBe("SHADOW");
+    expect(productionBase.ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER).toBe(
+      "resend",
+    );
   });
 
   it("rejects debug mode in PRODUCTION", () => {

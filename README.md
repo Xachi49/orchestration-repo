@@ -170,3 +170,6 @@ POST /v1/optimization-candidates/:candidateId/review
 - `OPENAI_API_KEY` — required when provider is `openai`
 - `OPENAI_MODEL` — optional planning model id; defaults to `gpt-4.1-mini`
 - `OPENAI_VALIDATION_MODEL` — optional validation model id; falls back to `OPENAI_MODEL` then `gpt-4.1-mini` (contextual validation only; revision uses the planning model)
+- `ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER` — `resend` required in PRODUCTION (Fake approval delivery forbidden; never inferred from `RESEND_API_KEY`)
+- `RESEND_API_KEY` — required when approval delivery provider is `resend`
+- `APPROVAL_DELIVERY_EMAIL_FROM` / `APPROVAL_DELIVERY_EMAIL_TO` — operator inbox for Phase 6 decision cards + nonces (not Lead.email; independent of `RECOVERY_PROVIDER_MODE`)

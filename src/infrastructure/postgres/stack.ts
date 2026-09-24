@@ -52,8 +52,12 @@ import {
   TestProfileRegistry,
 } from "../../execution/index.js";
 import { FakeSafeActuator } from "../execution/actuators.js";
-import { createExecutionFriendlyPlanningModel } from "../../execution/friendly-planning-model.js";
 import { createExperimentAwarePlanningModel } from "../../experiments/planning-proposal.js";
+import {
+  selectPlanningModel,
+  type PlanningModelProviderLabel,
+} from "../planning/planning-model-selection.js";
+import type OpenAI from "openai";
 import {
   FakeVerificationModel,
   OutcomeVerificationService,
@@ -482,6 +486,10 @@ export interface PostgresOrchestratorStack {
   repositoryWorkspaceAdapter: RepositoryWorkspaceAdapterKind;
   /** Non-secret; null when FAKE adapters are selected. */
   githubAuthenticationMode: GitHubAuthMode | null;
+  /** Non-secret planning model provider actually wired into PlanningService. */
+  planningModelProvider: PlanningModelProviderLabel;
+  planningModelId: string;
+  planningModelConfigured: true;
   close: () => Promise<void>;
 }
 
@@ -553,10 +561,12 @@ export async function createPostgresOrchestratorStack(options: {
    */
   revenueRecoveryRuntimeEnvironment?: import("../../revenue-recovery/provenance.js").ProductRuntimeEnvironment;
   /**
-   * @internal TEST ONLY — replace the default execution-friendly planning model.
-   * Used by Revenue Recovery Postgres qualification to plan SEND_RECOVERY_*.
+   * @internal TEST ONLY — replace default planning model selection.
+   * PRODUCTION forbids Fake / provider "fake".
    */
   planningModel?: import("../../planning/model.js").PlanningModel;
+  /** Test seam — OpenAI client for OpenAIPlanningModel (never live network). */
+  openaiClient?: OpenAI;
   /**
    * @internal TEST ONLY — override live-pilot messaging / Resend transport.
    * Production must not set these; defaults load from server env.
@@ -753,8 +763,18 @@ export async function createPostgresOrchestratorStack(options: {
   );
   const plans = new PostgresPlanRepository(db);
   const planningUsage = new PostgresPlanningUsageLedger(db);
+  const planningSelection = selectPlanningModel({
+    runtimeEnvironment,
+    env: envMap,
+    ...(options.planningModel !== undefined
+      ? { planningModel: options.planningModel }
+      : {}),
+    ...(options.openaiClient !== undefined
+      ? { openaiClient: options.openaiClient }
+      : {}),
+  });
   const planningModel = createExperimentAwarePlanningModel(
-    options.planningModel ?? createExecutionFriendlyPlanningModel(),
+    planningSelection.model,
     {
       lineage: experimentLineage,
       plans: experimentPlans,
@@ -1969,6 +1989,9 @@ export async function createPostgresOrchestratorStack(options: {
     repositoryWorkspaceAdapter: repositoryInfrastructure.workspaceAdapter,
     githubAuthenticationMode:
       repositoryInfrastructure.githubAuthenticationMode,
+    planningModelProvider: planningSelection.planningModelProvider,
+    planningModelId: planningSelection.planningModelId,
+    planningModelConfigured: true as const,
     close: async () => {
       await db.close();
     },

@@ -634,11 +634,15 @@ negatives are rejected.
 `PlanningModel` has `toolsEnabled: false`. No shell, GitHub, file mutation,
 approval, or policy authority. `FakePlanningModel` is the default local/test
 adapter. `OpenAIPlanningModel` uses the OpenAI **Responses API** with schema-
-constrained Structured Outputs (`responses.parse` + `zodTextFormat`) and is
-opt-in via `OPENAI_API_KEY` / `OPENAI_MODEL`. It lives only under
-`src/infrastructure/planning/`. No tools, web search, file search, code
-interpreter, MCP, function calling, or `previous_response_id`. Tests and
-`npm start` never call live OpenAI unless an explicit live model is injected.
+constrained Structured Outputs (`responses.parse` + `zodTextFormat`).
+
+Production requires explicit `ORCHESTRATOR_MODEL_PROVIDER=openai` and
+`OPENAI_API_KEY` at startup (`PRODUCTION != FAKE PLANNING`). Provider is never
+inferred from key presence and never falls back to Fake on failure. Optional
+`OPENAI_MODEL` defaults to `gpt-4.1-mini` via `OpenAIPlanningModel.fromEnv`.
+The class lives only under `src/infrastructure/planning/`. No tools, web search,
+file search, code interpreter, MCP, function calling, or `previous_response_id`.
+Tests never call live OpenAI unless an explicit live client is injected.
 
 Repository evidence is wrapped as `UNTRUSTED_PROJECT_DATA`. Prompt injection
 inside repository text has no authority.

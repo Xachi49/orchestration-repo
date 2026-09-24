@@ -76,6 +76,8 @@ export {
 
 export {
   OpenAIPlanningModel,
+  selectPlanningModel,
+  PlanningModelSelectionError,
   createLocalPlanningStack,
 } from "./planning/index.js";
 

@@ -237,6 +237,9 @@ export function createOrchestratorRuntime(
                       postgres.repositoryWorkspaceAdapter,
                     githubAuthenticationMode:
                       postgres.githubAuthenticationMode,
+                    planningModelProvider: postgres.planningModelProvider,
+                    planningModelConfigured: postgres.planningModelConfigured,
+                    planningModelId: postgres.planningModelId,
                   }
                 : {}),
             },

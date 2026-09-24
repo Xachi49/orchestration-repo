@@ -29,7 +29,6 @@ import {
   PlanningService,
 } from "../../planning/index.js";
 import {
-  FakeValidationModel,
   PlanningModelRevisionAdapter,
   ValidationReadinessService,
   ValidationService,
@@ -57,6 +56,10 @@ import {
   selectPlanningModel,
   type PlanningModelProviderLabel,
 } from "../planning/planning-model-selection.js";
+import {
+  selectValidationModel,
+  type ValidationModelProviderLabel,
+} from "../validation/validation-model-selection.js";
 import type OpenAI from "openai";
 import {
   FakeVerificationModel,
@@ -490,6 +493,10 @@ export interface PostgresOrchestratorStack {
   planningModelProvider: PlanningModelProviderLabel;
   planningModelId: string;
   planningModelConfigured: true;
+  /** Non-secret validation model provider actually wired into ValidationService. */
+  validationModelProvider: ValidationModelProviderLabel;
+  validationModelId: string;
+  validationModelConfigured: true;
   close: () => Promise<void>;
 }
 
@@ -565,7 +572,12 @@ export async function createPostgresOrchestratorStack(options: {
    * PRODUCTION forbids Fake / provider "fake".
    */
   planningModel?: import("../../planning/model.js").PlanningModel;
-  /** Test seam — OpenAI client for OpenAIPlanningModel (never live network). */
+  /**
+   * @internal TEST ONLY — replace default validation model selection.
+   * PRODUCTION forbids Fake / provider "fake".
+   */
+  validationModel?: import("../../validation/model.js").ValidationModel;
+  /** Test seam — OpenAI client for OpenAI planning/validation models (never live network). */
   openaiClient?: OpenAI;
   /**
    * @internal TEST ONLY — override live-pilot messaging / Resend transport.
@@ -813,7 +825,17 @@ export async function createPostgresOrchestratorStack(options: {
   );
   const validationDecisions = new PostgresValidationDecisionRepository(db);
   const validationUsage = new PostgresValidationUsageLedger(db);
-  const validationModel = new FakeValidationModel();
+  const validationSelection = selectValidationModel({
+    runtimeEnvironment,
+    env: envMap,
+    ...(options.validationModel !== undefined
+      ? { validationModel: options.validationModel }
+      : {}),
+    ...(options.openaiClient !== undefined
+      ? { openaiClient: options.openaiClient }
+      : {}),
+  });
+  const validationModel = validationSelection.model;
   const validationReadiness = new ValidationReadinessService({
     runs,
     plans,
@@ -1992,6 +2014,9 @@ export async function createPostgresOrchestratorStack(options: {
     planningModelProvider: planningSelection.planningModelProvider,
     planningModelId: planningSelection.planningModelId,
     planningModelConfigured: true as const,
+    validationModelProvider: validationSelection.validationModelProvider,
+    validationModelId: validationSelection.validationModelId,
+    validationModelConfigured: true as const,
     close: async () => {
       await db.close();
     },

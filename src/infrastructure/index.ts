@@ -83,6 +83,8 @@ export {
 
 export {
   OpenAIValidationModel,
+  selectValidationModel,
+  ValidationModelSelectionError,
   createLocalValidationStack,
   type LocalValidationStack,
 } from "./validation/index.js";

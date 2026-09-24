@@ -756,8 +756,14 @@ observations. Its authority is bounded deterministically:
   blocking violation already exists.
 
 `FakeValidationModel` is the default local/test adapter.
-`OpenAIValidationModel` (Responses API + `zodTextFormat`, no tools) is opt-in and
-lives only under `src/infrastructure/validation/`.
+`OpenAIValidationModel` (Responses API + `zodTextFormat`, no tools) lives under
+`src/infrastructure/validation/`. Production requires explicit
+`ORCHESTRATOR_MODEL_PROVIDER=openai` and `OPENAI_API_KEY` at startup
+(`PRODUCTION != FAKE VALIDATION`); model id resolves
+`OPENAI_VALIDATION_MODEL` → `OPENAI_MODEL` → `gpt-4.1-mini`. Never fall back to
+Fake on OpenAI failure. Semantic revision remains
+`PlanningModelRevisionAdapter(planningModel)` — separate from contextual
+validation.
 
 ### Inference categories and revision accounting
 

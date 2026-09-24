@@ -166,7 +166,7 @@ POST /v1/optimization-candidates/:candidateId/review
 
 - `ORCHESTRATOR_GITHUB_AUTH_MODE` — `TOKEN` or `PUBLIC_ANONYMOUS` (required in PRODUCTION)
 - `GITHUB_TOKEN` — required when auth mode is `TOKEN` (read-only GitHub REST)
-- `ORCHESTRATOR_MODEL_PROVIDER` — `openai` required in PRODUCTION (Fake forbidden)
+- `ORCHESTRATOR_MODEL_PROVIDER` — `openai` required in PRODUCTION (Fake planning/validation forbidden)
 - `OPENAI_API_KEY` — required when provider is `openai`
-- `OPENAI_MODEL` — optional; defaults to `gpt-4.1-mini`
-- `OPENAI_VALIDATION_MODEL` — optional separate model id for live validation; the default stack never constructs the live adapter
+- `OPENAI_MODEL` — optional planning model id; defaults to `gpt-4.1-mini`
+- `OPENAI_VALIDATION_MODEL` — optional validation model id; falls back to `OPENAI_MODEL` then `gpt-4.1-mini` (contextual validation only; revision uses the planning model)

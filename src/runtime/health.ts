@@ -26,6 +26,10 @@ export interface HealthDeps {
   planningModelProvider?: "OPENAI" | "FAKE" | null;
   planningModelConfigured?: boolean | null;
   planningModelId?: string | null;
+  /** Non-secret validation model provider actually wired. */
+  validationModelProvider?: "OPENAI" | "FAKE" | null;
+  validationModelConfigured?: boolean | null;
+  validationModelId?: string | null;
 }
 
 export function registerHealthRoutes(
@@ -72,6 +76,9 @@ export function registerHealthRoutes(
     planningModelProvider: deps.planningModelProvider ?? null,
     planningModelConfigured: deps.planningModelConfigured ?? null,
     planningModelId: deps.planningModelId ?? null,
+    validationModelProvider: deps.validationModelProvider ?? null,
+    validationModelConfigured: deps.validationModelConfigured ?? null,
+    validationModelId: deps.validationModelId ?? null,
   }));
 
   app.get("/ops/diagnostics", async () => ({

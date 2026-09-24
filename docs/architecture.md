@@ -878,6 +878,16 @@ run stays `VALIDATING`, and an explicit retry creates a **new** ApprovalRequest
 request remains permanently CANCELLED for audit (`replacesApprovalRequestId` is
 lineage only). Binding fields including `expiresAt` are immutable after creation.
 
+Production requires explicit `ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER=resend`
+with `RESEND_API_KEY`, `APPROVAL_DELIVERY_EMAIL_FROM`, and
+`APPROVAL_DELIVERY_EMAIL_TO` (`PRODUCTION != FAKE DELIVERY`). Provider is never
+inferred from key presence and never falls back to Fake.
+`ResendApprovalDeliveryService` delivers the decision card + plaintext nonce to
+an operator inbox only — not Lead.email, not recovery outreach
+(`RECOVERY_PROVIDER_MODE` remains independent). `EMAIL RECEIVED != APPROVED`;
+no approve/reject links or inbound-email auto-approval. Delivery has zero
+authorization authority.
+
 ### Exact approval binding
 
 An approval binds to:

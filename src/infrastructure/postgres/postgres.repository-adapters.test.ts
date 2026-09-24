@@ -179,6 +179,10 @@ describe("postgres production repository adapters", () => {
           GITHUB_TOKEN: "ghs_fixture_token",
           ORCHESTRATOR_MODEL_PROVIDER: "openai",
           OPENAI_API_KEY: "sk-test-fixture",
+          ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER: "resend",
+          RESEND_API_KEY: "re_test_fixture",
+          APPROVAL_DELIVERY_EMAIL_FROM: "orch@example.com",
+          APPROVAL_DELIVERY_EMAIL_TO: "ops@example.com",
         },
         openaiClient: {
           responses: {
@@ -193,6 +197,7 @@ describe("postgres production repository adapters", () => {
       expect(prodStack.githubAuthenticationMode).toBe("TOKEN");
       expect(prodStack.planningModelProvider).toBe("OPENAI");
       expect(prodStack.validationModelProvider).toBe("OPENAI");
+      expect(prodStack.approvalDeliveryProvider).toBe("RESEND");
       expect(prodStack.repositoryRemoteAdapter).not.toBe("FAKE");
       expect(prodStack.repositoryWorkspaceAdapter).not.toBe("FAKE");
       await prodStack.close();
@@ -337,6 +342,10 @@ describe("postgres production repository adapters", () => {
           GITHUB_TOKEN: "ghs_fixture_token",
           ORCHESTRATOR_MODEL_PROVIDER: "openai",
           OPENAI_API_KEY: "sk-test-fixture",
+          ORCHESTRATOR_APPROVAL_DELIVERY_PROVIDER: "resend",
+          RESEND_API_KEY: "re_test_fixture",
+          APPROVAL_DELIVERY_EMAIL_FROM: "orch@example.com",
+          APPROVAL_DELIVERY_EMAIL_TO: "ops@example.com",
         },
         openaiClient: {
           responses: {
@@ -351,6 +360,7 @@ describe("postgres production repository adapters", () => {
       expect(fixedStack.githubAuthenticationMode).toBe("TOKEN");
       expect(fixedStack.planningModelProvider).toBe("OPENAI");
       expect(fixedStack.validationModelProvider).toBe("OPENAI");
+      expect(fixedStack.approvalDeliveryProvider).toBe("RESEND");
 
       // Registry supplies workspace remoteUrl (local origin) while GitHub identity
       // matches the pilot; RemoteRepositoryService remains GitHubReadOnlyAdapter.

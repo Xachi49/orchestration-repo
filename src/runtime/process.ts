@@ -244,6 +244,9 @@ export function createOrchestratorRuntime(
                     validationModelConfigured:
                       postgres.validationModelConfigured,
                     validationModelId: postgres.validationModelId,
+                    approvalDeliveryProvider: postgres.approvalDeliveryProvider,
+                    approvalDeliveryConfigured:
+                      postgres.approvalDeliveryConfigured,
                   }
                 : {}),
             },

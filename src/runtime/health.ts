@@ -30,6 +30,9 @@ export interface HealthDeps {
   validationModelProvider?: "OPENAI" | "FAKE" | null;
   validationModelConfigured?: boolean | null;
   validationModelId?: string | null;
+  /** Non-secret approval delivery provider actually wired. */
+  approvalDeliveryProvider?: "RESEND" | "FAKE" | null;
+  approvalDeliveryConfigured?: boolean | null;
 }
 
 export function registerHealthRoutes(
@@ -79,6 +82,8 @@ export function registerHealthRoutes(
     validationModelProvider: deps.validationModelProvider ?? null,
     validationModelConfigured: deps.validationModelConfigured ?? null,
     validationModelId: deps.validationModelId ?? null,
+    approvalDeliveryProvider: deps.approvalDeliveryProvider ?? null,
+    approvalDeliveryConfigured: deps.approvalDeliveryConfigured ?? null,
   }));
 
   app.get("/ops/diagnostics", async () => ({

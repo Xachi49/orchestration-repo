@@ -37,7 +37,7 @@ import {
   AuthorizationReadinessService,
   AuthorizationRoutingService,
   ApprovalExpiryService,
-  FakeApprovalDeliveryService,
+  type ApprovalDeliveryService,
   HumanAuthorizationService,
   SequenceDecisionNonceGenerator,
 } from "../../authorization/index.js";
@@ -45,6 +45,11 @@ import {
   ApprovalDeliveryOutboxConsumer,
   createApprovalDeliveryDispatcher,
 } from "../../authorization/outbox-consumer.js";
+import {
+  selectApprovalDelivery,
+  type ApprovalDeliveryProviderLabel,
+  type ApprovalResendTransport,
+} from "../authorization/index.js";
 import {
   ExecutionReadinessService,
   ExecutionService,
@@ -399,7 +404,7 @@ export interface PostgresOrchestratorStack {
   events: PostgresEventStore;
   resourceLedgerStore: PostgresExecutionResourceLedgerStore;
   approvalDeliveryDispatcher: ReturnType<typeof createApprovalDeliveryDispatcher>;
-  approvalDelivery: FakeApprovalDeliveryService;
+  approvalDelivery: ApprovalDeliveryService;
   actuator: FakeSafeActuator;
   deliverySecrets: PostgresApprovalDeliverySecretStore;
   authorityDirectory: PostgresAuthorityDirectory;
@@ -497,6 +502,9 @@ export interface PostgresOrchestratorStack {
   validationModelProvider: ValidationModelProviderLabel;
   validationModelId: string;
   validationModelConfigured: true;
+  /** Non-secret approval delivery provider actually wired. */
+  approvalDeliveryProvider: ApprovalDeliveryProviderLabel;
+  approvalDeliveryConfigured: true;
   close: () => Promise<void>;
 }
 
@@ -577,6 +585,13 @@ export async function createPostgresOrchestratorStack(options: {
    * PRODUCTION forbids Fake / provider "fake".
    */
   validationModel?: import("../../validation/model.js").ValidationModel;
+  /**
+   * @internal TEST ONLY — replace default approval delivery selection.
+   * PRODUCTION forbids FakeApprovalDeliveryService.
+   */
+  approvalDelivery?: ApprovalDeliveryService;
+  /** Test seam — Resend HTTP transport for approval delivery (never live network). */
+  approvalResendTransport?: ApprovalResendTransport;
   /** Test seam — OpenAI client for OpenAI planning/validation models (never live network). */
   openaiClient?: OpenAI;
   /**
@@ -873,7 +888,17 @@ export async function createPostgresOrchestratorStack(options: {
     instanceId,
     approvalRequests,
   );
-  const approvalDelivery = new FakeApprovalDeliveryService();
+  const approvalDeliverySelection = selectApprovalDelivery({
+    runtimeEnvironment,
+    env: envMap,
+    ...(options.approvalDelivery !== undefined
+      ? { approvalDelivery: options.approvalDelivery }
+      : {}),
+    ...(options.approvalResendTransport !== undefined
+      ? { resendTransport: options.approvalResendTransport }
+      : {}),
+  });
+  const approvalDelivery = approvalDeliverySelection.delivery;
   const authorizationIdentities = new UuidAuthorizationIdentityGenerator();
   const approvalDeliveryConsumer = new ApprovalDeliveryOutboxConsumer({
     delivery: approvalDelivery,
@@ -2017,6 +2042,9 @@ export async function createPostgresOrchestratorStack(options: {
     validationModelProvider: validationSelection.validationModelProvider,
     validationModelId: validationSelection.validationModelId,
     validationModelConfigured: true as const,
+    approvalDeliveryProvider:
+      approvalDeliverySelection.approvalDeliveryProvider,
+    approvalDeliveryConfigured: true as const,
     close: async () => {
       await db.close();
     },

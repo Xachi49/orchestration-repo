@@ -969,6 +969,10 @@ export async function createPostgresOrchestratorStack(options: {
     delivery: approvalDelivery,
     nonceGenerator: decisionNonceGenerator,
     institutionalGovernance: institutionalGovernancePort,
+    outbox,
+    deliverySecrets,
+    events,
+    dispatchPendingDeliveries: () => approvalDeliveryDispatcher.dispatchOnce(),
   });
   const approvalExpiry = new ApprovalExpiryService({
     requests: approvalRequests,

@@ -1032,45 +1032,64 @@ export class PostgresAuthorizationCoordinator
       return { outcome: "ALREADY", approvalRequestId: existingId };
     }
     const uniqueKey = `reissue:${replacedApprovalRequestId}`;
-    try {
-      await this.docs.insert({
-        collection: REISSUE_COLLECTION,
-        documentId: uniqueKey,
-        uniqueKey,
-        runId: replacedApprovalRequestId,
-        projectId: "authorization_reissue",
-        payload: {
-          replacedApprovalRequestId,
-          status: "IN_FLIGHT",
-        },
-      });
-      return { outcome: "PROCEED" };
-    } catch (error) {
-      if (error instanceof DurabilityError && error.code === "DURABLE_CONFLICT") {
-        // Peer claimed first — wait briefly for completion then return ALREADY.
-        for (let i = 0; i < 50; i += 1) {
-          const id = await this.getReissueReplacementId(
+    const tryInsert = async (): Promise<boolean> => {
+      try {
+        await this.docs.insert({
+          collection: REISSUE_COLLECTION,
+          documentId: uniqueKey,
+          uniqueKey,
+          runId: replacedApprovalRequestId,
+          projectId: "authorization_reissue",
+          payload: {
             replacedApprovalRequestId,
-          );
-          if (id) {
-            return { outcome: "ALREADY", approvalRequestId: id };
-          }
-          await new Promise((resolve) => setTimeout(resolve, 20));
+            status: "IN_FLIGHT",
+          },
+        });
+        return true;
+      } catch (error) {
+        if (
+          error instanceof DurabilityError &&
+          error.code === "DURABLE_CONFLICT"
+        ) {
+          return false;
         }
-        const raced = await this.getReissueReplacementId(
-          replacedApprovalRequestId,
-        );
-        if (raced) {
-          return { outcome: "ALREADY", approvalRequestId: raced };
-        }
-        throw new AuthorizationError(
-          "APPROVAL_REISSUE_NOT_ELIGIBLE",
-          "Concurrent approval reissue did not complete",
-          { replacedApprovalRequestId },
-        );
+        throw error;
       }
-      throw error;
+    };
+
+    if (await tryInsert()) {
+      return { outcome: "PROCEED" };
     }
+
+    // Peer claimed first — wait briefly for a live PENDING replacement.
+    for (let i = 0; i < 50; i += 1) {
+      const id = await this.getReissueReplacementId(replacedApprovalRequestId);
+      if (id) {
+        return { outcome: "ALREADY", approvalRequestId: id };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const raced = await this.getReissueReplacementId(replacedApprovalRequestId);
+    if (raced) {
+      return { outcome: "ALREADY", approvalRequestId: raced };
+    }
+
+    // Stale COMPLETE claim pointing at a terminal replacement — clear and retry once.
+    await this.clearTerminalReissueClaim(replacedApprovalRequestId);
+    if (await tryInsert()) {
+      return { outcome: "PROCEED" };
+    }
+    const afterClear = await this.getReissueReplacementId(
+      replacedApprovalRequestId,
+    );
+    if (afterClear) {
+      return { outcome: "ALREADY", approvalRequestId: afterClear };
+    }
+    throw new AuthorizationError(
+      "APPROVAL_REISSUE_NOT_ELIGIBLE",
+      "Concurrent approval reissue did not complete",
+      { replacedApprovalRequestId },
+    );
   }
 
   async completeReissue(
@@ -1122,7 +1141,40 @@ export class PostgresAuthorizationCoordinator
     if (!row || row.status !== "COMPLETE" || !row.replacementApprovalRequestId) {
       return null;
     }
+    const request = await this.requests.getById(row.replacementApprovalRequestId);
+    if (!request || request.status !== "PENDING") {
+      return null;
+    }
     return row.replacementApprovalRequestId;
+  }
+
+  private async clearTerminalReissueClaim(
+    replacedApprovalRequestId: string,
+  ): Promise<void> {
+    const uniqueKey = `reissue:${replacedApprovalRequestId}`;
+    const row = await this.docs.getByUniqueKey(
+      REISSUE_COLLECTION,
+      uniqueKey,
+      (input: unknown) => {
+        const value = input as {
+          replacementApprovalRequestId?: string;
+          status?: string;
+        };
+        return value;
+      },
+    );
+    if (!row || row.status !== "COMPLETE" || !row.replacementApprovalRequestId) {
+      return;
+    }
+    const request = await this.requests.getById(row.replacementApprovalRequestId);
+    if (request && request.status === "PENDING") {
+      return;
+    }
+    await this.db.query(
+      `DELETE FROM json_documents
+       WHERE collection = $1 AND unique_key = $2`,
+      [REISSUE_COLLECTION, uniqueKey],
+    );
   }
 
   private async clearBindingsForRequest(approvalRequestId: string): Promise<void> {

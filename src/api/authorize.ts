@@ -145,6 +145,58 @@ export function registerAuthorizationRoutes(
     },
   );
 
+  /**
+   * Operator recovery: unreachable delivery channel (lost Fake/Resend nonce).
+   * REISSUE != APPROVAL. Does not return plaintext nonce.
+   */
+  app.post(
+    "/v1/approval-requests/:approvalRequestId/reissue",
+    async (request, reply) => {
+      const params = ApprovalParamsSchema.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({
+          error: "INVALID_AUTHORIZATION_REQUEST",
+          message: "approvalRequestId is required",
+        });
+      }
+      const body = z
+        .object({
+          reason: z.literal("DELIVERY_UNREACHABLE"),
+        })
+        .strict()
+        .safeParse(request.body ?? {});
+      if (!body.success) {
+        return reply.status(400).send({
+          error: "INVALID_AUTHORIZATION_REQUEST",
+          message:
+            'Body must be { "reason": "DELIVERY_UNREACHABLE" } — no caller-supplied bindings or nonces',
+        });
+      }
+      try {
+        const operatorPrincipalId = (
+          request as { orchestratorPrincipalId?: string }
+        ).orchestratorPrincipalId;
+        const result =
+          await deps.humanAuthorization.recoverUnreachableApprovalDelivery({
+            approvalRequestId: params.data.approvalRequestId,
+            reason: body.data.reason,
+            ...(operatorPrincipalId !== undefined
+              ? { operatorPrincipalId }
+              : {}),
+          });
+        return reply.status(200).send(result);
+      } catch (error) {
+        if (isAuthorizationError(error)) {
+          return reply.status(httpStatusForAuthorization(error.code)).send({
+            error: error.code,
+            message: error.message,
+          });
+        }
+        throw error;
+      }
+    },
+  );
+
   app.get("/v1/runs/:runId/authorization", async (request, reply) => {
     const params = RunParamsSchema.safeParse(request.params);
     if (!params.success) {

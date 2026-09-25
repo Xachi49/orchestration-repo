@@ -192,6 +192,18 @@ export class PostgresRecoveryCaseRepository implements RecoveryCaseRepository {
     return res.rows[0] ? parseRecoveryCase(res.rows[0].payload) : null;
   }
 
+  async getByOrchestratorRunId(runId: string): Promise<RecoveryCase | null> {
+    const res = await this.db.query<{ payload: unknown }>(
+      `SELECT payload FROM revenue_recovery_cases
+       WHERE payload->>'orchestratorRunId' = $1`,
+      [runId],
+    );
+    if (res.rows.length > 1) {
+      return null;
+    }
+    return res.rows[0] ? parseRecoveryCase(res.rows[0].payload) : null;
+  }
+
   async listOpenByLead(leadId: string): Promise<readonly RecoveryCase[]> {
     const res = await this.db.query<{ payload: unknown }>(
       `SELECT payload FROM revenue_recovery_cases

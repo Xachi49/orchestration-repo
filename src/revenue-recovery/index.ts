@@ -26,5 +26,7 @@ export * from "./repositories.js";
 export * from "./memory-repositories.js";
 export * from "./recovery-sms-planning-model.js";
 export * from "./recovery-email-planning-model.js";
+export * from "./target-grammar.js";
+export * from "./target-binder.js";
 export * from "./service.js";
 export * from "./phase7-actuator.js";

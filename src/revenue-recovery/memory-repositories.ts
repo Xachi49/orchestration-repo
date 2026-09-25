@@ -128,6 +128,16 @@ export class InMemoryRecoveryCaseRepository implements RecoveryCaseRepository {
     return id ? (this.byId.get(id) ?? null) : null;
   }
 
+  async getByOrchestratorRunId(runId: string): Promise<RecoveryCase | null> {
+    const matches = [...this.byId.values()].filter(
+      (c) => c.orchestratorRunId === runId,
+    );
+    if (matches.length > 1) {
+      return null;
+    }
+    return matches[0] ?? null;
+  }
+
   async listOpenByLead(leadId: string): Promise<readonly RecoveryCase[]> {
     return [...this.byId.values()].filter(
       (c) =>

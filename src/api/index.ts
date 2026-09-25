@@ -15,6 +15,10 @@ export {
   registerExecutionRoutes,
 } from "./execute.js";
 export {
+  httpStatusForApprovedPlanRepair,
+  registerApprovedPlanRepairRoutes,
+} from "./repair-approved-plan.js";
+export {
   httpStatusForVerification,
   registerVerificationRoutes,
 } from "./verify.js";

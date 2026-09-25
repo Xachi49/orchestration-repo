@@ -28,6 +28,12 @@ import { PlanResourceAnalyzer } from "./resource-analyzer.js";
 import { PlanQualityScorer } from "./quality-scorer.js";
 import { PlanCompiler, type PlanIdentityGenerator } from "./plan-compiler.js";
 import { PlanningPromptAssembler } from "./prompt-assembler.js";
+import { assertExecutionPlanRecoveryTargets } from "./recovery-plan-gate.js";
+import { isRecoveryPhase7ActionType } from "../execution/action-schemas.js";
+import {
+  isRecoveryTargetBinderError,
+} from "../revenue-recovery/target-binder.js";
+import type { PlanProposal } from "./proposal.js";
 import type {
   PlanningModel,
   PlanningModelOperation,
@@ -103,6 +109,11 @@ export interface PlanningServiceDeps {
       retrievalContextFingerprint: string;
     }>;
   };
+  /**
+   * Optional deterministic Revenue Recovery target binder.
+   * When recovery actions appear and binder is absent → fail closed at gate.
+   */
+  recoveryTargetBinder?: import("../revenue-recovery/target-binder.js").RevenueRecoveryTargetBinder;
 }
 
 /**
@@ -135,6 +146,7 @@ export class PlanningService {
   private readonly tokenEstimator: PlanningTokenReservationEstimator;
   private readonly maxOutputTokensByOperation: PlanningMaxOutputTokensByOperation;
   private precedentRetriever: PlanningServiceDeps["precedentRetriever"];
+  private recoveryTargetBinder: PlanningServiceDeps["recoveryTargetBinder"];
 
   constructor(deps: PlanningServiceDeps) {
     this.readiness = deps.readiness;
@@ -170,6 +182,7 @@ export class PlanningService {
       ...deps.maxOutputTokensByOperation,
     };
     this.precedentRetriever = deps.precedentRetriever;
+    this.recoveryTargetBinder = deps.recoveryTargetBinder;
   }
 
   /** Bind Phase 9 retriever after stack construction (optional). */
@@ -177,6 +190,13 @@ export class PlanningService {
     retriever: NonNullable<PlanningServiceDeps["precedentRetriever"]>,
   ): void {
     this.precedentRetriever = retriever;
+  }
+
+  /** Bind RR target binder after stack construction (optional). */
+  bindRecoveryTargetBinder(
+    binder: NonNullable<PlanningServiceDeps["recoveryTargetBinder"]>,
+  ): void {
+    this.recoveryTargetBinder = binder;
   }
 
   async plan(runId: string): Promise<PlanningResult> {
@@ -339,18 +359,24 @@ export class PlanningService {
         environment: run.requestedEnvironment,
       });
 
-      const graph = this.dependencies.validate(proposal.steps);
-      const resources = this.resources.analyze(
+      const boundProposal = await this.applyRecoveryTargetBinding(
+        runId,
         proposal,
+      );
+
+      const graph = this.dependencies.validate(boundProposal.steps);
+      const resources = this.resources.analyze(
+        boundProposal,
         control.resourceBudget,
       );
-      this.quality.score(proposal, compiled);
+      this.quality.score(boundProposal, compiled);
       const executionPlan = this.compiler.compile({
-        proposal,
+        proposal: boundProposal,
         context: compiled,
         graph,
         resources,
       });
+      assertExecutionPlanRecoveryTargets(executionPlan, { runId });
 
       const record: StoredPlanRecord = {
         planId: executionPlan.planId,
@@ -708,6 +734,41 @@ export class PlanningService {
       }
     }
     return map;
+  }
+
+  private async applyRecoveryTargetBinding(
+    runId: string,
+    proposal: PlanProposal,
+  ): Promise<PlanProposal> {
+    const hasRecovery = proposal.steps.some((s) =>
+      isRecoveryPhase7ActionType(s.actionType),
+    );
+    if (!hasRecovery) {
+      return proposal;
+    }
+    if (!this.recoveryTargetBinder) {
+      throw new PlanningError(
+        "RECOVERY_TARGET_BINDING_FAILED",
+        "Recovery actions require a deterministic Revenue Recovery target binder",
+        { runId },
+      );
+    }
+    try {
+      const steps = await this.recoveryTargetBinder.bindProposalSteps({
+        runId,
+        steps: proposal.steps,
+      });
+      return { ...proposal, steps };
+    } catch (error) {
+      if (isRecoveryTargetBinderError(error)) {
+        throw new PlanningError(
+          "RECOVERY_TARGET_BINDING_FAILED",
+          error.message,
+          { runId, binderCode: error.code, ...error.details },
+        );
+      }
+      throw error;
+    }
   }
 
   private mapModelError(error: unknown): PlanningError {

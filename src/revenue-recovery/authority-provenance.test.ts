@@ -37,6 +37,7 @@ import type { GapAnalysis, PlanProposal } from "../planning/proposal.js";
 import { parsePlanProposal } from "../planning/proposal.js";
 import { proposeBindingsForSteps } from "../planning/verification-bindings.js";
 import { RevenueRecoveryPhase7Actuator } from "./phase7-actuator.js";
+import { RevenueRecoveryTargetBinder } from "./target-binder.js";
 import { computeRecoveryRecordHash } from "./recovery-record.js";
 import { resolveConfidenceFromProvenance } from "./provenance.js";
 import { ATTRIBUTION_RULE_VERSION } from "./revenue-attribution.js";
@@ -218,10 +219,19 @@ async function routedRecoveryRun() {
     approvalDelivery: delivery,
     clockIso: MONDAY_IN_WINDOW,
   });
+  const binder = new RevenueRecoveryTargetBinder({
+    runs: stack.runs,
+    objectives: stack.objectives,
+    cases: product.repos.cases,
+    leads: product.repos.leads,
+    templates: product.repos.templates,
+  });
+  stack.planning.bindRecoveryTargetBinder(binder);
+  stack.validation.bindRecoveryTargetBinder(binder);
 
   const admitted = await stack.admission.admit(
     exampleAdmissionRequest({
-      objectiveId: "obj_rr_authority",
+      objectiveId: `obj_rr_${product.recoveryCase.recoveryCaseId}`,
       requestedOutcome: "Recover one unanswered inbound lead",
       acceptanceCriteria: [RECOVERY_CRITERION],
       nonGoals: ["Contacting leads who opted out"],
@@ -232,6 +242,13 @@ async function routedRecoveryRun() {
     throw new Error(`expected ADMITTED, got ${admitted.outcome}`);
   }
   const runId = admitted.runId;
+  await product.repos.cases.save({
+    ...product.recoveryCase,
+    orchestratorRunId: runId,
+    objectiveId: `obj_rr_${product.recoveryCase.recoveryCaseId}`,
+    updatedAt: MONDAY_IN_WINDOW,
+    recordRevision: product.recoveryCase.recordRevision + 1,
+  });
   await stack.ingestion.ingest(runId, EXAMPLE_PROJECT_ID, EXAMPLE_ENVIRONMENT);
   await stack.planning.plan(runId);
   await stack.validation.validate(runId);

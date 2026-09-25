@@ -49,6 +49,7 @@ import {
   APPROVAL_DELIVERY_EVENT,
   type ApprovalDeliveryOutboxPayload,
 } from "./outbox-consumer.js";
+import type { ApprovalDeliveryDispatchResult } from "./delivery-failure.js";
 
 export interface TransactionalOutboxPort {
   enqueue(input: {
@@ -86,7 +87,7 @@ export interface AuthorizationRoutingServiceDeps {
   deliverySecrets?: ApprovalDeliverySecretStore;
   events?: EventStore;
   /** Dispatches durable outbox deliveries after enqueue (outside DB transactions). */
-  dispatchPendingDeliveries?: () => Promise<{ delivered: number; failed: number }>;
+  dispatchPendingDeliveries?: () => Promise<ApprovalDeliveryDispatchResult>;
 }
 
 /**

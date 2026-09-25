@@ -1098,6 +1098,32 @@ export class PostgresApprovalRequestRepository
     return this.docs.listByRun(C.approvalRequests, runId, parseApprovalRequest);
   }
 
+  /**
+   * Direct replacement children only.
+   * Uses payload JSON filter — no migration for this pilot (run-scoped volume).
+   */
+  async listByReplacesApprovalRequestId(
+    replacesApprovalRequestId: string,
+  ): Promise<readonly ApprovalRequest[]> {
+    const result = await this.db.query<{
+      payload: unknown;
+      document_id: string;
+    }>(
+      `SELECT document_id, payload FROM json_documents
+       WHERE collection = $1
+         AND payload->>'replacesApprovalRequestId' = $2
+       ORDER BY payload->>'createdAt' ASC, document_id ASC`,
+      [C.approvalRequests, replacesApprovalRequestId],
+    );
+    return result.rows.map((row) =>
+      hydrateRecord(
+        parseApprovalRequest,
+        row.payload,
+        `${C.approvalRequests}:${row.document_id}`,
+      ),
+    );
+  }
+
   async updateStatus(
     approvalRequestId: string,
     status: ApprovalRequest["status"],

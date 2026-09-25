@@ -53,10 +53,16 @@ export class FakeApprovalDeliveryService implements ApprovalDeliveryService {
     assertNotInTransaction("ApprovalDeliveryService");
     if (this.failAlways || this.failNext) {
       this.failNext = false;
+      // Fake has no external transport — PRE_PROVIDER, providerAttempted=false.
       throw new AuthorizationError(
         "APPROVAL_DELIVERY_FAILED",
         "Fake delivery failed",
-        { approvalRequestId: input.request.approvalRequestId },
+        {
+          approvalRequestId: input.request.approvalRequestId,
+          deliveryStage: "PRE_PROVIDER",
+          failureCode: "APPROVAL_DELIVERY_FAILED",
+          providerAttempted: false,
+        },
       );
     }
     this.delivered.push({

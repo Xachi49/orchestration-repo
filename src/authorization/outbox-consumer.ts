@@ -1,4 +1,4 @@
-import type { ApprovalDecisionCard, ApprovalRequest } from "../domain/authorization/index.js";
+import type { ApprovalDecisionCard } from "../domain/authorization/index.js";
 import type { OutboxMessage } from "../domain/durability/index.js";
 import type { RunRepository } from "../admission/run-repository.js";
 import { commitRunTransition } from "../admission/run-transition.js";
@@ -7,13 +7,18 @@ import type { AuthorizationCoordinator } from "./coordinator.js";
 import type { ApprovalDeliveryService } from "./delivery.js";
 import { AuthorizationError } from "./errors.js";
 import type { PostgresInbox } from "../infrastructure/postgres/inbox.js";
-import type { PostgresTransactionalOutbox } from "../infrastructure/postgres/outbox.js";
-import type { OutboxConsumer } from "../infrastructure/postgres/outbox.js";
 import type { TransactionManager } from "../durability/transaction.js";
 import { withOptionalTransaction } from "../durability/transaction.js";
 import { createHash } from "node:crypto";
 import type { ApprovalDeliverySecretStore } from "./delivery-secret-store.js";
 import { assertNotInTransaction } from "../durability/transaction.js";
+import {
+  APPROVAL_DELIVERY_SECRET_UNAVAILABLE,
+  classifyApprovalDeliveryFailure,
+  toApprovalDeliveryFailureError,
+  type ApprovalDeliveryDispatchResult,
+  type ApprovalDeliveryFailureResult,
+} from "./delivery-failure.js";
 
 export const APPROVAL_DELIVERY_EVENT = "APPROVAL_DELIVERY_REQUESTED";
 
@@ -25,11 +30,33 @@ export interface ApprovalDeliveryOutboxPayload {
   card: ApprovalDecisionCard;
 }
 
+/** Narrow outbox port used by the approval delivery dispatcher. */
+export interface ApprovalDeliveryOutboxPort {
+  claimBatch(input: {
+    ownerId: string;
+    limit: number;
+  }): Promise<OutboxMessage[]>;
+  markDelivered(
+    outboxId: string,
+    ownerId: string,
+    fenceToken: number,
+  ): Promise<void>;
+  markFailed(
+    outboxId: string,
+    ownerId: string,
+    fenceToken: number,
+  ): Promise<void>;
+}
+
+export interface ApprovalDeliveryOutboxConsumerPort {
+  consume(message: OutboxMessage): Promise<void>;
+}
+
 /**
  * Delivers approval requests outside database transactions.
  * Uses inbox dedup so at-least-once outbox delivery does not duplicate effects.
  */
-export class ApprovalDeliveryOutboxConsumer implements OutboxConsumer {
+export class ApprovalDeliveryOutboxConsumer implements ApprovalDeliveryOutboxConsumerPort {
   constructor(
     private readonly deps: {
       delivery: ApprovalDeliveryService;
@@ -75,10 +102,20 @@ export class ApprovalDeliveryOutboxConsumer implements OutboxConsumer {
         payload.approvalRequestId,
       )) ?? null;
     if (!decisionNonce) {
-      throw new AuthorizationError(
-        "APPROVAL_DELIVERY_FAILED",
-        "Missing or already consumed approval delivery secret",
-        { approvalRequestId: payload.approvalRequestId },
+      // Missing secret does not cancel the request (existing semantics).
+      throw toApprovalDeliveryFailureError(
+        new AuthorizationError(
+          "APPROVAL_DELIVERY_FAILED",
+          "Missing or already consumed approval delivery secret",
+          { approvalRequestId: payload.approvalRequestId },
+        ),
+        payload.approvalRequestId,
+        {
+          deliveryStage: "REVEAL_SECRET",
+          providerAttempted: false,
+          failureCode: APPROVAL_DELIVERY_SECRET_UNAVAILABLE,
+          message: "Missing or already consumed approval delivery secret",
+        },
       );
     }
 
@@ -107,13 +144,7 @@ export class ApprovalDeliveryOutboxConsumer implements OutboxConsumer {
           resultFingerprint: "DELIVERY_FAILED",
         });
       }
-      throw error instanceof AuthorizationError
-        ? error
-        : new AuthorizationError(
-            "APPROVAL_DELIVERY_FAILED",
-            error instanceof Error ? error.message : "Delivery failed",
-            { approvalRequestId: payload.approvalRequestId },
-          );
+      throw toApprovalDeliveryFailureError(error, payload.approvalRequestId);
     }
 
     await withOptionalTransaction(this.deps.transactions, async () => {
@@ -145,21 +176,34 @@ export class ApprovalDeliveryOutboxConsumer implements OutboxConsumer {
   }
 }
 
+function approvalRequestIdFromMessage(message: OutboxMessage): string {
+  const payload = message.payload as { approvalRequestId?: unknown };
+  return typeof payload?.approvalRequestId === "string"
+    ? payload.approvalRequestId
+    : message.aggregateId;
+}
+
 export function createApprovalDeliveryDispatcher(input: {
-  outbox: PostgresTransactionalOutbox;
-  inbox: PostgresInbox;
+  outbox: ApprovalDeliveryOutboxPort;
+  inbox?: PostgresInbox;
   ownerId: string;
-  consumer: ApprovalDeliveryOutboxConsumer;
+  consumer: ApprovalDeliveryOutboxConsumerPort;
 }) {
   return {
-    async dispatchOnce(limit = 10) {
+    /**
+     * Claim and process a batch. Background workers must not crash on failure:
+     * each message is marked failed and recorded in `failures` for sync callers.
+     */
+    async dispatchOnce(limit = 10): Promise<ApprovalDeliveryDispatchResult> {
       const claimed = await input.outbox.claimBatch({
         ownerId: input.ownerId,
         limit,
       });
       let delivered = 0;
       let failed = 0;
+      const failures: ApprovalDeliveryFailureResult[] = [];
       for (const message of claimed) {
+        const approvalRequestId = approvalRequestIdFromMessage(message);
         try {
           await input.consumer.consume(message);
           await input.outbox.markDelivered(
@@ -168,16 +212,19 @@ export function createApprovalDeliveryDispatcher(input: {
             message.fenceToken ?? 0,
           );
           delivered += 1;
-        } catch {
+        } catch (error) {
           await input.outbox.markFailed(
             message.outboxId,
             input.ownerId,
             message.fenceToken ?? 0,
           );
           failed += 1;
+          failures.push(
+            classifyApprovalDeliveryFailure(error, approvalRequestId),
+          );
         }
       }
-      return { delivered, failed };
+      return { delivered, failed, failures };
     },
   };
 }

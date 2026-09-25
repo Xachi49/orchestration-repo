@@ -38,6 +38,7 @@ try {
     [
       "npx vitest run --fileParallelism=false",
       "src/infrastructure/postgres/postgres.durability.test.ts",
+      "src/infrastructure/postgres/postgres.approval-replacement-lineage.test.ts",
       "src/infrastructure/postgres/postgres.migrate.test.ts",
       "src/infrastructure/postgres/postgres.integration.test.ts",
       "src/infrastructure/postgres/postgres.resource-ledger.test.ts",

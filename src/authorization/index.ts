@@ -103,3 +103,31 @@ export type {
   AuthorizationResultKind,
   AuthorizationRoutingOutcome,
 } from "./result.js";
+
+export {
+  APPROVAL_DELIVERY_STAGES,
+  APPROVAL_DELIVERY_SECRET_UNAVAILABLE,
+  classifyApprovalDeliveryFailure,
+  toApprovalDeliveryFailureError,
+  approvalDeliveryFailureHttpFields,
+  findDispatchFailureForApproval,
+  type ApprovalDeliveryStage,
+  type ApprovalDeliveryFailureResult,
+  type ApprovalDeliveryDispatchResult,
+} from "./delivery-failure.js";
+
+export {
+  APPROVAL_DELIVERY_EVENT,
+  ApprovalDeliveryOutboxConsumer,
+  createApprovalDeliveryDispatcher,
+  type ApprovalDeliveryOutboxPayload,
+  type ApprovalDeliveryOutboxPort,
+} from "./outbox-consumer.js";
+
+export {
+  APPROVAL_REPLACEMENT_LINEAGE_SCOPE,
+  toApprovalReplacementLineageRecord,
+  type ApprovalReplacementLineageRecord,
+  type ApprovalReplacementLineageResult,
+  type ApprovalReplacementLineageScope,
+} from "./replacement-lineage.js";

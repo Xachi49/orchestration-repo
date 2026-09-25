@@ -33,6 +33,12 @@ import { DependencyGraphService } from "../planning/dependency-graph.js";
 import { PlanResourceAnalyzer } from "../planning/resource-analyzer.js";
 import { PlanQualityScorer } from "../planning/quality-scorer.js";
 import { PlanCompiler, type PlanIdentityGenerator } from "../planning/plan-compiler.js";
+import { assertExecutionPlanRecoveryTargets } from "../planning/recovery-plan-gate.js";
+import { isRecoveryPhase7ActionType } from "../execution/action-schemas.js";
+import {
+  isRecoveryTargetBinderError,
+} from "../revenue-recovery/target-binder.js";
+import type { PlanProposal } from "../planning/proposal.js";
 import { PLANNING_PROMPT_VERSION } from "../planning/context.js";
 import type { PlanningContext } from "../planning/context.js";
 import type {
@@ -164,6 +170,7 @@ export interface ValidationServiceDeps {
   tokenEstimator?: ValidationTokenReservationEstimator;
   maxOutputTokensByOperation?: ValidationMaxOutputTokensByOperation;
   maxRevisionAttempts?: number;
+  recoveryTargetBinder?: import("../revenue-recovery/target-binder.js").RevenueRecoveryTargetBinder;
 }
 
 interface ValidationRunContext {
@@ -220,6 +227,7 @@ export class ValidationService {
   private readonly tokenEstimator: ValidationTokenReservationEstimator;
   private readonly maxOutputTokensByOperation: ValidationMaxOutputTokensByOperation;
   private readonly maxRevisionAttempts: number;
+  private recoveryTargetBinder: ValidationServiceDeps["recoveryTargetBinder"];
 
   constructor(deps: ValidationServiceDeps) {
     this.readiness = deps.readiness;
@@ -269,6 +277,13 @@ export class ValidationService {
     };
     this.maxRevisionAttempts =
       deps.maxRevisionAttempts ?? MAX_SEMANTIC_REVISION_ATTEMPTS;
+    this.recoveryTargetBinder = deps.recoveryTargetBinder;
+  }
+
+  bindRecoveryTargetBinder(
+    binder: NonNullable<ValidationServiceDeps["recoveryTargetBinder"]>,
+  ): void {
+    this.recoveryTargetBinder = binder;
   }
 
   async validate(runId: string): Promise<ValidationResult> {
@@ -1027,19 +1042,24 @@ export class ValidationService {
         actionTypes: proposal.steps.map((step) => step.actionType),
         environment: input.runContext.environment,
       });
-      const graph = this.dependencies.validate(proposal.steps);
-      const resources = this.resources.analyze(
+      const boundProposal = await this.applyRecoveryTargetBinding(
+        input.runId,
         proposal,
+      );
+      const graph = this.dependencies.validate(boundProposal.steps);
+      const resources = this.resources.analyze(
+        boundProposal,
         input.runContext.control.resourceBudget,
       );
-      this.quality.score(proposal, input.context);
+      this.quality.score(boundProposal, input.context);
       revisedPlan = this.compiler.compile({
-        proposal,
+        proposal: boundProposal,
         context: input.context,
         graph,
         resources,
         planVersion: targetPlanVersion,
       });
+      assertExecutionPlanRecoveryTargets(revisedPlan, { runId: input.runId });
     } catch (error) {
       throw new ValidationError(
         "REVISION_COMPILATION_FAILED",
@@ -1077,6 +1097,41 @@ export class ValidationService {
         "Failed to persist the revised plan",
         { cause: String(error) },
       );
+    }
+  }
+
+  private async applyRecoveryTargetBinding(
+    runId: string,
+    proposal: PlanProposal,
+  ): Promise<PlanProposal> {
+    const hasRecovery = proposal.steps.some((s) =>
+      isRecoveryPhase7ActionType(s.actionType),
+    );
+    if (!hasRecovery) {
+      return proposal;
+    }
+    if (!this.recoveryTargetBinder) {
+      throw new ValidationError(
+        "REVISION_COMPILATION_FAILED",
+        "Recovery actions require a deterministic Revenue Recovery target binder",
+        { runId },
+      );
+    }
+    try {
+      const steps = await this.recoveryTargetBinder.bindProposalSteps({
+        runId,
+        steps: proposal.steps,
+      });
+      return { ...proposal, steps };
+    } catch (error) {
+      if (isRecoveryTargetBinderError(error)) {
+        throw new ValidationError(
+          "REVISION_COMPILATION_FAILED",
+          error.message,
+          { runId, binderCode: error.code, ...error.details },
+        );
+      }
+      throw error;
     }
   }
 

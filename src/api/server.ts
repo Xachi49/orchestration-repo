@@ -22,6 +22,7 @@ import { registerPlanRoutes } from "./plan.js";
 import { registerValidationRoutes } from "./validate.js";
 import { registerAuthorizationRoutes } from "./authorize.js";
 import { registerExecutionRoutes } from "./execute.js";
+import { registerApprovedPlanRepairRoutes } from "./repair-approved-plan.js";
 import { registerVerificationRoutes } from "./verify.js";
 import { registerLearningRoutes } from "./learn.js";
 import { registerObservabilityRoutes } from "./observability.js";
@@ -122,6 +123,7 @@ export interface ApiDeps {
   assuranceService?: AssuranceOrchestrationService;
   revenueRecovery?: import("../revenue-recovery/service.js").RevenueRecoveryService;
   revenueRecoveryPilotConfig?: import("../revenue-recovery/pilot-config.js").RecoveryPilotConfig;
+  approvedPlanRepair?: import("../planning/approved-plan-repair.js").ApprovedPlanRepairService;
   controlTower?: ControlTowerService;
   controlTowerOptions?: import("./control-tower.js").ControlTowerRouteOptions;
   storageMode?: StorageMode;
@@ -307,6 +309,11 @@ export async function buildServer(deps: ApiDeps = {}) {
     registerExecutionRoutes(app, {
       execution: deps.execution,
       readiness: deps.executionReadiness,
+    });
+  }
+  if (deps.approvedPlanRepair) {
+    registerApprovedPlanRepairRoutes(app, {
+      repair: deps.approvedPlanRepair,
     });
   }
   if (deps.verification && deps.verificationReadiness) {

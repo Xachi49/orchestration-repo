@@ -14,6 +14,7 @@ import {
   capabilitySetFingerprint,
   uniqueCapabilitiesForPlanActions,
 } from "./capability-fingerprint.js";
+import { validateRecoveryStepsTargetGrammar } from "../revenue-recovery/target-grammar.js";
 
 export const ExecutionReadinessCodeSchema = z.enum([
   "READY",
@@ -34,6 +35,7 @@ export const ExecutionReadinessCodeSchema = z.enum([
   "EXECUTION_MODE_DENIED",
   "CONTROL_CONTEXT_UNAVAILABLE",
   "OBJECTIVE_MISMATCH",
+  "RECOVERY_TARGETS_INVALID",
 ]);
 export type ExecutionReadinessCode = z.infer<
   typeof ExecutionReadinessCodeSchema
@@ -189,6 +191,15 @@ export class ExecutionReadinessService {
         ready: false,
         code: "PLAN_HASH_MISMATCH",
         message: "Plan hash does not recompute correctly",
+      };
+    }
+
+    const recoveryTargets = validateRecoveryStepsTargetGrammar(plan.plan.steps);
+    if (!recoveryTargets.ok) {
+      return {
+        ready: false,
+        code: "RECOVERY_TARGETS_INVALID",
+        message: recoveryTargets.message,
       };
     }
 

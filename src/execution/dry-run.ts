@@ -18,6 +18,10 @@ import { ExecutionError } from "./errors.js";
 import { fingerprintValue, stepIdempotencyKey } from "./idempotency.js";
 import { ExecutionTargetValidator } from "./target-validator.js";
 import type { TestProfileRegistry } from "./test-profiles.js";
+import {
+  parseRecoveryOutreachTargets as parseRecoveryTargetsShared,
+  recoveryTargetContractForAction,
+} from "../revenue-recovery/target-grammar.js";
 
 export const CompiledExecutionStepSchema = z
   .object({
@@ -337,53 +341,26 @@ function parseRecoveryOutreachTargets(step: ExecutionStep): {
   templateVersion?: number;
   note?: string;
 } {
-  const caseId = step.targetIds
-    .find((t) => t.startsWith("rr_case:"))
-    ?.slice("rr_case:".length);
-  const leadId = step.targetIds
-    .find((t) => t.startsWith("rr_lead:"))
-    ?.slice("rr_lead:".length);
-  const templateRaw = step.targetIds
-    .find((t) => t.startsWith("rr_template:"))
-    ?.slice("rr_template:".length);
-  const note = step.targetIds
-    .find((t) => t.startsWith("rr_note:"))
-    ?.slice("rr_note:".length);
-  if (!caseId || !leadId) {
+  const contract = recoveryTargetContractForAction(step.actionType) ?? {
+    requireTemplate: false,
+  };
+  // Dry-run email/sms schemas require template; enforce here for SEND_* too.
+  const requireTemplate =
+    step.actionType === "SEND_RECOVERY_EMAIL" ||
+    step.actionType === "SEND_RECOVERY_SMS"
+      ? true
+      : contract.requireTemplate;
+  const parsed = parseRecoveryTargetsShared(step.targetIds, {
+    requireTemplate,
+  });
+  if (!parsed.ok) {
     throw new ExecutionError(
       "EXECUTION_ARGUMENT_INVALID",
-      "Recovery action requires rr_case: and rr_lead: targetIds",
-      { stepId: step.stepId, targetIds: step.targetIds },
+      parsed.message,
+      { stepId: step.stepId, ...parsed.details },
     );
   }
-  let templateId: string | undefined;
-  let templateVersion: number | undefined;
-  if (templateRaw) {
-    const at = templateRaw.lastIndexOf("@");
-    if (at <= 0) {
-      throw new ExecutionError(
-        "EXECUTION_ARGUMENT_INVALID",
-        "rr_template must be templateId@version",
-        { stepId: step.stepId, templateRaw },
-      );
-    }
-    templateId = templateRaw.slice(0, at);
-    templateVersion = Number(templateRaw.slice(at + 1));
-    if (!Number.isInteger(templateVersion) || templateVersion < 1) {
-      throw new ExecutionError(
-        "EXECUTION_ARGUMENT_INVALID",
-        "Invalid recovery template version",
-        { stepId: step.stepId, templateRaw },
-      );
-    }
-  }
-  return {
-    recoveryCaseId: caseId,
-    leadId,
-    ...(templateId !== undefined ? { templateId } : {}),
-    ...(templateVersion !== undefined ? { templateVersion } : {}),
-    ...(note !== undefined ? { note } : {}),
-  };
+  return parsed.value;
 }
 
 function pathLooksAbsolute(value: string): boolean {

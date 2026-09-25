@@ -12,6 +12,7 @@ import {
   uniqueCapabilitiesForPlanActions,
 } from "./capability-fingerprint.js";
 import { ExecutionTargetValidator } from "./target-validator.js";
+import { validateRecoveryStepsTargetGrammar } from "../revenue-recovery/target-grammar.js";
 
 export interface ExecutionPreflightServiceDeps {
   runs: RunRepository;
@@ -158,6 +159,17 @@ export class ExecutionPreflightService {
       throw new ExecutionError(
         "EXECUTION_CAPABILITY_CHANGED",
         "Capability set fingerprint changed at preflight",
+      );
+    }
+
+    const recoveryTargets = validateRecoveryStepsTargetGrammar(
+      input.plan.plan.steps,
+    );
+    if (!recoveryTargets.ok) {
+      throw new ExecutionError(
+        "EXECUTION_ARGUMENT_INVALID",
+        recoveryTargets.message,
+        recoveryTargets.details,
       );
     }
 

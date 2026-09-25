@@ -185,6 +185,7 @@ export function createOrchestratorRuntime(
                   assuranceService: postgres.assuranceService,
                   revenueRecovery: postgres.revenueRecoveryService,
                   revenueRecoveryPilotConfig: postgres.revenueRecoveryPilotConfig,
+                  approvedPlanRepair: postgres.approvedPlanRepair,
                 }
               : {}),
             storageMode: boot.storageMode,

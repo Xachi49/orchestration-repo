@@ -122,3 +122,16 @@ export {
   type PlanningServiceDeps,
   type PlanningResult,
 } from "./service.js";
+export {
+  assertRecoveryTargetsActuatable,
+  assertExecutionPlanRecoveryTargets,
+} from "./recovery-plan-gate.js";
+export {
+  ApprovedPlanRepairService,
+  InMemoryApprovedPlanRepairCoordinator,
+  APPROVED_PLAN_REPAIR_EVENT,
+  UNEXECUTABLE_APPROVED_PLAN_REPAIR,
+  isApprovedPlanRepairError,
+  type ApprovedPlanRepairResult,
+  type ApprovedPlanRepairCoordinator,
+} from "./approved-plan-repair.js";

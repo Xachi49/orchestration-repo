@@ -65,6 +65,18 @@ import {
   type ApprovalDeliveryOutboxPayload,
 } from "./outbox-consumer.js";
 import type { TransactionalOutboxPort } from "./routing.js";
+import {
+  classifyApprovalDeliveryFailure,
+  findDispatchFailureForApproval,
+  type ApprovalDeliveryDispatchResult,
+  type ApprovalDeliveryFailureResult,
+} from "./delivery-failure.js";
+import {
+  APPROVAL_REPLACEMENT_LINEAGE_SCOPE,
+  toApprovalReplacementLineageRecord,
+  type ApprovalReplacementLineageResult,
+} from "./replacement-lineage.js";
+import type { StructuredLogger } from "../runtime/logging.js";
 import { randomUUID } from "node:crypto";
 
 /** Allowlisted operator recovery reasons for unreachable delivery. */
@@ -106,8 +118,10 @@ export interface HumanAuthorizationServiceDeps {
   /** Durable outbox path (postgres). When set with transactions, preferred over sync delivery. */
   outbox?: TransactionalOutboxPort;
   deliverySecrets?: ApprovalDeliverySecretStore;
-  dispatchPendingDeliveries?: () => Promise<{ delivered: number; failed: number }>;
+  dispatchPendingDeliveries?: () => Promise<ApprovalDeliveryDispatchResult>;
   events?: EventStore;
+  /** Optional structured logger for safe delivery-failure observability. */
+  logger?: StructuredLogger;
 }
 
 export interface ApprovalReissueResult {
@@ -416,6 +430,32 @@ export class HumanAuthorizationService {
 
   async getPendingRequest(runId: string): Promise<ApprovalRequest | null> {
     return this.deps.requests.getPendingByRun(runId);
+  }
+
+  /**
+   * Read-only direct replacement lineage for an ApprovalRequest.
+   * READ MODEL != AUTHORITY; LINEAGE DISCOVERY != REISSUE.
+   * Returns direct children only (replacesApprovalRequestId == parent).
+   */
+  async listApprovalReplacements(
+    approvalRequestId: string,
+  ): Promise<ApprovalReplacementLineageResult> {
+    const original = await this.deps.requests.getById(approvalRequestId);
+    if (!original) {
+      throw new AuthorizationError(
+        "APPROVAL_REQUEST_NOT_FOUND",
+        `Unknown approval request: ${approvalRequestId}`,
+      );
+    }
+    const children =
+      await this.deps.requests.listByReplacesApprovalRequestId(
+        approvalRequestId,
+      );
+    return {
+      originalApprovalRequestId: approvalRequestId,
+      lineageScope: APPROVAL_REPLACEMENT_LINEAGE_SCOPE,
+      replacements: children.map(toApprovalReplacementLineageRecord),
+    };
   }
 
   /**
@@ -1031,6 +1071,7 @@ export class HumanAuthorizationService {
     // Durable path: persist + encrypt secret + outbox, then dispatch outside txn.
     if (this.deps.outbox && this.deps.transactions) {
       const outboxId = this.identities.nextApprovalRequestId();
+      let dispatchResult: ApprovalDeliveryDispatchResult | undefined;
       await withOptionalTransaction(this.deps.transactions, async () => {
         await this.deps.requests.save(request);
         await this.deps.cards.save(request.approvalRequestId, card);
@@ -1054,7 +1095,7 @@ export class HumanAuthorizationService {
         });
       });
       if (this.deps.dispatchPendingDeliveries) {
-        await this.deps.dispatchPendingDeliveries();
+        dispatchResult = await this.deps.dispatchPendingDeliveries();
       }
       const refreshed = await this.deps.runs.getById(run.runId);
       if (!refreshed || refreshed.state !== "AWAITING_APPROVAL") {
@@ -1066,10 +1107,44 @@ export class HumanAuthorizationService {
       }
       const live = await this.deps.requests.getById(request.approvalRequestId);
       if (!live || live.status !== "PENDING") {
+        const failure = findDispatchFailureForApproval(
+          dispatchResult,
+          request.approvalRequestId,
+        );
+        const classified: ApprovalDeliveryFailureResult =
+          failure ??
+          {
+            approvalRequestId: request.approvalRequestId,
+            deliveryStage: "PRE_PROVIDER",
+            failureCode: "APPROVAL_DELIVERY_FAILED",
+            safeMessage:
+              "Replacement approval delivery failed; request is not PENDING",
+            providerAttempted: false,
+          };
+
+        this.logReissueDeliveryFailure({
+          runId: run.runId,
+          originalApprovalRequestId: replaced.approvalRequestId,
+          replacementApprovalRequestId: request.approvalRequestId,
+          failure: classified,
+        });
+
         throw new AuthorizationError(
           "APPROVAL_DELIVERY_FAILED",
-          "Replacement approval delivery failed; request is not PENDING",
-          { approvalRequestId: request.approvalRequestId, status: live?.status },
+          classified.safeMessage,
+          {
+            approvalRequestId: request.approvalRequestId,
+            replacementApprovalRequestId: request.approvalRequestId,
+            originalApprovalRequestId: replaced.approvalRequestId,
+            runId: run.runId,
+            deliveryStage: classified.deliveryStage,
+            failureCode: classified.failureCode,
+            providerAttempted: classified.providerAttempted,
+            ...(classified.providerName !== undefined
+              ? { providerName: classified.providerName }
+              : {}),
+            status: live?.status,
+          },
         );
       }
       return live;
@@ -1095,13 +1170,31 @@ export class HumanAuthorizationService {
         },
       );
       await this.deps.coordinator.invalidateNonce(request.approvalRequestId);
-      if (error instanceof AuthorizationError) {
-        throw error;
-      }
+      const classified = classifyApprovalDeliveryFailure(
+        error,
+        request.approvalRequestId,
+      );
+      this.logReissueDeliveryFailure({
+        runId: run.runId,
+        originalApprovalRequestId: replaced.approvalRequestId,
+        replacementApprovalRequestId: request.approvalRequestId,
+        failure: classified,
+      });
       throw new AuthorizationError(
         "APPROVAL_DELIVERY_FAILED",
-        error instanceof Error ? error.message : "Delivery failed",
-        { approvalRequestId: request.approvalRequestId },
+        classified.safeMessage,
+        {
+          approvalRequestId: request.approvalRequestId,
+          replacementApprovalRequestId: request.approvalRequestId,
+          originalApprovalRequestId: replaced.approvalRequestId,
+          runId: run.runId,
+          deliveryStage: classified.deliveryStage,
+          failureCode: classified.failureCode,
+          providerAttempted: classified.providerAttempted,
+          ...(classified.providerName !== undefined
+            ? { providerName: classified.providerName }
+            : {}),
+        },
       );
     }
 
@@ -1117,6 +1210,31 @@ export class HumanAuthorizationService {
     }
 
     return request;
+  }
+
+  private logReissueDeliveryFailure(input: {
+    runId: string;
+    originalApprovalRequestId: string;
+    replacementApprovalRequestId: string;
+    failure: ApprovalDeliveryFailureResult;
+  }): void {
+    this.deps.logger?.log({
+      level: "error",
+      message: "approval_reissue_delivery_failed",
+      operation: "approval.reissue.delivery",
+      result: "failed",
+      runId: input.runId,
+      originalApprovalRequestId: input.originalApprovalRequestId,
+      replacementApprovalRequestId: input.replacementApprovalRequestId,
+      deliveryStage: input.failure.deliveryStage,
+      failureCode: input.failure.failureCode,
+      providerAttempted: input.failure.providerAttempted,
+      ...(input.failure.providerName !== undefined
+        ? { providerName: input.failure.providerName }
+        : {}),
+      errorClass: input.failure.failureCode,
+      safeMessage: input.failure.safeMessage,
+    });
   }
 
   async getLatestAuthorization(runId: string) {

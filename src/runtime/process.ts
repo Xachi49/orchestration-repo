@@ -131,6 +131,7 @@ export function createOrchestratorRuntime(
 
         if (config.runtimeRole !== "WORKER") {
           app = await buildServer({
+            logger,
             admission: boot.stack.admission,
             ingestion: boot.stack.ingestion,
             planning: boot.stack.planning,

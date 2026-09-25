@@ -178,12 +178,14 @@ export class ResendApprovalDeliveryService implements ApprovalDeliveryService {
     card: ApprovalDecisionCard;
     decisionNonce: string;
   }): Promise<void> {
+    // PRE_PROVIDER: local guards and email construction (no transport yet).
     assertNotInTransaction("ApprovalDeliveryService");
     const idempotencyKey = approvalDeliveryIdempotencyKey(
       input.request.approvalRequestId,
     );
     // Build text with nonce; never assign to a logged field.
     const text = buildApprovalDeliveryEmailText(input);
+    // PROVIDER: transport invocation begins — providerAttempted=true from here.
     try {
       const result = await this.transport.sendEmail({
         apiKey: this.apiKey,
@@ -199,15 +201,25 @@ export class ResendApprovalDeliveryService implements ApprovalDeliveryService {
         idempotencyKey,
       });
     } catch (error) {
+      const providerDetails = {
+        approvalRequestId: input.request.approvalRequestId,
+        deliveryStage: "PROVIDER" as const,
+        failureCode: "APPROVAL_DELIVERY_FAILED",
+        providerAttempted: true,
+        providerName: "resend",
+      };
       if (error instanceof AuthorizationError) {
-        throw error;
+        throw new AuthorizationError(error.code, error.message, {
+          ...error.details,
+          ...providerDetails,
+        });
       }
       throw new AuthorizationError(
         "APPROVAL_DELIVERY_FAILED",
         error instanceof Error
           ? error.message
           : "Resend approval delivery failed",
-        { approvalRequestId: input.request.approvalRequestId },
+        providerDetails,
       );
     }
   }

@@ -137,6 +137,7 @@ export interface ApiDeps {
   health?: HealthDeps;
   bodyLimitBytes?: number;
   requestTimeoutMs?: number;
+  logger?: import("../runtime/logging.js").StructuredLogger;
 }
 
 /**
@@ -299,6 +300,7 @@ export async function buildServer(deps: ApiDeps = {}) {
       humanAuthorization: deps.humanAuthorization,
       expiry: deps.approvalExpiry,
       readiness: deps.authorizationReadiness,
+      ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
     });
   }
   if (deps.execution && deps.executionReadiness) {

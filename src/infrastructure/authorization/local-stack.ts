@@ -70,6 +70,7 @@ export function createLocalAuthorizationStack(options?: {
   approvalWindowMs?: number;
   knownApproverIds?: readonly string[];
   nonceGenerator?: DecisionNonceGenerator;
+  logger?: import("../../runtime/logging.js").StructuredLogger;
 }): LocalAuthorizationStack {
   const base = createLocalValidationStack(options);
   const approvalRequests = new InMemoryApprovalRequestRepository();
@@ -149,6 +150,7 @@ export function createLocalAuthorizationStack(options?: {
     ...(options?.approvalWindowMs !== undefined
       ? { approvalWindowMs: options.approvalWindowMs }
       : {}),
+    ...(options?.logger !== undefined ? { logger: options.logger } : {}),
   });
 
   const approvalExpiry = new ApprovalExpiryService({

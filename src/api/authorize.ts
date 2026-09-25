@@ -8,6 +8,8 @@ import {
   isAuthorizationError,
   type AuthorizationErrorCode,
 } from "../authorization/errors.js";
+import { approvalDeliveryFailureHttpFields } from "../authorization/delivery-failure.js";
+import type { StructuredLogger } from "../runtime/logging.js";
 import { HumanAuthorizationDecisionSchema } from "../domain/authorization/index.js";
 
 const RunParamsSchema = z.object({ runId: z.string().min(1) }).strict();
@@ -59,6 +61,7 @@ export interface AuthorizationRouteDeps {
   humanAuthorization: HumanAuthorizationService;
   expiry: ApprovalExpiryService;
   readiness: AuthorizationReadinessService;
+  logger?: StructuredLogger;
 }
 
 export function registerAuthorizationRoutes(
@@ -106,6 +109,38 @@ export function registerAuthorizationRoutes(
     }
     return reply.status(200).send(pending);
   });
+
+  /**
+   * Read-only replacement lineage. LINEAGE DISCOVERY != REISSUE.
+   * Direct children only (replacesApprovalRequestId == parent).
+   * Project access is enforced by the HTTP perimeter via approvalRequestId.
+   */
+  app.get(
+    "/v1/approval-requests/:approvalRequestId/replacements",
+    async (request, reply) => {
+      const params = ApprovalParamsSchema.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({
+          error: "INVALID_AUTHORIZATION_REQUEST",
+          message: "approvalRequestId is required",
+        });
+      }
+      try {
+        const result = await deps.humanAuthorization.listApprovalReplacements(
+          params.data.approvalRequestId,
+        );
+        return reply.status(200).send(result);
+      } catch (error) {
+        if (isAuthorizationError(error)) {
+          return reply.status(httpStatusForAuthorization(error.code)).send({
+            error: error.code,
+            message: error.message,
+          });
+        }
+        throw error;
+      }
+    },
+  );
 
   app.post(
     "/v1/approval-requests/:approvalRequestId/decision",
@@ -187,7 +222,44 @@ export function registerAuthorizationRoutes(
         return reply.status(200).send(result);
       } catch (error) {
         if (isAuthorizationError(error)) {
-          return reply.status(httpStatusForAuthorization(error.code)).send({
+          const status = httpStatusForAuthorization(error.code);
+          if (error.code === "APPROVAL_DELIVERY_FAILED") {
+            const fields = approvalDeliveryFailureHttpFields(error);
+            deps.logger?.log({
+              level: "error",
+              message: "approval_reissue_delivery_failed",
+              operation: "approval.reissue.http",
+              result: "failed",
+              requestId: request.id,
+              originalApprovalRequestId: params.data.approvalRequestId,
+              ...(fields.replacementApprovalRequestId !== undefined
+                ? {
+                    replacementApprovalRequestId:
+                      fields.replacementApprovalRequestId,
+                  }
+                : {}),
+              ...(fields.deliveryStage !== undefined
+                ? { deliveryStage: fields.deliveryStage }
+                : {}),
+              ...(fields.failureCode !== undefined
+                ? { failureCode: fields.failureCode }
+                : {}),
+              ...(fields.providerAttempted !== undefined
+                ? { providerAttempted: fields.providerAttempted }
+                : {}),
+              ...(typeof error.details?.["runId"] === "string"
+                ? { runId: error.details["runId"] }
+                : {}),
+              errorClass: error.code,
+              safeMessage: error.message,
+            });
+            return reply.status(status).send({
+              error: error.code,
+              message: error.message,
+              ...fields,
+            });
+          }
+          return reply.status(status).send({
             error: error.code,
             message: error.message,
           });

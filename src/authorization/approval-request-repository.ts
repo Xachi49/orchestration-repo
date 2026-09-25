@@ -25,6 +25,14 @@ export interface ApprovalRequestRepository {
   ): Promise<ApprovalRequest | null>;
   exists(approvalRequestId: string): Promise<boolean>;
   listByRun(runId: string): Promise<readonly ApprovalRequest[]>;
+  /**
+   * Direct replacement children only (replacesApprovalRequestId == parent).
+   * Ordered by createdAt ASC, then approvalRequestId ASC.
+   * LINEAGE DISCOVERY != REISSUE — read-only.
+   */
+  listByReplacesApprovalRequestId(
+    replacesApprovalRequestId: string,
+  ): Promise<readonly ApprovalRequest[]>;
   /** Optional full scan for expiry sweeps (in-memory). */
   listAll?(): Promise<readonly ApprovalRequest[]>;
   /**
@@ -101,6 +109,23 @@ export class InMemoryApprovalRequestRepository
     return order
       .map((id) => this.byId.get(id))
       .filter((request): request is ApprovalRequest => Boolean(request));
+  }
+
+  async listByReplacesApprovalRequestId(
+    replacesApprovalRequestId: string,
+  ): Promise<readonly ApprovalRequest[]> {
+    return [...this.byId.values()]
+      .filter(
+        (request) =>
+          request.replacesApprovalRequestId === replacesApprovalRequestId,
+      )
+      .sort((a, b) => {
+        const byCreated = a.createdAt.localeCompare(b.createdAt);
+        if (byCreated !== 0) {
+          return byCreated;
+        }
+        return a.approvalRequestId.localeCompare(b.approvalRequestId);
+      });
   }
 
   async updateStatus(

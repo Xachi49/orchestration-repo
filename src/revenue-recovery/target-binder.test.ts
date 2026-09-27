@@ -305,4 +305,204 @@ describe("RevenueRecoveryTargetBinder", () => {
       binder.resolveCanonicalBinding({ runId, channel: "EMAIL" }),
     ).rejects.toBeInstanceOf(RecoveryTargetBinderError);
   });
+
+  it("generic plan: NO-OP without RecoveryCase repository lookup", async () => {
+    let caseLookups = 0;
+    const repos = createInMemoryRevenueRecoveryRepos();
+    const runs = new InMemoryRunRepository();
+    const objectives = new InMemoryObjectiveRepository();
+    const cases: typeof repos.cases = {
+      getById: async (id) => {
+        caseLookups += 1;
+        return repos.cases.getById(id);
+      },
+      getByGapIdentity: async (key) => {
+        caseLookups += 1;
+        return repos.cases.getByGapIdentity(key);
+      },
+      getByOrchestratorRunId: async (runId) => {
+        caseLookups += 1;
+        return repos.cases.getByOrchestratorRunId(runId);
+      },
+      listOpenByLead: (leadId) => repos.cases.listOpenByLead(leadId),
+      listByProject: (input) => repos.cases.listByProject(input),
+      save: (c) => repos.cases.save(c),
+    };
+    const binder = new RevenueRecoveryTargetBinder({
+      runs,
+      objectives,
+      cases,
+      leads: repos.leads,
+      templates: repos.templates,
+    });
+    const steps = [
+      {
+        stepId: "step_read",
+        actionType: "READ_FILE",
+        description: "Read a file",
+        targetIds: ["file:readme"],
+        evidenceRefs: [],
+        dependsOn: [],
+        preconditions: [],
+        expectedPostconditions: ["read"],
+        resourceEstimate: { durationMs: 1 },
+        risk: { level: "LOW", categories: [] },
+        validationChecks: [],
+        rollbackStrategy: "NONE",
+      },
+    ] as never;
+    const bound = await binder.bindProposalSteps({
+      runId: "run_generic",
+      steps,
+    });
+    expect(bound).toEqual(steps);
+    expect(caseLookups).toBe(0);
+  });
+
+  it("RR plan without RecoveryCase fails closed", async () => {
+    const repos = createInMemoryRevenueRecoveryRepos();
+    const runs = new InMemoryRunRepository();
+    const objectives = new InMemoryObjectiveRepository();
+    const now = "2026-09-14T15:00:00.000Z";
+    const runId = "run_unbound";
+    await runs.create(
+      runFixture({
+        runId,
+        projectId: "proj_a",
+        objectiveId: "obj_generic_not_rr",
+        now,
+      }),
+    );
+    const binder = new RevenueRecoveryTargetBinder({
+      runs,
+      objectives,
+      cases: repos.cases,
+      leads: repos.leads,
+      templates: repos.templates,
+    });
+    await expect(
+      binder.bindProposalSteps({
+        runId,
+        steps: [
+          {
+            stepId: "step_recovery_sms",
+            actionType: "SEND_RECOVERY_SMS",
+            description: "Send recovery SMS",
+            targetIds: [],
+            evidenceRefs: [],
+            dependsOn: [],
+            preconditions: [],
+            expectedPostconditions: ["done"],
+            resourceEstimate: { durationMs: 1 },
+            risk: { level: "MEDIUM", categories: [] },
+            validationChecks: [],
+            rollbackStrategy: "NONE",
+          },
+        ] as never,
+      }),
+    ).rejects.toMatchObject({
+      code: "RECOVERY_CASE_NOT_BOUND",
+    });
+  });
+
+  it("mixed plan: generic steps untouched; RR steps get canonical targets", async () => {
+    const { binder, recoveryCaseId, leadId, runId } = await seed();
+    const bound = await binder.bindProposalSteps({
+      runId,
+      steps: [
+        {
+          stepId: "step_read",
+          actionType: "READ_FILE",
+          description: "Read a file",
+          targetIds: ["file:readme"],
+          evidenceRefs: [],
+          dependsOn: [],
+          preconditions: [],
+          expectedPostconditions: ["read"],
+          resourceEstimate: { durationMs: 1 },
+          risk: { level: "LOW", categories: [] },
+          validationChecks: [],
+          rollbackStrategy: "NONE",
+        },
+        {
+          stepId: "step_recovery_email",
+          actionType: "SEND_RECOVERY_EMAIL",
+          description: "Send recovery email",
+          targetIds: [],
+          evidenceRefs: [],
+          dependsOn: [],
+          preconditions: [],
+          expectedPostconditions: ["done"],
+          resourceEstimate: { durationMs: 1 },
+          risk: { level: "MEDIUM", categories: [] },
+          validationChecks: [],
+          rollbackStrategy: "NONE",
+        },
+      ] as never,
+    });
+    expect(bound[0]?.targetIds).toEqual(["file:readme"]);
+    expect(bound[1]?.targetIds).toEqual([
+      formatRecoveryCaseTarget(recoveryCaseId),
+      formatRecoveryLeadTarget(leadId),
+      formatRecoveryTemplateTarget("rtpl_email_1", 1),
+    ]);
+  });
+
+  it("mixed plan without RecoveryCase still fails closed on RR step", async () => {
+    const repos = createInMemoryRevenueRecoveryRepos();
+    const runs = new InMemoryRunRepository();
+    const objectives = new InMemoryObjectiveRepository();
+    const now = "2026-09-14T15:00:00.000Z";
+    const runId = "run_mixed_unbound";
+    await runs.create(
+      runFixture({
+        runId,
+        projectId: "proj_a",
+        objectiveId: "obj_no_case",
+        now,
+      }),
+    );
+    const binder = new RevenueRecoveryTargetBinder({
+      runs,
+      objectives,
+      cases: repos.cases,
+      leads: repos.leads,
+      templates: repos.templates,
+    });
+    await expect(
+      binder.bindProposalSteps({
+        runId,
+        steps: [
+          {
+            stepId: "step_read",
+            actionType: "READ_FILE",
+            description: "Read",
+            targetIds: ["file:x"],
+            evidenceRefs: [],
+            dependsOn: [],
+            preconditions: [],
+            expectedPostconditions: [],
+            resourceEstimate: { durationMs: 1 },
+            risk: { level: "LOW", categories: [] },
+            validationChecks: [],
+            rollbackStrategy: "NONE",
+          },
+          {
+            stepId: "step_recovery_email",
+            actionType: "SEND_RECOVERY_EMAIL",
+            description: "Send",
+            targetIds: [],
+            evidenceRefs: [],
+            dependsOn: [],
+            preconditions: [],
+            expectedPostconditions: [],
+            resourceEstimate: { durationMs: 1 },
+            risk: { level: "MEDIUM", categories: [] },
+            validationChecks: [],
+            rollbackStrategy: "NONE",
+          },
+        ] as never,
+      }),
+    ).rejects.toMatchObject({ code: "RECOVERY_CASE_NOT_BOUND" });
+  });
 });

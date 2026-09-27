@@ -10,7 +10,10 @@
 
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
 import type { RunRepository } from "../admission/run-repository.js";
-import { isRecoveryPhase7ActionType } from "../execution/action-schemas.js";
+import {
+  hasRecoveryPhase7Actions,
+  isRecoveryPhase7ActionType,
+} from "../execution/action-schemas.js";
 import type { PlanProposal } from "../planning/proposal.js";
 import {
   formatRecoveryCaseTarget,
@@ -158,15 +161,17 @@ export class RevenueRecoveryTargetBinder {
 
   /**
    * Bind proposal steps: fill missing recovery targets; reject model conflicts.
+   *
+   * Activation is driven solely by {@link hasRecoveryPhase7Actions}.
+   * Zero RR actions → deterministic NO-OP (no RecoveryCase repository lookup).
+   * ≥1 RR action → canonical bind; missing/inconsistent case fails closed.
    */
   async bindProposalSteps(input: {
     runId: string;
     steps: PlanProposal["steps"];
   }): Promise<PlanProposal["steps"]> {
-    const hasRecovery = input.steps.some((s) =>
-      isRecoveryPhase7ActionType(s.actionType),
-    );
-    if (!hasRecovery) {
+    // Skip decision MUST precede any RecoveryCase lookup.
+    if (!hasRecoveryPhase7Actions(input.steps)) {
       return input.steps;
     }
 

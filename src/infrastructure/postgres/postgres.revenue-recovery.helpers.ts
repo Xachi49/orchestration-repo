@@ -6,6 +6,7 @@
  * Do not truncate, drop, or globally clean the database.
  */
 import { EXAMPLE_ENVIRONMENT, EXAMPLE_PROJECT } from "../../control-plane/fixtures.js";
+import type { AdmissionRequest } from "../../admission/request.js";
 import type { RecoveryConfigurationInput } from "../../revenue-recovery/recovery-config.js";
 import type { LeadIngestInput } from "../../revenue-recovery/lead.js";
 import type { PlanningModel } from "../../planning/model.js";
@@ -32,6 +33,7 @@ import {
 } from "./stack.js";
 import type { PostgresDatabase } from "./database.js";
 import { PostgresProjectRegistry } from "./repositories/control-plane.js";
+import { PostgresRecoveryCaseRepository } from "./repositories/revenue-recovery.js";
 
 /** Legacy demo constants — unit tests only. Prefer uniqueIds() for Postgres. */
 export const RR_CUSTOMER = "continuum_demo_tenant";
@@ -266,16 +268,89 @@ export async function createRrPostgresEnv(input: {
   };
 }
 
+/**
+ * Canonical RR objective id so RevenueRecoveryTargetBinder can resolve the case
+ * when planning proposes SEND_RECOVERY_* / CREATE_CALLBACK_TASK.
+ */
+export function rrObjectiveId(recoveryCaseId: string): string {
+  return `obj_rr_${recoveryCaseId}`;
+}
+
 export function rrAdmissionRequest(input: {
   label: string;
   projectId: string;
   recoveryCaseId: string;
-}) {
-  return buildPostgresTestAdmissionRequest({
-    testName: `rr-${input.label}`,
-    uniqueSuffix: uniquePostgresTestId("obj"),
-    projectId: input.projectId,
+}): AdmissionRequest {
+  return {
+    ...buildPostgresTestAdmissionRequest({
+      testName: `rr-${input.label}`,
+      uniqueSuffix: uniquePostgresTestId("obj"),
+      projectId: input.projectId,
+    }),
+    objectiveId: rrObjectiveId(input.recoveryCaseId),
+  };
+}
+
+/**
+ * Admit → bind RecoveryCase.orchestratorRunId → ingest → plan → validate → route.
+ *
+ * Binding must happen before plan(): RR planning models propose recovery actions,
+ * which activates RevenueRecoveryTargetBinder. Without a bound case the binder
+ * fail-closes (correctly) with RECOVERY_CASE_NOT_BOUND.
+ */
+export async function advanceBoundRecoveryToAwaitingApproval(
+  env: RrPostgresEnv,
+  request: AdmissionRequest,
+  recoveryCaseId: string,
+): Promise<{ runId: string; approvalRequestId: string; request: AdmissionRequest }> {
+  const objectiveId = rrObjectiveId(recoveryCaseId);
+  const canonicalRequest: AdmissionRequest = {
+    ...request,
+    objectiveId,
+  };
+
+  const admitted = await env.stack.admission.admit(canonicalRequest);
+  if (admitted.outcome !== "ADMITTED" || !admitted.runId) {
+    const detail =
+      admitted.outcome === "CONFLICT" || admitted.outcome === "REJECTED"
+        ? ` reasonCode=${admitted.reasonCode} message=${admitted.message}`
+        : "";
+    throw new Error(
+      `expected ADMITTED for recovery case ${recoveryCaseId}, got ${admitted.outcome}${detail}`,
+    );
+  }
+  const runId = admitted.runId;
+
+  const cases = new PostgresRecoveryCaseRepository(env.db);
+  const existing = await cases.getById(recoveryCaseId);
+  if (!existing) {
+    throw new Error(`RecoveryCase ${recoveryCaseId} missing before plan binding`);
+  }
+  await cases.save({
+    ...existing,
+    status: "IN_ORCHESTRATION",
+    objectiveId,
+    orchestratorRunId: runId,
+    updatedAt: env.clock.nowIso(),
+    recordRevision: existing.recordRevision + 1,
   });
+
+  await env.stack.ingestion.ingest(
+    runId,
+    canonicalRequest.projectId,
+    EXAMPLE_ENVIRONMENT,
+  );
+  await env.stack.planning.plan(runId);
+  await env.stack.validation.validate(runId);
+  const routed = await env.stack.authorizationRouting.route(runId);
+  if (routed.outcome !== "PENDING_APPROVAL") {
+    throw new Error(`expected PENDING_APPROVAL, got ${routed.outcome}`);
+  }
+  return {
+    runId,
+    approvalRequestId: routed.approvalRequestId,
+    request: canonicalRequest,
+  };
 }
 
 export {

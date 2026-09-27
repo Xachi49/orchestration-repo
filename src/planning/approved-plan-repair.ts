@@ -28,7 +28,7 @@ import type {
   ExecutionCoordinator,
   ExecutionFenceKey,
 } from "../execution/coordinator.js";
-import { isRecoveryPhase7ActionType } from "../execution/action-schemas.js";
+import { hasRecoveryPhase7Actions } from "../execution/action-schemas.js";
 import {
   validateRecoveryStepsTargetGrammar,
 } from "../revenue-recovery/target-grammar.js";
@@ -560,10 +560,7 @@ export class ApprovedPlanRepairService {
       );
     }
 
-    const recoverySteps = input.sourcePlan.plan.steps.filter((s) =>
-      isRecoveryPhase7ActionType(s.actionType),
-    );
-    if (recoverySteps.length === 0) {
+    if (!hasRecoveryPhase7Actions(input.sourcePlan.plan.steps)) {
       throw new ApprovedPlanRepairError(
         "REPAIR_NOT_ELIGIBLE",
         "Plan has no Revenue Recovery steps to repair",

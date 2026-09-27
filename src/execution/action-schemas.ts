@@ -117,3 +117,13 @@ export function isRecoveryPhase7ActionType(
     value === "CREATE_CALLBACK_TASK"
   );
 }
+
+/**
+ * Deterministic activation predicate for Revenue Recovery target binding.
+ * Driven by Phase7 action ownership — never by RecoveryCase presence/absence.
+ */
+export function hasRecoveryPhase7Actions(
+  steps: readonly { readonly actionType: string }[],
+): boolean {
+  return steps.some((s) => isRecoveryPhase7ActionType(s.actionType));
+}

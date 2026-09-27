@@ -34,7 +34,7 @@ import { PlanResourceAnalyzer } from "../planning/resource-analyzer.js";
 import { PlanQualityScorer } from "../planning/quality-scorer.js";
 import { PlanCompiler, type PlanIdentityGenerator } from "../planning/plan-compiler.js";
 import { assertExecutionPlanRecoveryTargets } from "../planning/recovery-plan-gate.js";
-import { isRecoveryPhase7ActionType } from "../execution/action-schemas.js";
+import { hasRecoveryPhase7Actions } from "../execution/action-schemas.js";
 import {
   isRecoveryTargetBinderError,
 } from "../revenue-recovery/target-binder.js";
@@ -1104,10 +1104,8 @@ export class ValidationService {
     runId: string,
     proposal: PlanProposal,
   ): Promise<PlanProposal> {
-    const hasRecovery = proposal.steps.some((s) =>
-      isRecoveryPhase7ActionType(s.actionType),
-    );
-    if (!hasRecovery) {
+    // Activation before any RecoveryCase lookup — generic plans are a NO-OP.
+    if (!hasRecoveryPhase7Actions(proposal.steps)) {
       return proposal;
     }
     if (!this.recoveryTargetBinder) {

@@ -37,6 +37,8 @@ export interface LeadEventRepository {
 export interface RecoveryCaseRepository {
   getById(recoveryCaseId: string): Promise<RecoveryCase | null>;
   getByGapIdentity(gapIdentityKey: string): Promise<RecoveryCase | null>;
+  /** Prefer persisted orchestrator run binding when present. */
+  getByOrchestratorRunId(runId: string): Promise<RecoveryCase | null>;
   listOpenByLead(leadId: string): Promise<readonly RecoveryCase[]>;
   listByProject(input: {
     customerAccountId: string;

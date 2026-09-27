@@ -14,13 +14,9 @@ import {
 import type { RecoveryPilotConfig } from "../../revenue-recovery/pilot-config.js";
 import { RECOVERY_EMAIL_POSTCONDITION } from "../../revenue-recovery/recovery-email-planning-model.js";
 import {
-  advanceToAwaitingApproval,
-  approveAwaitingRun,
-} from "./postgres-lifecycle-helpers.js";
-import { uniquePostgresTestId } from "./test-helpers.js";
-import {
   RR_LEAD_CREATED_AT,
   RR_MONDAY_IN_WINDOW,
+  advanceBoundRecoveryToAwaitingApproval,
   createRrPostgresEnv,
   rrAdmissionRequest,
   rrConfigFor,
@@ -28,6 +24,8 @@ import {
   type RrPostgresEnv,
   type RrUniqueIds,
 } from "./postgres.revenue-recovery.helpers.js";
+import { approveAwaitingRun } from "./postgres-lifecycle-helpers.js";
+import { uniquePostgresTestId } from "./test-helpers.js";
 
 const WEB_SECRET = "pg-live-pilot-web-secret";
 const PILOT_EMAIL = "pilot@example.com";
@@ -164,8 +162,12 @@ async function routeEmailRun(
   recoveryCaseId: string,
 ) {
   const request = emailAdmissionRequest(env, label, recoveryCaseId);
-  const awaiting = await advanceToAwaitingApproval(env.stack, request);
-  return { request, ...awaiting };
+  const awaiting = await advanceBoundRecoveryToAwaitingApproval(
+    env,
+    request,
+    recoveryCaseId,
+  );
+  return { request: awaiting.request, ...awaiting };
 }
 
 describe("Revenue Recovery live-pilot PostgreSQL acceptance", () => {

@@ -27,7 +27,16 @@ import type { GitHubAuthMode } from "../ingestion/github-readonly.js";
 import {
   PlanningReadinessService,
   PlanningService,
+  ApprovedPlanRepairService,
+  InMemoryApprovedPlanRepairCoordinator,
 } from "../../planning/index.js";
+import { RevenueRecoveryTargetBinder } from "../../revenue-recovery/target-binder.js";
+import {
+  PostgresLeadRepository,
+  PostgresRecoveryAttemptRepository,
+  PostgresRecoveryCaseRepository,
+  PostgresRecoveryTemplateRepository,
+} from "./repositories/revenue-recovery.js";
 import {
   PlanningModelRevisionAdapter,
   ValidationReadinessService,
@@ -477,6 +486,8 @@ export interface PostgresOrchestratorStack {
   /** Messaging provider attached to revenueRecoveryService (Fake / Shadow / Resend). */
   revenueRecoveryMessaging: import("../../revenue-recovery/messaging.js").RecoveryMessagingProvider;
   revenueRecoveryPilotConfig: import("../../revenue-recovery/pilot-config.js").RecoveryPilotConfig;
+  approvedPlanRepair: import("../../planning/approved-plan-repair.js").ApprovedPlanRepairService;
+  recoveryTargetBinder: import("../../revenue-recovery/target-binder.js").RevenueRecoveryTargetBinder;
   qualificationService: QualificationOrchestrationService;
   referenceRuntimeManifest: ReferenceRuntimeManifest;
   canonicalAuthority: import("../../governance/canonical-authority.js").CanonicalAuthorityGrantPort;
@@ -1860,6 +1871,41 @@ export async function createPostgresOrchestratorStack(options: {
     new RevenueRecoveryPhase7Actuator(revenueRecoveryService),
   );
 
+  const recoveryTargetBinder = new RevenueRecoveryTargetBinder({
+    runs,
+    objectives,
+    cases: new PostgresRecoveryCaseRepository(db),
+    leads: new PostgresLeadRepository(db),
+    templates: new PostgresRecoveryTemplateRepository(db),
+  });
+  planning.bindRecoveryTargetBinder(recoveryTargetBinder);
+  validation.bindRecoveryTargetBinder(recoveryTargetBinder);
+
+  const approvedPlanRepairCoordinator =
+    new InMemoryApprovedPlanRepairCoordinator();
+  const approvedPlanRepair = new ApprovedPlanRepairService({
+    runs,
+    plans,
+    authorizationRecords,
+    approvalRequests,
+    executionAttempts,
+    executionCoordinator,
+    recoveryAttempts: new PostgresRecoveryAttemptRepository(db),
+    recoveryTargetBinder,
+    coordinator: approvedPlanRepairCoordinator,
+    clock,
+    events,
+    identities: new UuidPlanIdentityGenerator(),
+    withLock: async (runId, fn) =>
+      db.withTransaction(async () => {
+        await db.query(
+          `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+          [`approved-plan-repair:${runId}`],
+        );
+        return fn();
+      }),
+  });
+
   const qualificationRuns = new PostgresProductionQualificationRunRepository(db);
   const qualificationEvidence = new PostgresQualificationEvidenceRepository(db);
   const releaseQualificationRecords =
@@ -2026,6 +2072,8 @@ export async function createPostgresOrchestratorStack(options: {
     revenueRecoveryService,
     revenueRecoveryMessaging,
     revenueRecoveryPilotConfig,
+    approvedPlanRepair,
+    recoveryTargetBinder,
     qualificationService,
     referenceRuntimeManifest,
     canonicalAuthority: governanceCanonicalAuthority,

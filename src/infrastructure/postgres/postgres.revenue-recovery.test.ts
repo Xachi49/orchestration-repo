@@ -20,16 +20,12 @@ import type { RecoveryConfigurationInput } from "../../revenue-recovery/recovery
 import { computeRecoveryRecordHash } from "../../revenue-recovery/recovery-record.js";
 import { RECOVERY_SMS_POSTCONDITION } from "../../revenue-recovery/recovery-sms-planning-model.js";
 import {
-  advanceToAwaitingApproval,
-  approveAwaitingRun,
-} from "./postgres-lifecycle-helpers.js";
-import { uniquePostgresTestId } from "./test-helpers.js";
-import {
   EXAMPLE_ENVIRONMENT,
   PRODUCT_POSTGRES_SCENARIOS,
   RR_LEAD_CREATED_AT,
   RR_MONDAY_IN_WINDOW,
   RR_SATURDAY_OUTSIDE_WINDOW,
+  advanceBoundRecoveryToAwaitingApproval,
   createRrPostgresEnv,
   rrAdmissionRequest,
   rrConfigFor,
@@ -37,6 +33,8 @@ import {
   uniqueRrIds,
   type RrPostgresEnv,
 } from "./postgres.revenue-recovery.helpers.js";
+import { approveAwaitingRun } from "./postgres-lifecycle-helpers.js";
+import { uniquePostgresTestId } from "./test-helpers.js";
 
 const RAW_LEAD_PHONE = "+15551234567";
 const RAW_LEAD_EMAIL = "alex@example.com";
@@ -124,15 +122,19 @@ function recoveryAdmissionRequest(
   };
 }
 
-/** Phase2 → Phase5: routed to AWAITING_APPROVAL with no AuthorizationRecord. */
+/** Phase2 → Phase5: bound RecoveryCase → AWAITING_APPROVAL with no AuthorizationRecord. */
 async function routeRecoveryRun(
   env: RrPostgresEnv,
   label: string,
   recoveryCaseId: string,
 ) {
   const request = recoveryAdmissionRequest(env, label, recoveryCaseId);
-  const awaiting = await advanceToAwaitingApproval(env.stack, request);
-  return { request, ...awaiting };
+  const awaiting = await advanceBoundRecoveryToAwaitingApproval(
+    env,
+    request,
+    recoveryCaseId,
+  );
+  return { request: awaiting.request, ...awaiting };
 }
 
 /** Phase2 → Phase6 → Phase7 for one bounded outreach step. */

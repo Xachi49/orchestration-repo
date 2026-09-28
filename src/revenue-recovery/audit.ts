@@ -24,6 +24,7 @@ export const PRODUCT_AUDIT_EVENT_KINDS = [
   "LIVE_EMAIL_COMPLAINED",
   "LIVE_EMAIL_SUPPRESSED",
   "INBOUND_REPLY_CORRELATED",
+  "RECOVERY_TEMPLATE_PROVISIONED",
 ] as const;
 
 export type ProductAuditEventKind = (typeof PRODUCT_AUDIT_EVENT_KINDS)[number];
@@ -50,6 +51,8 @@ export function newAuditEventId(input: {
   occurredAt: string;
   recoveryCaseId?: string;
   leadId?: string;
+  /** Distinguishes case-less events (e.g. `templateId@version`). */
+  subjectRef?: string;
 }): string {
   return `raud_${hashCanonical(input).slice(0, 24)}`;
 }

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   isRevenueRecoveryError,
@@ -7,6 +7,7 @@ import {
   RecoveryConfigurationInputSchema,
   type RevenueRecoveryService,
 } from "../revenue-recovery/index.js";
+import type { ProjectAccessDirectory } from "../runtime/access.js";
 
 function httpStatus(code: string): number {
   switch (code) {
@@ -14,7 +15,15 @@ function httpStatus(code: string): number {
     case "RECOVERY_CASE_NOT_FOUND":
     case "TEMPLATE_NOT_FOUND":
     case "RECOVERY_CONFIG_MISSING":
+    case "PROJECT_NOT_FOUND":
       return 404;
+    case "RECOVERY_TEMPLATE_IDENTITY_CONFLICT":
+    case "RECOVERY_TEMPLATE_VERSION_CONFLICT":
+      return 409;
+    case "TEMPLATE_VARIABLE_UNSUPPORTED":
+      return 422;
+    case "TEMPLATE_PROVISIONING_UNAVAILABLE":
+      return 503;
     case "TENANT_ISOLATION_VIOLATION":
     case "CONTACT_NOT_PERMITTED":
     case "CONTACT_WINDOW_CLOSED":
@@ -61,11 +70,66 @@ function forbiddenBodyKey(body: unknown): string | null {
   );
 }
 
+const TemplateScopeQuerySchema = z
+  .object({
+    customerAccountId: z.string().min(1),
+    projectId: z.string().min(1),
+    channel: z.enum(["SMS", "EMAIL"]).optional(),
+  })
+  .strict();
+
+const TemplateVersionParamsSchema = z
+  .object({
+    templateId: z.string().min(1),
+    version: z.coerce.number().int().positive(),
+  })
+  .strict();
+
+function principalOf(request: FastifyRequest): string | undefined {
+  return (request as { orchestratorPrincipalId?: string }).orchestratorPrincipalId;
+}
+
 export function registerRevenueRecoveryRoutes(
   app: FastifyInstance,
-  deps: { revenueRecovery: RevenueRecoveryService },
+  deps: {
+    revenueRecovery: RevenueRecoveryService;
+    /** Perimeter project access; present whenever the authenticated perimeter is composed. */
+    access?: ProjectAccessDirectory;
+  },
 ): void {
   const service = deps.revenueRecovery;
+
+  /**
+   * CUSTOMER ACCOUNT != PROJECT AUTHORITY. Query-string projectIds are not seen
+   * by the perimeter, so template routes re-check project access here.
+   */
+  function denyProjectAccess(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    projectId: string,
+  ): boolean {
+    if (!deps.access) return false;
+    const principalId = principalOf(request);
+    if (!principalId || !deps.access.canAccessProject(principalId, projectId)) {
+      void reply.code(403).send({
+        error: "PROJECT_ACCESS_DENIED",
+        message: "Caller is not bound to this project",
+      });
+      return true;
+    }
+    return false;
+  }
+
+  function sendRecoveryError(reply: FastifyReply, error: unknown) {
+    if (isRevenueRecoveryError(error)) {
+      return reply.code(httpStatus(error.code)).send({
+        error: error.code,
+        message: error.message,
+        ...(error.details ? { details: error.details } : {}),
+      });
+    }
+    throw error;
+  }
 
   app.addHook("preValidation", async (request, reply) => {
     if (!request.url.startsWith("/v1/revenue-recovery/")) return;
@@ -239,6 +303,82 @@ export function registerRevenueRecoveryRoutes(
           });
         }
         throw error;
+      }
+    },
+  );
+
+  // TEMPLATE PROVISIONED != OUTREACH AUTHORIZED. Creates one immutable version;
+  // never sends, never approves, never touches consent or provider mode.
+  app.post("/v1/revenue-recovery/templates", async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const projectId = body["projectId"];
+    if (typeof projectId === "string" && denyProjectAccess(request, reply, projectId)) {
+      return reply;
+    }
+    try {
+      const principalId = principalOf(request);
+      const result = await service.provisionTemplate(
+        request.body,
+        principalId !== undefined ? { principalId } : {},
+      );
+      return reply
+        .code(result.outcome === "CREATED" ? 201 : 200)
+        .send(result);
+    } catch (error) {
+      return sendRecoveryError(reply, error);
+    }
+  });
+
+  app.get("/v1/revenue-recovery/templates", async (request, reply) => {
+    const query = TemplateScopeQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return reply.code(400).send({
+        error: "INVALID_TEMPLATE_QUERY",
+        message: "customerAccountId and projectId are required; channel must be SMS or EMAIL",
+      });
+    }
+    if (denyProjectAccess(request, reply, query.data.projectId)) {
+      return reply;
+    }
+    const { customerAccountId, projectId, channel } = query.data;
+    const templates = await service.listTemplates({
+      customerAccountId,
+      projectId,
+      ...(channel ? { channel } : {}),
+    });
+    return reply.send({
+      customerAccountId,
+      projectId,
+      channel: channel ?? null,
+      templates,
+    });
+  });
+
+  app.get(
+    "/v1/revenue-recovery/templates/:templateId/versions/:version",
+    async (request, reply) => {
+      const params = TemplateVersionParamsSchema.safeParse(request.params);
+      const query = TemplateScopeQuerySchema.omit({ channel: true }).safeParse(
+        request.query,
+      );
+      if (!params.success || !query.success) {
+        return reply.code(400).send({
+          error: "INVALID_TEMPLATE_QUERY",
+          message:
+            "templateId, positive integer version, customerAccountId, and projectId are required",
+        });
+      }
+      if (denyProjectAccess(request, reply, query.data.projectId)) {
+        return reply;
+      }
+      try {
+        const template = await service.getTemplate({
+          ...params.data,
+          ...query.data,
+        });
+        return reply.send({ template });
+      } catch (error) {
+        return sendRecoveryError(reply, error);
       }
     },
   );

@@ -321,8 +321,35 @@ export class InMemoryRecoveryTemplateRepository
     );
   }
 
+  async listByScope(input: {
+    customerAccountId: string;
+    projectId: string;
+    channel?: "SMS" | "EMAIL";
+  }): Promise<readonly RecoveryMessageTemplate[]> {
+    return this.rows.filter(
+      (t) =>
+        t.customerAccountId === input.customerAccountId &&
+        t.projectId === input.projectId &&
+        (input.channel === undefined || t.channel === input.channel),
+    );
+  }
+
+  async listByTemplateId(
+    templateId: string,
+  ): Promise<readonly RecoveryMessageTemplate[]> {
+    return this.rows.filter((t) => t.templateId === templateId);
+  }
+
   async save(template: RecoveryMessageTemplate): Promise<void> {
-    this.rows.push(parseRecoveryMessageTemplate(template));
+    const parsed = parseRecoveryMessageTemplate(template);
+    if (
+      this.rows.some(
+        (t) => t.templateId === parsed.templateId && t.version === parsed.version,
+      )
+    ) {
+      return;
+    }
+    this.rows.push(parsed);
   }
 }
 

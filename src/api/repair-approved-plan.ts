@@ -89,10 +89,15 @@ export function registerApprovedPlanRepairRoutes(
       return reply.status(200).send(result);
     } catch (error) {
       if (isApprovedPlanRepairError(error)) {
+        // Binder details carry tenant/lead identifiers; expose only the binder code.
+        const details =
+          error.code === "REPAIR_BINDING_FAILED"
+            ? { binderCode: error.details["binderCode"] ?? null }
+            : error.details;
         return reply.status(httpStatusForApprovedPlanRepair(error.code)).send({
           error: error.code,
           message: error.message,
-          details: error.details,
+          details,
         });
       }
       throw error;

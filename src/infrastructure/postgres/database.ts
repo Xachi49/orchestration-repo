@@ -12,7 +12,7 @@ import { MAX_TRANSACTION_RETRIES } from "../../domain/durability/index.js";
 import { currentClient, runWithClient } from "./session.js";
 import { redactUnknown } from "./redact.js";
 
-function isNormalizedApplicationError(error: unknown): boolean {
+export function isNormalizedApplicationError(error: unknown): boolean {
   if (error instanceof DurabilityError) {
     return true;
   }
@@ -27,7 +27,9 @@ function isNormalizedApplicationError(error: unknown): boolean {
     (error instanceof Error &&
       (error.name === "SchedulingError" ||
         error.name === "AdmissionError" ||
-        error.name === "ControlPlaneProvisionError"))
+        error.name === "ControlPlaneProvisionError" ||
+        error.name === "ApprovedPlanRepairError" ||
+        error.name === "RevenueRecoveryError"))
   );
 }
 

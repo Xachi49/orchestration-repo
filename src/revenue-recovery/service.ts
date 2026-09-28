@@ -71,9 +71,15 @@ import {
 } from "./recovery-record.js";
 import {
   newTemplateId,
+  parseRecoveryMessageTemplate,
+  RecoveryTemplateProvisionInputSchema,
   renderTemplate,
+  sameImmutableTemplateContent,
+  validateTemplatePlaceholders,
   type RecoveryMessageTemplate,
+  type SupportedRecoveryTemplateVariable,
 } from "./recovery-template.js";
+import type { ProjectRegistry } from "../control-plane/projects/registry.js";
 import { newAuditEventId, type ProductAuditEvent } from "./audit.js";
 import type { RecoveryMessagingProvider } from "./messaging.js";
 import type {
@@ -124,7 +130,28 @@ export type RevenueRecoveryServiceDeps = {
   /** Live pilot config (modes, tenant gate). Defaults to FAKE when omitted. */
   pilotConfig?: RecoveryPilotConfig;
   providerEvents?: RecoveryProviderEventRepository;
+  /** Control-plane project registry. Template provisioning fails closed without it. */
+  projects?: ProjectRegistry;
+  /** Serializes template provisioning per tenant/project/channel (e.g. advisory lock). */
+  withTemplateScopeLock?: <T>(scopeKey: string, fn: () => Promise<T>) => Promise<T>;
 };
+
+export type RecoveryTemplateProvisionResult = {
+  outcome: "CREATED" | "ALREADY_EXISTS";
+  template: RecoveryMessageTemplate;
+};
+
+function sortTemplates(
+  rows: readonly RecoveryMessageTemplate[],
+): RecoveryMessageTemplate[] {
+  return [...rows].sort((a, b) =>
+    a.templateId === b.templateId
+      ? a.version - b.version
+      : a.templateId < b.templateId
+        ? -1
+        : 1,
+  );
+}
 
 /**
  * Operational recovery-engine lead events (LEAD_CREATED, OUTBOUND_ATTEMPT) are
@@ -201,6 +228,249 @@ export class RevenueRecoveryService {
       createdAt: this.deps.nowIso(),
     };
     await this.deps.templates.save(template);
+    return template;
+  }
+
+  /**
+   * Governed creation of one immutable template version.
+   *
+   * TEMPLATE PROVISIONED != OUTREACH AUTHORIZED. TEMPLATE ENABLED != CONTACT PERMITTED.
+   * Never sends, never creates attempts/approvals/authorization, never touches consent.
+   * At most one distinct enabled templateId per (customerAccountId, projectId, channel).
+   */
+  async provisionTemplate(
+    raw: unknown,
+    context: { principalId?: string } = {},
+  ): Promise<RecoveryTemplateProvisionResult> {
+    const parsed = RecoveryTemplateProvisionInputSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new RevenueRecoveryError(
+        "TEMPLATE_INVALID",
+        "Template provisioning request is invalid",
+        {
+          fields: [
+            ...new Set(parsed.error.issues.map((i) => i.path.join(".") || "(root)")),
+          ],
+        },
+      );
+    }
+    const input = parsed.data;
+
+    const placeholders = validateTemplatePlaceholders(input);
+    if (!placeholders.ok) {
+      throw new RevenueRecoveryError(
+        placeholders.reason === "UNSUPPORTED_VARIABLE" ||
+          placeholders.reason === "UNDECLARED_PLACEHOLDER"
+          ? "TEMPLATE_VARIABLE_UNSUPPORTED"
+          : "TEMPLATE_INVALID",
+        `Template placeholders rejected: ${placeholders.reason}`,
+        { reason: placeholders.reason, variables: [...placeholders.variables] },
+      );
+    }
+
+    if (!this.deps.projects) {
+      throw new RevenueRecoveryError(
+        "TEMPLATE_PROVISIONING_UNAVAILABLE",
+        "Template provisioning requires the control-plane project registry",
+      );
+    }
+    if (!(await this.deps.projects.exists(input.projectId))) {
+      throw new RevenueRecoveryError(
+        "PROJECT_NOT_FOUND",
+        "Project is not registered in the control plane",
+        { projectId: input.projectId },
+      );
+    }
+    const config = await this.deps.configs.getLatest({
+      customerAccountId: input.customerAccountId,
+      projectId: input.projectId,
+    });
+    if (!config) {
+      throw new RevenueRecoveryError(
+        "RECOVERY_CONFIG_MISSING",
+        "No recovery configuration for this customer account and project",
+      );
+    }
+
+    const scopeKey = `rr-template:${input.customerAccountId}:${input.projectId}:${input.channel}`;
+    const run = () => this.provisionTemplateInScope(input, context);
+    return this.deps.withTemplateScopeLock
+      ? this.deps.withTemplateScopeLock(scopeKey, run)
+      : run();
+  }
+
+  private async provisionTemplateInScope(
+    input: Omit<RecoveryMessageTemplate, "createdAt">,
+    context: { principalId?: string },
+  ): Promise<RecoveryTemplateProvisionResult> {
+    const candidate: Omit<RecoveryMessageTemplate, "createdAt"> = {
+      templateId: input.templateId,
+      version: input.version,
+      customerAccountId: input.customerAccountId,
+      projectId: input.projectId,
+      channel: input.channel,
+      body: input.body,
+      allowedVariables: [...input.allowedVariables],
+      enabled: input.enabled,
+    };
+
+    const existing = await this.deps.templates.get({
+      templateId: candidate.templateId,
+      version: candidate.version,
+    });
+    if (existing) {
+      if (sameImmutableTemplateContent(existing, candidate)) {
+        return { outcome: "ALREADY_EXISTS", template: existing };
+      }
+      if (
+        existing.customerAccountId !== candidate.customerAccountId ||
+        existing.projectId !== candidate.projectId ||
+        existing.channel !== candidate.channel
+      ) {
+        throw new RevenueRecoveryError(
+          "RECOVERY_TEMPLATE_IDENTITY_CONFLICT",
+          "templateId is already bound to a different customer account, project, or channel",
+          { templateId: candidate.templateId },
+        );
+      }
+      throw new RevenueRecoveryError(
+        "RECOVERY_TEMPLATE_VERSION_CONFLICT",
+        "Template version already exists with different immutable content",
+        { templateId: candidate.templateId, version: candidate.version },
+      );
+    }
+
+    const identityRows = await this.deps.templates.listByTemplateId(
+      candidate.templateId,
+    );
+    if (
+      identityRows.some(
+        (r) =>
+          r.customerAccountId !== candidate.customerAccountId ||
+          r.projectId !== candidate.projectId ||
+          r.channel !== candidate.channel,
+      )
+    ) {
+      throw new RevenueRecoveryError(
+        "RECOVERY_TEMPLATE_IDENTITY_CONFLICT",
+        "templateId is already bound to a different customer account, project, or channel",
+        { templateId: candidate.templateId },
+      );
+    }
+    const expectedVersion =
+      identityRows.reduce((max, r) => Math.max(max, r.version), 0) + 1;
+    if (candidate.version !== expectedVersion) {
+      throw new RevenueRecoveryError(
+        "RECOVERY_TEMPLATE_VERSION_CONFLICT",
+        `Next version for ${candidate.templateId} must be ${expectedVersion}`,
+        {
+          templateId: candidate.templateId,
+          version: candidate.version,
+          expectedVersion,
+        },
+      );
+    }
+
+    const scopeRows = await this.deps.templates.listByScope({
+      customerAccountId: candidate.customerAccountId,
+      projectId: candidate.projectId,
+      channel: candidate.channel,
+    });
+    const otherEnabledIds = [
+      ...new Set(
+        scopeRows
+          .filter((r) => r.enabled && r.templateId !== candidate.templateId)
+          .map((r) => r.templateId),
+      ),
+    ].sort();
+    if (candidate.enabled && otherEnabledIds.length > 0) {
+      throw new RevenueRecoveryError(
+        "RECOVERY_TEMPLATE_IDENTITY_CONFLICT",
+        "Another enabled template identity already exists for this customer account, project, and channel",
+        { templateId: candidate.templateId, enabledTemplateIds: otherEnabledIds },
+      );
+    }
+
+    const template = parseRecoveryMessageTemplate({
+      ...candidate,
+      createdAt: this.deps.nowIso(),
+    });
+    await this.deps.templates.save(template);
+
+    // Write-once storage ignores an existing key: prove the canonical row is ours.
+    const persisted = await this.deps.templates.get({
+      templateId: template.templateId,
+      version: template.version,
+    });
+    if (!persisted) {
+      throw new RevenueRecoveryError(
+        "RECOVERY_STATE_CONFLICT",
+        "Template version was not persisted",
+        { templateId: template.templateId, version: template.version },
+      );
+    }
+    if (!sameImmutableTemplateContent(persisted, candidate)) {
+      throw new RevenueRecoveryError(
+        "RECOVERY_TEMPLATE_VERSION_CONFLICT",
+        "A concurrent write persisted different content for this template version",
+        { templateId: template.templateId, version: template.version },
+      );
+    }
+
+    const occurredAt = this.deps.nowIso();
+    await this.deps.audits.append({
+      eventId: newAuditEventId({
+        kind: "RECOVERY_TEMPLATE_PROVISIONED",
+        occurredAt,
+        subjectRef: `${persisted.templateId}@${persisted.version}`,
+      }),
+      kind: "RECOVERY_TEMPLATE_PROVISIONED",
+      customerAccountId: persisted.customerAccountId,
+      projectId: persisted.projectId,
+      occurredAt,
+      payload: {
+        templateId: persisted.templateId,
+        version: persisted.version,
+        channel: persisted.channel,
+        enabled: persisted.enabled,
+        principalId: context.principalId ?? null,
+      },
+    });
+
+    return { outcome: "CREATED", template: persisted };
+  }
+
+  /** Read-only, deterministic order: templateId, then version. */
+  async listTemplates(input: {
+    customerAccountId: string;
+    projectId: string;
+    channel?: "SMS" | "EMAIL";
+  }): Promise<RecoveryMessageTemplate[]> {
+    const rows = await this.deps.templates.listByScope(input);
+    return sortTemplates(rows);
+  }
+
+  /** Read-only exact lookup, scoped: a template in another tenant/project is not found. */
+  async getTemplate(input: {
+    templateId: string;
+    version: number;
+    customerAccountId: string;
+    projectId: string;
+  }): Promise<RecoveryMessageTemplate> {
+    const template = await this.deps.templates.get({
+      templateId: input.templateId,
+      version: input.version,
+    });
+    if (
+      !template ||
+      template.customerAccountId !== input.customerAccountId ||
+      template.projectId !== input.projectId
+    ) {
+      throw new RevenueRecoveryError(
+        "TEMPLATE_NOT_FOUND",
+        `Unknown template ${input.templateId}@${input.version}`,
+      );
+    }
     return template;
   }
 
@@ -684,7 +954,7 @@ export class RevenueRecoveryService {
     }
 
     const now = this.deps.nowIso();
-    const templateValues: Record<string, string> = {
+    const templateValues: Record<SupportedRecoveryTemplateVariable, string> = {
       firstName: lead.firstName ?? "",
       lastName: lead.lastName ?? "",
       businessName: config.businessName,

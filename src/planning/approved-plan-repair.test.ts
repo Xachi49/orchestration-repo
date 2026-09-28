@@ -17,6 +17,7 @@ import {
 } from "../planning/approved-plan-repair.js";
 import { RevenueRecoveryTargetBinder } from "../revenue-recovery/target-binder.js";
 import { createMemoryRevenueRecoveryService } from "../api/revenue-recovery-factory.js";
+import { InMemoryRecoveryTemplateRepository } from "../revenue-recovery/memory-repositories.js";
 import {
   demoLead,
   demoRecoveryConfig,
@@ -595,6 +596,56 @@ describe("approved plan repair", () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe("REPAIR_SEMANTIC_CHANGE_DENIED");
     await app.close();
+  });
+
+  it("API maps a missing template to 409 REPAIR_BINDING_FAILED and leaves v1 intact", async () => {
+    const ctx = await approvedBrokenRecoveryRun();
+    const noTemplateBinder = new RevenueRecoveryTargetBinder({
+      runs: ctx.stack.runs,
+      objectives: ctx.stack.objectives,
+      cases: ctx.product.repos.cases,
+      leads: ctx.product.repos.leads,
+      templates: new InMemoryRecoveryTemplateRepository(),
+    });
+    const repair = new ApprovedPlanRepairService({
+      runs: ctx.stack.runs,
+      plans: ctx.stack.plans,
+      authorizationRecords: ctx.stack.authorizationRecords,
+      approvalRequests: ctx.stack.approvalRequests,
+      executionAttempts: ctx.stack.executionAttempts,
+      executionCoordinator: ctx.stack.executionCoordinator,
+      recoveryAttempts: ctx.product.repos.attempts,
+      recoveryTargetBinder: noTemplateBinder,
+      coordinator: new InMemoryApprovedPlanRepairCoordinator(),
+      clock: ctx.stack.clock,
+      identities: { nextPlanId: () => `plan_repaired_${Date.now()}` },
+    });
+    const app = await buildServer({ approvedPlanRepair: repair });
+    const res = await app.inject({
+      method: "POST",
+      url: `/v1/runs/${ctx.runId}/repair-approved-plan`,
+      payload: { reason: "UNEXECUTABLE_RECOVERY_TARGET_BINDING" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: "REPAIR_BINDING_FAILED",
+      message: "No enabled EMAIL template for recovery case tenant/project",
+      details: { binderCode: "RECOVERY_TEMPLATE_UNRESOLVED" },
+    });
+    expect(res.body).not.toContain(RR_CUSTOMER);
+    expect(res.body).not.toContain("stack");
+    await app.close();
+
+    // Run-state rollback is transactional (Postgres withLock); memory has none.
+    const plan = await ctx.stack.plans.getByRunId(ctx.runId);
+    expect(plan?.planId).toBe(ctx.brokenPlan.planId);
+    expect(plan?.planVersion).toBe(ctx.brokenPlan.planVersion);
+    expect(
+      (await ctx.stack.authorizationRecords.listByRun(ctx.runId)).map(
+        (r) => r.authorizationRecordId,
+      ),
+    ).toEqual([ctx.authz.authorizationRecordId]);
+    expect(ctx.product.messaging.sent).toHaveLength(0);
   });
 
   it("scheduler cannot execute after repair leaves APPROVED", async () => {

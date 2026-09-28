@@ -509,6 +509,40 @@ export class PostgresRecoveryTemplateRepository
     return res.rows.map((r) => parseRecoveryMessageTemplate(r.payload));
   }
 
+  async listByScope(input: {
+    customerAccountId: string;
+    projectId: string;
+    channel?: "SMS" | "EMAIL";
+  }): Promise<readonly RecoveryMessageTemplate[]> {
+    const res =
+      input.channel === undefined
+        ? await this.db.query<{ payload: unknown }>(
+            `SELECT payload FROM revenue_recovery_templates
+             WHERE customer_account_id = $1 AND project_id = $2
+             ORDER BY template_id, version`,
+            [input.customerAccountId, input.projectId],
+          )
+        : await this.db.query<{ payload: unknown }>(
+            `SELECT payload FROM revenue_recovery_templates
+             WHERE customer_account_id = $1 AND project_id = $2 AND channel = $3
+             ORDER BY template_id, version`,
+            [input.customerAccountId, input.projectId, input.channel],
+          );
+    return res.rows.map((r) => parseRecoveryMessageTemplate(r.payload));
+  }
+
+  async listByTemplateId(
+    templateId: string,
+  ): Promise<readonly RecoveryMessageTemplate[]> {
+    const res = await this.db.query<{ payload: unknown }>(
+      `SELECT payload FROM revenue_recovery_templates
+       WHERE template_id = $1
+       ORDER BY version`,
+      [templateId],
+    );
+    return res.rows.map((r) => parseRecoveryMessageTemplate(r.payload));
+  }
+
   async save(template: RecoveryMessageTemplate): Promise<void> {
     const parsed = parseRecoveryMessageTemplate(template);
     await this.db.query(

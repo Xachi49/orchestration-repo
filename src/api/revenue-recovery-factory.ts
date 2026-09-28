@@ -10,6 +10,7 @@ import {
   type ResendTransport,
 } from "../revenue-recovery/index.js";
 import type { ObjectiveAdmissionService } from "../admission/service.js";
+import type { ProjectRegistry } from "../control-plane/projects/registry.js";
 import type { PostgresDatabase } from "../infrastructure/postgres/database.js";
 import {
   PostgresLeadEventRepository,
@@ -32,6 +33,7 @@ export function createMemoryRevenueRecoveryService(input?: {
   runtimeEnvironment?: ProductRuntimeEnvironment;
   pilotConfig?: RecoveryPilotConfig;
   resendTransport?: ResendTransport;
+  projects?: ProjectRegistry;
 }): {
   service: RevenueRecoveryService;
   messaging: RecoveryMessagingProvider;
@@ -55,6 +57,7 @@ export function createMemoryRevenueRecoveryService(input?: {
     providerEvents: repos.providerEvents,
     runtimeEnvironment: input?.runtimeEnvironment ?? "TEST",
     ...(input?.admission ? { admission: input.admission } : {}),
+    ...(input?.projects ? { projects: input.projects } : {}),
   });
   return { service, messaging, repos, pilotConfig };
 }
@@ -72,6 +75,7 @@ export function createPostgresRevenueRecoveryService(input: {
   messaging?: RecoveryMessagingProvider;
   pilotConfig?: RecoveryPilotConfig;
   resendTransport?: ResendTransport;
+  projects?: ProjectRegistry;
 }): {
   service: RevenueRecoveryService;
   messaging: RecoveryMessagingProvider;
@@ -98,6 +102,15 @@ export function createPostgresRevenueRecoveryService(input: {
     pilotConfig,
     providerEvents,
     ...(input.admission ? { admission: input.admission } : {}),
+    ...(input.projects ? { projects: input.projects } : {}),
+    withTemplateScopeLock: (scopeKey, fn) =>
+      input.db.withTransaction(async () => {
+        await input.db.query(
+          `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+          [scopeKey],
+        );
+        return fn();
+      }),
   });
   return { service, messaging, pilotConfig };
 }

@@ -94,6 +94,15 @@ export interface RecoveryTemplateRepository {
     projectId: string;
     channel: "SMS" | "EMAIL";
   }): Promise<readonly RecoveryMessageTemplate[]>;
+  /** All rows (enabled and disabled) for a tenant/project, optionally one channel. */
+  listByScope(input: {
+    customerAccountId: string;
+    projectId: string;
+    channel?: "SMS" | "EMAIL";
+  }): Promise<readonly RecoveryMessageTemplate[]>;
+  /** Every version of one templateId, across any scope. */
+  listByTemplateId(templateId: string): Promise<readonly RecoveryMessageTemplate[]>;
+  /** Write-once per (templateId, version); an existing key is left untouched. */
   save(template: RecoveryMessageTemplate): Promise<void>;
 }
 

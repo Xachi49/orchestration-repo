@@ -433,6 +433,7 @@ export async function buildServer(deps: ApiDeps = {}) {
   if (deps.revenueRecovery) {
     registerRevenueRecoveryRoutes(app, {
       revenueRecovery: deps.revenueRecovery,
+      ...(deps.perimeter ? { access: deps.perimeter.access } : {}),
     });
     if (deps.revenueRecoveryPilotConfig) {
       registerRevenueRecoveryIntegrationRoutes(app, {

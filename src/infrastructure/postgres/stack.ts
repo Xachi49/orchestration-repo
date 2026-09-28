@@ -1853,6 +1853,7 @@ export async function createPostgresOrchestratorStack(options: {
       db,
       nowIso: () => clock.nowIso(),
       admission,
+      projects,
       ...(options.revenueRecoveryRuntimeEnvironment
         ? { runtimeEnvironment: options.revenueRecoveryRuntimeEnvironment }
         : {}),

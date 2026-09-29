@@ -61,6 +61,28 @@ export const EXAMPLE_POLICY_BUNDLE: PolicyBundle = {
       reasonCode: "LOCAL_SAFE_ACTIONS",
     },
     {
+      ruleId: "allow_local_task_records",
+      description: "Allow internal task records in local/development",
+      effect: "ALLOW",
+      actionTypes: ["CREATE_TASK"],
+      environments: ["local", "development"],
+      conditions: [],
+      reasonCode: "LOCAL_TASK_RECORDS",
+    },
+    {
+      ruleId: "require_approval_recovery_actions",
+      description: "Revenue Recovery outreach requires human approval",
+      effect: "REQUIRE_APPROVAL",
+      actionTypes: [
+        "SEND_RECOVERY_SMS",
+        "SEND_RECOVERY_EMAIL",
+        "CREATE_CALLBACK_TASK",
+      ],
+      environments: ["local", "development"],
+      conditions: [],
+      reasonCode: "RECOVERY_OUTREACH_REQUIRES_APPROVAL",
+    },
+    {
       ruleId: "deny_production_mutation",
       description: "Deny production-impacting actions",
       effect: "DENY",

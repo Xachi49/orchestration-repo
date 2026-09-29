@@ -58,6 +58,8 @@ export const ApprovalDecisionCardSchema = z
         exceptionType: z.string().min(1),
         message: z.string().min(1),
         reasonCodes: z.array(z.string().min(1)),
+        causeClass: z.string().min(1).optional(),
+        causeCode: z.string().min(1).optional(),
       })
       .strict()
       .optional(),

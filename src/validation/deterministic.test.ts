@@ -193,7 +193,7 @@ describe("PlanPolicyValidator", () => {
 
   it("treats an unmatched action as not permitted", async () => {
     const { record, control } = await plannedFixture();
-    const plan = withStep(record.plan, 0, { actionType: "CREATE_TASK" });
+    const plan = withStep(record.plan, 0, { actionType: "PREPARE_PULL_REQUEST" });
     const result = new PlanPolicyValidator().validate({
       plan,
       control,

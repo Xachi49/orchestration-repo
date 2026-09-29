@@ -62,7 +62,16 @@ import {
   type ValidationFenceKey,
 } from "./coordinator.js";
 import { DeterministicValidationService } from "./deterministic.js";
-import { ValidationDecisionEngine, type ValidationReasonCode } from "./decision-engine.js";
+import {
+  ValidationDecisionEngine,
+  boundedHumanEscalation,
+  type ValidationReasonCode,
+} from "./decision-engine.js";
+import {
+  classifyRevisionCompilationFailure,
+  revisionFailureCauseDetails,
+  revisionFailureFindingMetadata,
+} from "./revision-failure-cause.js";
 import type { ValidationDecisionRepository } from "./decision-repository.js";
 import { ValidationFindingFactory } from "./finding-factory.js";
 import { ViolationFingerprintService } from "./fingerprint.js";
@@ -466,14 +475,17 @@ export class ValidationService {
             approvalEligible: true,
             blocking: true,
             subject: { code: revisionFailure?.code ?? "REVISION_FAILED" },
-            metadata: {
-              code: revisionFailure?.code ?? "REVISION_FAILED",
-              details: revisionFailure?.details ?? {},
-            },
+            metadata: revisionFailureFindingMetadata(revisionFailure),
           });
           findings.push(failureFinding);
           const budgetExhausted =
             revisionFailure?.code === "REVISION_BUDGET_EXCEEDED";
+          // REVISION_FAILED != AUTHORITY_TO_IGNORE_ORIGINAL_BLOCKERS.
+          const escalation = boundedHumanEscalation({
+            findings,
+            reasonCode: "REVISION_FAILED",
+            decidingFindingIds: [failureFinding.findingId],
+          });
           return await this.finalize({
             key,
             ownerToken: begin.ownerToken,
@@ -481,8 +493,8 @@ export class ValidationService {
             record,
             runContext,
             findings,
-            decision: "HUMAN_APPROVAL_REQUIRED",
-            reasonCodes: ["REVISION_FAILED"],
+            decision: escalation.decision,
+            reasonCodes: escalation.reasonCodes,
             requiresHumanAction: true,
             validationAttempt: attempt,
             revisionAttemptsUsed,
@@ -494,9 +506,19 @@ export class ValidationService {
           });
         }
 
+        // REVISE without a plan or compiled context means no revision can run;
+        // the repairable blockers stay unresolved.
+        const terminal =
+          outcome.decision === "REVISE"
+            ? boundedHumanEscalation({
+                findings,
+                reasonCode: "REVISION_FAILED",
+                decidingFindingIds: outcome.decidingFindingIds,
+              })
+            : outcome;
         const exceptionType = this.exceptionTypeFor(
-          outcome.decision,
-          outcome.reasonCodes,
+          terminal.decision,
+          terminal.reasonCodes,
         );
         return await this.finalize({
           key,
@@ -505,16 +527,9 @@ export class ValidationService {
           record,
           runContext,
           findings,
-          decision:
-            outcome.decision === "REVISE"
-              ? "HUMAN_APPROVAL_REQUIRED"
-              : outcome.decision,
-          reasonCodes:
-            outcome.decision === "REVISE"
-              ? ["REVISION_FAILED"]
-              : outcome.reasonCodes,
-          requiresHumanAction:
-            outcome.decision === "REVISE" ? true : outcome.requiresHumanAction,
+          decision: terminal.decision,
+          reasonCodes: terminal.reasonCodes,
+          requiresHumanAction: terminal.requiresHumanAction,
           validationAttempt: attempt,
           revisionAttemptsUsed,
           supersededPlanIds,
@@ -653,14 +668,17 @@ export class ValidationService {
     decision: ValidationDecisionClass,
     reasonCodes: readonly ValidationReasonCode[],
   ): PlanningExceptionType | null {
-    if (decision === "BLOCK") {
-      return "UNREPAIRABLE_VIOLATION";
-    }
     if (reasonCodes.includes("REPEATED_SEMANTIC_VIOLATION")) {
       return "REPEATED_SEMANTIC_VIOLATION";
     }
     if (reasonCodes.includes("REVISION_ATTEMPTS_EXHAUSTED")) {
       return "REVISION_ATTEMPTS_EXHAUSTED";
+    }
+    if (reasonCodes.includes("REVISION_FAILED")) {
+      return "REVISION_FAILED";
+    }
+    if (decision === "BLOCK") {
+      return "UNREPAIRABLE_VIOLATION";
     }
     return null;
   }
@@ -1061,15 +1079,18 @@ export class ValidationService {
       });
       assertExecutionPlanRecoveryTargets(revisedPlan, { runId: input.runId });
     } catch (error) {
+      const cause = classifyRevisionCompilationFailure(error);
       throw new ValidationError(
         "REVISION_COMPILATION_FAILED",
         isPlanningError(error)
           ? `Revised plan failed ${error.code}: ${error.message}`
-          : "Revised plan could not be compiled",
+          : cause.causeClass === "RECOVERY_TARGET_BINDING"
+            ? `Revised plan failed recovery target binding: ${cause.causeCode}`
+            : `Revised plan could not be compiled (${cause.causeClass})`,
         {
           runId: input.runId,
           targetPlanVersion,
-          ...(isPlanningError(error) ? { planningCode: error.code } : {}),
+          ...revisionFailureCauseDetails(cause),
         },
       );
     }
@@ -1112,7 +1133,11 @@ export class ValidationService {
       throw new ValidationError(
         "REVISION_COMPILATION_FAILED",
         "Recovery actions require a deterministic Revenue Recovery target binder",
-        { runId },
+        {
+          runId,
+          causeClass: "RECOVERY_TARGET_BINDING",
+          causeCode: "RECOVERY_TARGET_BINDER_UNAVAILABLE",
+        },
       );
     }
     try {
@@ -1123,10 +1148,11 @@ export class ValidationService {
       return { ...proposal, steps };
     } catch (error) {
       if (isRecoveryTargetBinderError(error)) {
+        // Binder details can carry tenant identifiers; only the code persists.
         throw new ValidationError(
           "REVISION_COMPILATION_FAILED",
-          error.message,
-          { runId, binderCode: error.code, ...error.details },
+          `Recovery target binding failed: ${error.code}`,
+          { runId, binderCode: error.code },
         );
       }
       throw error;

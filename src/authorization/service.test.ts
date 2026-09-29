@@ -20,10 +20,12 @@ async function validatedRun(options?: {
   delivery?: FakeApprovalDeliveryService;
   approvalWindowMs?: number;
   validationModel?: FakeValidationModel;
+  capabilities?: typeof EXAMPLE_CAPABILITIES;
 }) {
   const delivery = options?.delivery ?? new FakeApprovalDeliveryService();
   const stack = createLocalAuthorizationStack({
     approvalDelivery: delivery,
+    ...(options?.capabilities ? { capabilities: options.capabilities } : {}),
     ...(options?.approvalWindowMs !== undefined
       ? { approvalWindowMs: options.approvalWindowMs }
       : {}),
@@ -108,17 +110,35 @@ describe("AuthorizationRoutingService", () => {
   });
 
   it("routes HUMAN_APPROVAL_REQUIRED to AWAITING_APPROVAL", async () => {
-    const model = new FakeValidationModel();
-    model.setReviseRecommendation({
-      ruleId: "CONTEXT_MISSING_VERIFICATION",
-      affectedStepIds: ["step_patch"],
+    const { stack, runId } = await validatedRun({
+      capabilities: EXAMPLE_CAPABILITIES.map((capability) =>
+        capability.capabilityId === "CREATE_LOCAL_PATCH"
+          ? { ...capability, approvalRequirement: "REQUIRED" as const }
+          : capability,
+      ),
     });
-    const { stack, runId } = await validatedRun({ validationModel: model });
     const decision = await stack.validation.getLatestDecision(runId);
     expect(decision?.decision).toBe("HUMAN_APPROVAL_REQUIRED");
     const routed = await stack.authorizationRouting.route(runId);
     expect(routed.outcome).toBe("PENDING_APPROVAL");
     expect(routed.runState).toBe("AWAITING_APPROVAL");
+  });
+
+  it("routes an unresolved non-approval-eligible contextual violation to BLOCKED", async () => {
+    const model = new FakeValidationModel();
+    model.setReviseRecommendation({
+      ruleId: "CONTEXT_MISSING_VERIFICATION",
+      affectedStepIds: ["step_patch"],
+    });
+    const { stack, runId, delivery } = await validatedRun({
+      validationModel: model,
+    });
+    const decision = await stack.validation.getLatestDecision(runId);
+    expect(decision?.decision).toBe("BLOCK");
+    const routed = await stack.authorizationRouting.route(runId);
+    expect(routed.outcome).toBe("BLOCKED");
+    expect(await stack.approvalRequests.listByRun(runId)).toHaveLength(0);
+    expect(delivery.delivered).toHaveLength(0);
   });
 
   it("duplicate routing reuses pending request identity without mutation", async () => {

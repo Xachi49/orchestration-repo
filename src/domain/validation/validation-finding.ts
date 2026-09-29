@@ -53,3 +53,28 @@ export type ValidationFinding = z.infer<typeof ValidationFindingSchema>;
 export function parseValidationFinding(input: unknown): ValidationFinding {
   return ValidationFindingSchema.parse(input);
 }
+
+/**
+ * The single authority predicate for approval eligibility.
+ *
+ * A blocking finding marked approvalEligible=false can only be cleared by
+ * resolving it (a revised plan that no longer raises it). No human APPROVE,
+ * revision failure, or escalation path may override it.
+ */
+export function isNonApprovalEligibleBlockingFinding(
+  finding: Pick<ValidationFinding, "blocking" | "approvalEligible">,
+): boolean {
+  return finding.blocking === true && finding.approvalEligible === false;
+}
+
+export function nonApprovalEligibleBlockingFindings<
+  T extends Pick<ValidationFinding, "blocking" | "approvalEligible">,
+>(findings: readonly T[]): T[] {
+  return findings.filter(isNonApprovalEligibleBlockingFinding);
+}
+
+export function hasNonApprovalEligibleBlockingFinding(
+  findings: readonly Pick<ValidationFinding, "blocking" | "approvalEligible">[],
+): boolean {
+  return findings.some(isNonApprovalEligibleBlockingFinding);
+}

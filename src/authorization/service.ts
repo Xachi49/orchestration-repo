@@ -45,6 +45,7 @@ import {
   type DecisionNonceGenerator,
 } from "./decision-nonce.js";
 import { AuthorizationError } from "./errors.js";
+import { assertValidationApprovalEligible } from "./approval-eligibility.js";
 import type { AuthorizationResult } from "./result.js";
 import { approvalBindingKey } from "../domain/authorization/index.js";
 import {
@@ -271,6 +272,12 @@ export class HumanAuthorizationService {
       );
     }
 
+    // Runs before the nonce is consumed: a refused APPROVE leaves the request
+    // PENDING so REJECT remains available on the same nonce.
+    if (decision.decision === "APPROVE") {
+      await this.assertBoundValidationApprovalEligible(request);
+    }
+
     const { nonceHash } = await this.deps.coordinator.beginDecision(
       request.approvalRequestId,
       decision.decisionNonce,
@@ -307,6 +314,10 @@ export class HumanAuthorizationService {
       }
 
       await this.verifyBindingFreshness(request);
+
+      if (decision.decision === "APPROVE") {
+        await this.assertBoundValidationApprovalEligible(request);
+      }
 
       if (decision.decision === "REQUEST_MODIFICATION") {
         const note = decision.note?.trim();
@@ -738,6 +749,7 @@ export class HumanAuthorizationService {
 
     // Phase 6 binding freshness — same gates as decide/APPROVE.
     await this.verifyBindingFreshness(request);
+    await this.assertBoundValidationApprovalEligible(request);
   }
 
   private async appendReissueAudit(input: {
@@ -854,6 +866,9 @@ export class HumanAuthorizationService {
         },
       );
     }
+
+    // Before the replaced request is cancelled or a new nonce is minted.
+    await this.assertBoundValidationApprovalEligible(replaced);
 
     const claim = await this.deps.coordinator.beginReissue(
       replaced.approvalRequestId,
@@ -1008,6 +1023,7 @@ export class HumanAuthorizationService {
         "Validation decision diverged from replaced approval request",
       );
     }
+    assertValidationApprovalEligible(decision);
 
     const resolved = await this.deps.controlPlane.resolve(
       run.projectId,
@@ -1239,6 +1255,29 @@ export class HumanAuthorizationService {
 
   async getLatestAuthorization(runId: string) {
     return this.deps.records.getLatestByRun(runId);
+  }
+
+  /**
+   * Re-reads the authoritative ValidationDecision bound to the request.
+   * The DecisionCard is display material and is not consulted here.
+   */
+  private async assertBoundValidationApprovalEligible(
+    request: ApprovalRequest,
+  ): Promise<void> {
+    const validation = await this.deps.decisions.getById(
+      request.validationDecisionId,
+    );
+    if (
+      !validation ||
+      validation.runId !== request.runId ||
+      validation.planHash !== request.planHash
+    ) {
+      throw new AuthorizationError(
+        "AUTHORIZATION_BINDING_MISMATCH",
+        "Validation decision binding no longer matches",
+      );
+    }
+    assertValidationApprovalEligible(validation);
   }
 
   private async verifyBindingFreshness(

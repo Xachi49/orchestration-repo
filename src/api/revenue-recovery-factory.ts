@@ -6,6 +6,7 @@ import {
   createMessagingProviderForPilot,
   type ProductRuntimeEnvironment,
   type RecoveryMessagingProvider,
+  type RecoveryObjectiveReissueOrchestratorPorts,
   type RecoveryPilotConfig,
   type ResendTransport,
 } from "../revenue-recovery/index.js";
@@ -34,6 +35,7 @@ export function createMemoryRevenueRecoveryService(input?: {
   pilotConfig?: RecoveryPilotConfig;
   resendTransport?: ResendTransport;
   projects?: ProjectRegistry;
+  orchestrator?: RecoveryObjectiveReissueOrchestratorPorts;
 }): {
   service: RevenueRecoveryService;
   messaging: RecoveryMessagingProvider;
@@ -58,6 +60,7 @@ export function createMemoryRevenueRecoveryService(input?: {
     runtimeEnvironment: input?.runtimeEnvironment ?? "TEST",
     ...(input?.admission ? { admission: input.admission } : {}),
     ...(input?.projects ? { projects: input.projects } : {}),
+    ...(input?.orchestrator ? { orchestrator: input.orchestrator } : {}),
   });
   return { service, messaging, repos, pilotConfig };
 }
@@ -76,6 +79,7 @@ export function createPostgresRevenueRecoveryService(input: {
   pilotConfig?: RecoveryPilotConfig;
   resendTransport?: ResendTransport;
   projects?: ProjectRegistry;
+  orchestrator?: RecoveryObjectiveReissueOrchestratorPorts;
 }): {
   service: RevenueRecoveryService;
   messaging: RecoveryMessagingProvider;
@@ -103,11 +107,22 @@ export function createPostgresRevenueRecoveryService(input: {
     providerEvents,
     ...(input.admission ? { admission: input.admission } : {}),
     ...(input.projects ? { projects: input.projects } : {}),
+    ...(input.orchestrator ? { orchestrator: input.orchestrator } : {}),
     withTemplateScopeLock: (scopeKey, fn) =>
       input.db.withTransaction(async () => {
         await input.db.query(
           `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
           [scopeKey],
+        );
+        return fn();
+      }),
+    // Admission adapters join the ambient transaction, so objective, run,
+    // case rebind, and audit commit or roll back as one unit.
+    withObjectiveReissueLock: (recoveryCaseId, fn) =>
+      input.db.withTransaction(async () => {
+        await input.db.query(
+          `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+          [`rr-objective-reissue:${recoveryCaseId}`],
         );
         return fn();
       }),

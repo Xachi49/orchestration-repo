@@ -38,6 +38,13 @@ import {
   recoveryPlanningContext,
 } from "./objective-mapping.js";
 import {
+  createKeyedSerialLock,
+  recoveryObjectiveLineage,
+  RevenueRecoveryObjectiveReissueService,
+  type RecoveryObjectiveReissueOrchestratorPorts,
+  type RecoveryObjectiveReissueResult,
+} from "./objective-reissue.js";
+import {
   CreateCallbackTaskSchema,
   SendRecoveryEmailSchema,
   SendRecoverySmsSchema,
@@ -134,6 +141,17 @@ export type RevenueRecoveryServiceDeps = {
   projects?: ProjectRegistry;
   /** Serializes template provisioning per tenant/project/channel (e.g. advisory lock). */
   withTemplateScopeLock?: <T>(scopeKey: string, fn: () => Promise<T>) => Promise<T>;
+  /** Read-only orchestrator evidence. Objective reissue fails closed without it. */
+  orchestrator?: RecoveryObjectiveReissueOrchestratorPorts;
+  /**
+   * Serializes objective reissue per case. Durable composers run `fn` in one
+   * transaction so admission, case rebind, and audit commit atomically.
+   * Defaults to an in-process lock.
+   */
+  withObjectiveReissueLock?: <T>(
+    recoveryCaseId: string,
+    fn: () => Promise<T>,
+  ) => Promise<T>;
 };
 
 export type RecoveryTemplateProvisionResult = {
@@ -170,10 +188,16 @@ export class RevenueRecoveryService {
   private readonly runtimeEnvironment: ProductRuntimeEnvironment;
   private readonly pilotConfig: RecoveryPilotConfig;
   private readonly webAdapter = new AuthenticatedWebLeadSourceAdapter();
+  private readonly withObjectiveReissueLock: <T>(
+    recoveryCaseId: string,
+    fn: () => Promise<T>,
+  ) => Promise<T>;
 
   constructor(private readonly deps: RevenueRecoveryServiceDeps) {
     this.runtimeEnvironment = deps.runtimeEnvironment ?? "DEVELOPMENT";
     this.pilotConfig = deps.pilotConfig ?? { mode: "FAKE", livePilotRecipientAllowlist: [] };
+    this.withObjectiveReissueLock =
+      deps.withObjectiveReissueLock ?? createKeyedSerialLock();
   }
 
   getPilotHealth() {
@@ -778,6 +802,140 @@ export class RevenueRecoveryService {
         "Recovery case is suppressed",
       );
     }
+    const objectiveVersion = recoveryCase.recoveryObjectiveVersion ?? 1;
+    const { admissionRequest, planningContext, contactPolicy } =
+      await this.buildCanonicalRecoveryObjective({
+        recoveryCase,
+        requesterId: input.requesterId,
+        requestedEnvironment: input.requestedEnvironment,
+        objectiveVersion,
+      });
+    const boundRunId = recoveryCase.orchestratorRunId;
+
+    if (!input.admit) {
+      // Preview only once a run is bound: never regress an orchestrated case.
+      if (!boundRunId) {
+        await this.deps.cases.save({
+          ...recoveryCase,
+          status: "READY_FOR_ORCHESTRATION",
+          objectiveId: admissionRequest.objectiveId,
+          recoveryObjectiveVersion: objectiveVersion,
+          updatedAt: this.deps.nowIso(),
+          recordRevision: recoveryCase.recordRevision + 1,
+        });
+      }
+      return { admissionRequest, planningContext, contactPolicy };
+    }
+
+    if (!this.deps.admission) {
+      throw new RevenueRecoveryError(
+        "RECOVERY_STATE_CONFLICT",
+        "Objective admission service not configured",
+      );
+    }
+    if (boundRunId && this.deps.orchestrator) {
+      const bound = await this.deps.orchestrator.runs.getById(boundRunId);
+      if (
+        !bound ||
+        bound.objectiveId !== admissionRequest.objectiveId ||
+        bound.objectiveVersion !== objectiveVersion ||
+        bound.requestedEnvironment !== input.requestedEnvironment
+      ) {
+        throw new RevenueRecoveryError(
+          "RECOVERY_OBJECTIVE_CONFLICT",
+          "Recovery case is already bound to a different orchestrator run",
+          { recoveryCaseId: recoveryCase.recoveryCaseId },
+        );
+      }
+    }
+
+    const admissionResult = await this.deps.admission.admit(admissionRequest);
+    if (
+      admissionResult.outcome !== "ADMITTED" &&
+      admissionResult.outcome !== "ACTIVE_DUPLICATE" &&
+      admissionResult.outcome !== "COMPLETED_DUPLICATE"
+    ) {
+      // REJECTED / CONFLICT: no run to bind, so no case change and no audit.
+      return { admissionRequest, planningContext, contactPolicy, admissionResult };
+    }
+    const runId = admissionResult.runId;
+    if (boundRunId) {
+      if (boundRunId !== runId) {
+        throw new RevenueRecoveryError(
+          "RECOVERY_OBJECTIVE_CONFLICT",
+          "Recovery case is already bound to a different orchestrator run",
+          { recoveryCaseId: recoveryCase.recoveryCaseId },
+        );
+      }
+      return { admissionRequest, planningContext, contactPolicy, admissionResult };
+    }
+    await this.deps.cases.save({
+      ...recoveryCase,
+      status: "IN_ORCHESTRATION",
+      objectiveId: admissionRequest.objectiveId,
+      recoveryObjectiveVersion: objectiveVersion,
+      orchestratorRunId: runId,
+      updatedAt: this.deps.nowIso(),
+      recordRevision: recoveryCase.recordRevision + 1,
+    });
+    await this.audit({
+      kind: "RECOVERY_OBJECTIVE_ADMITTED",
+      customerAccountId: recoveryCase.customerAccountId,
+      projectId: recoveryCase.projectId,
+      leadId: recoveryCase.leadId,
+      recoveryCaseId: recoveryCase.recoveryCaseId,
+      payload: { runId },
+    });
+
+    return { admissionRequest, planningContext, contactPolicy, admissionResult };
+  }
+
+  /**
+   * Governed objective reissue: next objective version + replacement run for
+   * the same case. See `objective-reissue.ts`.
+   */
+  async reissueRecoveryObjective(input: {
+    recoveryCaseId: string;
+    body: unknown;
+    principalId?: string;
+  }): Promise<RecoveryObjectiveReissueResult> {
+    const { admission, orchestrator } = this.deps;
+    if (!admission || !orchestrator) {
+      throw new RevenueRecoveryError(
+        "OBJECTIVE_REISSUE_UNAVAILABLE",
+        "Objective reissue is not configured",
+      );
+    }
+    const reissuer = new RevenueRecoveryObjectiveReissueService({
+      nowIso: this.deps.nowIso,
+      cases: this.deps.cases,
+      attempts: this.deps.attempts,
+      audits: this.deps.audits,
+      admission,
+      orchestrator,
+      buildCanonicalObjective: async (args) => {
+        const built = await this.buildCanonicalRecoveryObjective(args);
+        return {
+          admissionRequest: built.admissionRequest,
+          contactPolicy: built.contactPolicy,
+        };
+      },
+      withReissueLock: this.withObjectiveReissueLock,
+    });
+    return reissuer.reissue(input);
+  }
+
+  private async buildCanonicalRecoveryObjective(input: {
+    recoveryCase: RecoveryCase;
+    requesterId: string;
+    requestedEnvironment: string;
+    objectiveVersion: number;
+  }): Promise<{
+    admissionRequest: AdmissionRequest;
+    planningContext: Record<string, unknown>;
+    contactPolicy: ContactPolicyResult;
+  }> {
+    const { recoveryCase } = input;
     const lead = await this.requireLead(recoveryCase.leadId);
     const config = await this.requireConfigVersion(recoveryCase);
     const contactPolicy = await this.evaluateCaseContactPolicy(
@@ -786,7 +944,6 @@ export class RevenueRecoveryService {
     const attempts = await this.deps.attempts.listByCase(
       recoveryCase.recoveryCaseId,
     );
-    const objectiveVersion = recoveryCase.recoveryObjectiveVersion ?? 1;
     const admissionRequest = mapRecoveryCaseToAdmissionRequest({
       recoveryCase,
       lead,
@@ -795,7 +952,7 @@ export class RevenueRecoveryService {
       requesterId: input.requesterId,
       requestedEnvironment: input.requestedEnvironment,
       submittedAt: this.deps.nowIso(),
-      objectiveVersion,
+      objectiveVersion: input.objectiveVersion,
     });
     const planningContext = recoveryPlanningContext({
       lead,
@@ -804,51 +961,7 @@ export class RevenueRecoveryService {
       contactPolicy,
       priorAttemptCount: attempts.length,
     });
-
-    let admissionResult: unknown;
-    if (input.admit) {
-      if (!this.deps.admission) {
-        throw new RevenueRecoveryError(
-          "RECOVERY_STATE_CONFLICT",
-          "Objective admission service not configured",
-        );
-      }
-      admissionResult = await this.deps.admission.admit(admissionRequest);
-      const runId =
-        admissionResult &&
-        typeof admissionResult === "object" &&
-        "runId" in admissionResult
-          ? String((admissionResult as { runId: string }).runId)
-          : undefined;
-      await this.deps.cases.save({
-        ...recoveryCase,
-        status: "IN_ORCHESTRATION",
-        objectiveId: admissionRequest.objectiveId,
-        recoveryObjectiveVersion: objectiveVersion,
-        ...(runId ? { orchestratorRunId: runId } : {}),
-        updatedAt: this.deps.nowIso(),
-        recordRevision: recoveryCase.recordRevision + 1,
-      });
-      await this.audit({
-        kind: "RECOVERY_OBJECTIVE_ADMITTED",
-        customerAccountId: recoveryCase.customerAccountId,
-        projectId: recoveryCase.projectId,
-        leadId: recoveryCase.leadId,
-        recoveryCaseId: recoveryCase.recoveryCaseId,
-        payload: { runId: runId ?? null },
-      });
-    } else {
-      await this.deps.cases.save({
-        ...recoveryCase,
-        status: "READY_FOR_ORCHESTRATION",
-        objectiveId: admissionRequest.objectiveId,
-        recoveryObjectiveVersion: objectiveVersion,
-        updatedAt: this.deps.nowIso(),
-        recordRevision: recoveryCase.recordRevision + 1,
-      });
-    }
-
-    return { admissionRequest, planningContext, contactPolicy, admissionResult };
+    return { admissionRequest, planningContext, contactPolicy };
   }
 
   /**
@@ -1568,9 +1681,18 @@ export class RevenueRecoveryService {
     const contactPolicy = await this.evaluateCaseContactPolicy(
       recoveryCase.recoveryCaseId,
     );
+    const auditEvents = await this.deps.audits.listByCase(
+      recoveryCase.recoveryCaseId,
+    );
     return {
       doctrine: REVENUE_RECOVERY_DOCTRINE,
       recoveryCase,
+      objectiveBinding: {
+        objectiveId: recoveryCase.objectiveId ?? null,
+        recoveryObjectiveVersion: recoveryCase.recoveryObjectiveVersion ?? null,
+        orchestratorRunId: recoveryCase.orchestratorRunId ?? null,
+        lineage: recoveryObjectiveLineage(auditEvents),
+      },
       lead: this.sanitizeLead(lead),
       contactPolicy,
       attempts: attempts.map((a) => ({
@@ -1793,20 +1915,35 @@ export class RevenueRecoveryService {
   }
 
   private async refreshCaseFromEvents(recoveryCaseId: string): Promise<void> {
-    const recoveryCase = await this.requireCase(recoveryCaseId);
-    const events = await this.deps.leadEvents.listByLead(recoveryCase.leadId);
-    const { nextStatus, suppressionReason } = evaluateRecoveryOutcome({
-      recoveryCase,
-      events,
-    });
-    if (nextStatus === recoveryCase.status) return;
-    await this.deps.cases.save({
-      ...recoveryCase,
-      status: nextStatus,
-      ...(suppressionReason ? { suppressionReason } : {}),
-      updatedAt: this.deps.nowIso(),
-      recordRevision: recoveryCase.recordRevision + 1,
-    });
+    // Case saves are optimistic; a concurrent writer (e.g. objective reissue
+    // rebinding the run) forces a re-read, never a lost update.
+    for (let attempt = 0; ; attempt += 1) {
+      const recoveryCase = await this.requireCase(recoveryCaseId);
+      const events = await this.deps.leadEvents.listByLead(recoveryCase.leadId);
+      const { nextStatus, suppressionReason } = evaluateRecoveryOutcome({
+        recoveryCase,
+        events,
+      });
+      if (nextStatus === recoveryCase.status) return;
+      try {
+        await this.deps.cases.save({
+          ...recoveryCase,
+          status: nextStatus,
+          ...(suppressionReason ? { suppressionReason } : {}),
+          updatedAt: this.deps.nowIso(),
+          recordRevision: recoveryCase.recordRevision + 1,
+        });
+        return;
+      } catch (error) {
+        if (
+          attempt >= 2 ||
+          !(error instanceof RevenueRecoveryError) ||
+          error.code !== "RECOVERY_CAS_CONFLICT"
+        ) {
+          throw error;
+        }
+      }
+    }
   }
 
   private sanitizeLead(lead: Lead) {

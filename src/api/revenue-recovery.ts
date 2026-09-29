@@ -23,7 +23,14 @@ function httpStatus(code: string): number {
     case "TEMPLATE_VARIABLE_UNSUPPORTED":
       return 422;
     case "TEMPLATE_PROVISIONING_UNAVAILABLE":
+    case "OBJECTIVE_REISSUE_UNAVAILABLE":
       return 503;
+    case "OBJECTIVE_REISSUE_NOT_ELIGIBLE":
+    case "OBJECTIVE_REISSUE_ALREADY_EXISTS":
+    case "OBJECTIVE_REISSUE_CONFLICT":
+    case "OBJECTIVE_REISSUE_AUTHORITY_PRESENT":
+    case "OBJECTIVE_REISSUE_BINDING_CHANGED":
+      return 409;
     case "TENANT_ISOLATION_VIOLATION":
     case "CONTACT_NOT_PERMITTED":
     case "CONTACT_WINDOW_CLOSED":
@@ -246,6 +253,9 @@ export function registerRevenueRecoveryRoutes(
             projectId: z.string().min(1),
           })
           .parse(request.query);
+        if (denyProjectAccess(request, reply, query.projectId)) {
+          return reply;
+        }
         const detail = await service.getCaseDetail({
           recoveryCaseId: params.recoveryCaseId,
           ...query,
@@ -303,6 +313,41 @@ export function registerRevenueRecoveryRoutes(
           });
         }
         throw error;
+      }
+    },
+  );
+
+  // OBJECTIVE REISSUE != PLAN REVISION. Mints the next objective version and a
+  // replacement run through Phase 2; carries no plan, approval, or authority.
+  app.post(
+    "/v1/revenue-recovery/cases/:recoveryCaseId/objective-reissue",
+    async (request, reply) => {
+      const params = z
+        .object({ recoveryCaseId: z.string().min(1) })
+        .safeParse(request.params);
+      if (!params.success) {
+        return reply.code(400).send({
+          error: "OBJECTIVE_REISSUE_INVALID",
+          message: "recoveryCaseId is required",
+        });
+      }
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const projectId = body["projectId"];
+      if (typeof projectId === "string" && denyProjectAccess(request, reply, projectId)) {
+        return reply;
+      }
+      try {
+        const principalId = principalOf(request);
+        const result = await service.reissueRecoveryObjective({
+          recoveryCaseId: params.data.recoveryCaseId,
+          body: request.body,
+          ...(principalId !== undefined ? { principalId } : {}),
+        });
+        return reply
+          .code(result.outcome === "REISSUED" ? 201 : 200)
+          .send(result);
+      } catch (error) {
+        return sendRecoveryError(reply, error);
       }
     },
   );

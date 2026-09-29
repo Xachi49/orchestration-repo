@@ -327,6 +327,8 @@ describe("RevenueRecoveryTargetBinder", () => {
       listOpenByLead: (leadId) => repos.cases.listOpenByLead(leadId),
       listByProject: (input) => repos.cases.listByProject(input),
       save: (c) => repos.cases.save(c),
+      compareAndSetOrchestratorRunBinding: (swap) =>
+        repos.cases.compareAndSetOrchestratorRunBinding(swap),
     };
     const binder = new RevenueRecoveryTargetBinder({
       runs,

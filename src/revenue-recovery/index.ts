@@ -16,6 +16,7 @@ export * from "./recovery-outcome.js";
 export * from "./revenue-attribution.js";
 export * from "./recovery-record.js";
 export * from "./objective-mapping.js";
+export * from "./objective-reissue.js";
 export * from "./messaging.js";
 export * from "./pilot-config.js";
 export * from "./resend-provider.js";

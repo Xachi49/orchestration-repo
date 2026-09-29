@@ -44,8 +44,33 @@ export interface RecoveryCaseRepository {
     customerAccountId: string;
     projectId: string;
   }): Promise<readonly RecoveryCase[]>;
+  /**
+   * Optimistic write: inserts a new case, or replaces a stored case only when
+   * `recordRevision` is exactly one above the stored revision. A stale write
+   * throws RECOVERY_CAS_CONFLICT instead of overwriting newer state.
+   */
   save(recoveryCase: RecoveryCase): Promise<void>;
+  /**
+   * CASE POINTER != HISTORY. Moves the current-run pointer only when the stored
+   * run, objective version, and recordRevision all equal the expected values.
+   * Returns the updated case, or null when any expectation no longer holds.
+   */
+  compareAndSetOrchestratorRunBinding(
+    input: RecoveryCaseRunBindingSwap,
+  ): Promise<RecoveryCase | null>;
 }
+
+export type RecoveryCaseRunBindingSwap = {
+  recoveryCaseId: string;
+  expectedOrchestratorRunId: string;
+  /** Compared against the stored `recoveryObjectiveVersion ?? 1`. */
+  expectedObjectiveVersion: number;
+  expectedRecordRevision: number;
+  orchestratorRunId: string;
+  objectiveId: string;
+  objectiveVersion: number;
+  updatedAt: string;
+};
 
 export interface RecoveryConfigRepository {
   getLatest(input: {

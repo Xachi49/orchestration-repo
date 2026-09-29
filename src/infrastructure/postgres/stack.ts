@@ -1854,6 +1854,14 @@ export async function createPostgresOrchestratorStack(options: {
       nowIso: () => clock.nowIso(),
       admission,
       projects,
+      orchestrator: {
+        runs,
+        objectives,
+        plans,
+        approvalRequests,
+        authorizationRecords,
+        executionAttempts,
+      },
       ...(options.revenueRecoveryRuntimeEnvironment
         ? { runtimeEnvironment: options.revenueRecoveryRuntimeEnvironment }
         : {}),

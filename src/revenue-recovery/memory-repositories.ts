@@ -19,12 +19,14 @@ import {
   type RecoveryMessageTemplate,
 } from "./recovery-template.js";
 import type { ProductAuditEvent } from "./audit.js";
+import { RevenueRecoveryError } from "./errors.js";
 import type {
   LeadEventRepository,
   LeadRepository,
   ProductAuditRepository,
   RecoveryAttemptRepository,
   RecoveryCaseRepository,
+  RecoveryCaseRunBindingSwap,
   RecoveryConfigRepository,
   RecoveryTemplateRepository,
   RevenueAttributionRepository,
@@ -159,8 +161,40 @@ export class InMemoryRecoveryCaseRepository implements RecoveryCaseRepository {
 
   async save(recoveryCase: RecoveryCase): Promise<void> {
     const parsed = parseRecoveryCase(recoveryCase);
+    const existing = this.byId.get(parsed.recoveryCaseId);
+    if (existing && existing.recordRevision !== parsed.recordRevision - 1) {
+      throw new RevenueRecoveryError(
+        "RECOVERY_CAS_CONFLICT",
+        "Recovery case changed concurrently",
+        { recoveryCaseId: parsed.recoveryCaseId },
+      );
+    }
     this.byId.set(parsed.recoveryCaseId, parsed);
     this.byGap.set(parsed.gapIdentityKey, parsed.recoveryCaseId);
+  }
+
+  async compareAndSetOrchestratorRunBinding(
+    input: RecoveryCaseRunBindingSwap,
+  ): Promise<RecoveryCase | null> {
+    const current = this.byId.get(input.recoveryCaseId);
+    if (
+      !current ||
+      current.orchestratorRunId !== input.expectedOrchestratorRunId ||
+      (current.recoveryObjectiveVersion ?? 1) !== input.expectedObjectiveVersion ||
+      current.recordRevision !== input.expectedRecordRevision
+    ) {
+      return null;
+    }
+    const next = parseRecoveryCase({
+      ...current,
+      orchestratorRunId: input.orchestratorRunId,
+      objectiveId: input.objectiveId,
+      recoveryObjectiveVersion: input.objectiveVersion,
+      updatedAt: input.updatedAt,
+      recordRevision: current.recordRevision + 1,
+    });
+    this.byId.set(next.recoveryCaseId, next);
+    return next;
   }
 }
 

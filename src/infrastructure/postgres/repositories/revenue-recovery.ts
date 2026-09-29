@@ -32,12 +32,14 @@ import {
   type RecoveryMessageTemplate,
 } from "../../../revenue-recovery/recovery-template.js";
 import type { ProductAuditEvent } from "../../../revenue-recovery/audit.js";
+import { RevenueRecoveryError } from "../../../revenue-recovery/errors.js";
 import type {
   LeadEventRepository,
   LeadRepository,
   ProductAuditRepository,
   RecoveryAttemptRepository,
   RecoveryCaseRepository,
+  RecoveryCaseRunBindingSwap,
   RecoveryConfigRepository,
   RecoveryTemplateRepository,
   RevenueAttributionRepository,
@@ -227,7 +229,7 @@ export class PostgresRecoveryCaseRepository implements RecoveryCaseRepository {
 
   async save(recoveryCase: RecoveryCase): Promise<void> {
     const parsed = parseRecoveryCase(recoveryCase);
-    await this.db.query(
+    const res = await this.db.query(
       `INSERT INTO revenue_recovery_cases (
          recovery_case_id, gap_identity_key, lead_id, customer_account_id, project_id,
          status, payload, record_revision, created_at, updated_at
@@ -236,7 +238,8 @@ export class PostgresRecoveryCaseRepository implements RecoveryCaseRepository {
          status = EXCLUDED.status,
          payload = EXCLUDED.payload,
          record_revision = EXCLUDED.record_revision,
-         updated_at = EXCLUDED.updated_at`,
+         updated_at = EXCLUDED.updated_at
+       WHERE revenue_recovery_cases.record_revision = EXCLUDED.record_revision - 1`,
       [
         parsed.recoveryCaseId,
         parsed.gapIdentityKey,
@@ -250,6 +253,50 @@ export class PostgresRecoveryCaseRepository implements RecoveryCaseRepository {
         parsed.updatedAt,
       ],
     );
+    if (res.rowCount !== 1) {
+      throw new RevenueRecoveryError(
+        "RECOVERY_CAS_CONFLICT",
+        "Recovery case changed concurrently",
+        { recoveryCaseId: parsed.recoveryCaseId },
+      );
+    }
+  }
+
+  async compareAndSetOrchestratorRunBinding(
+    input: RecoveryCaseRunBindingSwap,
+  ): Promise<RecoveryCase | null> {
+    const current = await this.getById(input.recoveryCaseId);
+    if (!current) return null;
+    const next = parseRecoveryCase({
+      ...current,
+      orchestratorRunId: input.orchestratorRunId,
+      objectiveId: input.objectiveId,
+      recoveryObjectiveVersion: input.objectiveVersion,
+      updatedAt: input.updatedAt,
+      recordRevision: input.expectedRecordRevision + 1,
+    });
+    // The predicate, not the read above, is authoritative: it re-checks every
+    // expectation against the row at UPDATE time.
+    const res = await this.db.query(
+      `UPDATE revenue_recovery_cases
+       SET payload = $2::jsonb,
+           record_revision = $3,
+           updated_at = $4
+       WHERE recovery_case_id = $1
+         AND record_revision = $5
+         AND payload->>'orchestratorRunId' = $6
+         AND COALESCE((payload->>'recoveryObjectiveVersion')::int, 1) = $7`,
+      [
+        input.recoveryCaseId,
+        JSON.stringify(next),
+        next.recordRevision,
+        next.updatedAt,
+        input.expectedRecordRevision,
+        input.expectedOrchestratorRunId,
+        input.expectedObjectiveVersion,
+      ],
+    );
+    return res.rowCount === 1 ? next : null;
   }
 }
 

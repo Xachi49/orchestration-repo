@@ -15,7 +15,10 @@ import {
   FixedValidationTokenEstimator,
 } from "./index.js";
 import { MAX_SEMANTIC_REVISION_ATTEMPTS } from "./service.js";
-import { EXAMPLE_BUDGET } from "../control-plane/fixtures.js";
+import {
+  EXAMPLE_BUDGET,
+  EXAMPLE_CAPABILITIES,
+} from "../control-plane/fixtures.js";
 
 function reviseAssessment(ruleId: string): ContextualValidationAssessment {
   return {
@@ -334,20 +337,23 @@ describe("ValidationService — independence from the model", () => {
   });
 
   it("HUMAN_APPROVAL_REQUIRED leaves the run VALIDATING", async () => {
-    const model = new FakeValidationModel();
-    model.setReviseRecommendation({
-      ruleId: "CONTEXT_MISSING_VERIFICATION",
-      affectedStepIds: ["step_patch"],
+    const stack = createLocalValidationStack({
+      capabilities: EXAMPLE_CAPABILITIES.map((capability) =>
+        capability.capabilityId === "CREATE_LOCAL_PATCH"
+          ? { ...capability, approvalRequirement: "REQUIRED" as const }
+          : capability,
+      ),
     });
-    // Exhaust revisions to force HUMAN_APPROVAL_REQUIRED without needing
-    // approval-eligible-only findings.
-    const { stack, runId } = await validatableRun(model);
-    // Force approval-eligible non-blocking finding by using a soft assessment
-    // that DecisionEngine routes to HUMAN_APPROVAL via approvalEligible finding.
-    // Simpler: use capability CONDITIONAL path — instead reuse REVISE exhaustion.
+    const admitted = await stack.admission.admit(exampleAdmissionRequest());
+    if (admitted.outcome !== "ADMITTED") {
+      throw new Error("expected ADMITTED");
+    }
+    const runId = admitted.runId;
+    await stack.ingestion.ingest(runId, EXAMPLE_PROJECT_ID, EXAMPLE_ENVIRONMENT);
+    await stack.planning.plan(runId);
     const result = await stack.validation.validate(runId);
-    // With repeated same fingerprint after one revision → HUMAN_APPROVAL_REQUIRED
     expect(result.decision).toBe("HUMAN_APPROVAL_REQUIRED");
+    expect(result.reasonCodes).toEqual(["APPROVAL_ELIGIBLE_FINDING"]);
     expect((await stack.runs.getById(runId))?.state).toBe("VALIDATING");
   });
 });
@@ -400,7 +406,7 @@ describe("ValidationService — revision inference accounting", () => {
     );
   });
 
-  it("escalates when revision budget is insufficient rather than overspending", async () => {
+  it("fails closed when revision budget is insufficient rather than overspending", async () => {
     const model = new FakeValidationModel();
     model.setReviseRecommendation({
       ruleId: "CONTEXT_BUDGET_PRESSURE",
@@ -457,8 +463,23 @@ describe("ValidationService — revision inference accounting", () => {
     });
 
     const result = await stack.validation.validate(admitted.runId);
-    expect(result.decision).toBe("HUMAN_APPROVAL_REQUIRED");
+    // The unresolved contextual blocker is approvalEligible=false, so the
+    // revision failure cannot become an approvable escalation.
+    expect(result.decision).toBe("BLOCK");
+    expect(result.reasonCodes).toEqual([
+      "REVISION_FAILED",
+      "NON_APPROVAL_ELIGIBLE_BLOCKING_FINDING",
+    ]);
     expect(result.exception?.exceptionType).toBe("REVISION_BUDGET_EXCEEDED");
+    expect(result.exception?.decisionClass).toBe("BLOCK");
+    const failure = result.findings.find(
+      (finding) => finding.ruleId === "REVISION_BUDGET_EXCEEDED",
+    );
+    expect(failure?.metadata).toMatchObject({
+      code: "REVISION_BUDGET_EXCEEDED",
+      causeClass: "REVISION_BUDGET",
+      causeCode: "REVISION_BUDGET_EXCEEDED",
+    });
     expect((await stack.runs.getById(admitted.runId))?.state).toBe(
       "VALIDATING",
     );
@@ -474,7 +495,7 @@ describe("ValidationService — revision inference accounting", () => {
 });
 
 describe("ValidationService — bounded revision", () => {
-  it("escalates a repeated semantic violation after one revision", async () => {
+  it("blocks a repeated non-approval-eligible semantic violation after one revision", async () => {
     const model = new FakeValidationModel();
     model.setReviseRecommendation({
       ruleId: "CONTEXT_MISSING_VERIFICATION",
@@ -483,22 +504,26 @@ describe("ValidationService — bounded revision", () => {
     const { stack, runId } = await validatableRun(model);
 
     const result = await stack.validation.validate(runId);
-    expect(result.decision).toBe("HUMAN_APPROVAL_REQUIRED");
-    expect(result.reasonCodes).toEqual(["REPEATED_SEMANTIC_VIOLATION"]);
+    expect(result.decision).toBe("BLOCK");
+    expect(result.reasonCodes).toEqual([
+      "REPEATED_SEMANTIC_VIOLATION",
+      "NON_APPROVAL_ELIGIBLE_BLOCKING_FINDING",
+    ]);
     expect(result.exception?.exceptionType).toBe("REPEATED_SEMANTIC_VIOLATION");
+    expect(result.exception?.decisionClass).toBe("BLOCK");
     expect(result.planVersion).toBe(2);
     expect(result.revisionAttemptsUsed).toBe(1);
 
     const versions = await stack.plans.listByRunId(runId);
     expect(versions.map((entry) => entry.planVersion)).toEqual([1, 2]);
     expect(versions[0]?.status).toBe("SUPERSEDED");
-    expect(versions[1]?.status).toBe("VALIDATED_APPROVAL_REQUIRED");
+    expect(versions[1]?.status).toBe("VALIDATED_BLOCK");
     expect(result.supersededPlanIds).toEqual([versions[0]?.planId]);
 
     const decisions = await stack.validation.listDecisions(runId);
     expect(decisions.map((entry) => entry.decision)).toEqual([
       "REVISE",
-      "HUMAN_APPROVAL_REQUIRED",
+      "BLOCK",
     ]);
     const run = await stack.runs.getById(runId);
     expect(run?.state).toBe("VALIDATING");
@@ -514,11 +539,15 @@ describe("ValidationService — bounded revision", () => {
     const { stack, runId } = await validatableRun(model);
 
     const result = await stack.validation.validate(runId);
-    expect(result.decision).toBe("HUMAN_APPROVAL_REQUIRED");
-    expect(result.reasonCodes).toEqual(["REVISION_ATTEMPTS_EXHAUSTED"]);
+    expect(result.decision).toBe("BLOCK");
+    expect(result.reasonCodes).toEqual([
+      "REVISION_ATTEMPTS_EXHAUSTED",
+      "NON_APPROVAL_ELIGIBLE_BLOCKING_FINDING",
+    ]);
     expect(result.exception?.exceptionType).toBe(
       "REVISION_ATTEMPTS_EXHAUSTED",
     );
+    expect(result.exception?.decisionClass).toBe("BLOCK");
     expect(result.planVersion).toBe(3);
     expect(result.revisionAttemptsUsed).toBe(MAX_SEMANTIC_REVISION_ATTEMPTS);
 
@@ -527,7 +556,7 @@ describe("ValidationService — bounded revision", () => {
     expect(versions.map((entry) => entry.status)).toEqual([
       "SUPERSEDED",
       "SUPERSEDED",
-      "VALIDATED_APPROVAL_REQUIRED",
+      "VALIDATED_BLOCK",
     ]);
     expect(model.callCount).toBe(3);
 
@@ -535,7 +564,7 @@ describe("ValidationService — bounded revision", () => {
     expect(decisions.map((entry) => entry.decision)).toEqual([
       "REVISE",
       "REVISE",
-      "HUMAN_APPROVAL_REQUIRED",
+      "BLOCK",
     ]);
   });
 

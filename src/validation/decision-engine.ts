@@ -1,6 +1,8 @@
-import type {
-  ValidationDecisionClass,
-  ValidationFinding,
+import {
+  isNonApprovalEligibleBlockingFinding,
+  nonApprovalEligibleBlockingFindings,
+  type ValidationDecisionClass,
+  type ValidationFinding,
 } from "../domain/validation/index.js";
 
 export const VALIDATION_REASON_CODES = [
@@ -13,6 +15,11 @@ export const VALIDATION_REASON_CODES = [
   "APPROVAL_ELIGIBLE_FINDING",
   /** Emitted by ValidationService when a permitted revision could not be produced. */
   "REVISION_FAILED",
+  /**
+   * An escalation was refused because an unresolved blocking finding is not
+   * approval-eligible. Always accompanies BLOCK.
+   */
+  "NON_APPROVAL_ELIGIBLE_BLOCKING_FINDING",
 ] as const;
 export type ValidationReasonCode = (typeof VALIDATION_REASON_CODES)[number];
 
@@ -32,6 +39,37 @@ export interface ValidationDecisionOutcome {
 }
 
 /**
+ * The only way Phase 5 produces HUMAN_APPROVAL_REQUIRED.
+ *
+ * HUMAN_ESCALATION != UNLIMITED_HUMAN_OVERRIDE: when any unresolved blocking
+ * finding is approvalEligible=false the escalation fails closed to BLOCK,
+ * regardless of why automation stopped (repeated violation, exhausted
+ * attempts, or revision failure) and regardless of any approval-eligible
+ * finding added by the escalation itself.
+ */
+export function boundedHumanEscalation(input: {
+  findings: readonly ValidationFinding[];
+  reasonCode: ValidationReasonCode;
+  decidingFindingIds: readonly string[];
+}): ValidationDecisionOutcome {
+  const nonApprovable = nonApprovalEligibleBlockingFindings(input.findings);
+  if (nonApprovable.length > 0) {
+    return {
+      decision: "BLOCK",
+      reasonCodes: [input.reasonCode, "NON_APPROVAL_ELIGIBLE_BLOCKING_FINDING"],
+      requiresHumanAction: true,
+      decidingFindingIds: nonApprovable.map((finding) => finding.findingId),
+    };
+  }
+  return {
+    decision: "HUMAN_APPROVAL_REQUIRED",
+    reasonCodes: [input.reasonCode],
+    requiresHumanAction: true,
+    decidingFindingIds: [...input.decidingFindingIds],
+  };
+}
+
+/**
  * Deterministic decision precedence.
  *
  * 1. Unrepairable, non-approvable blocking violation → BLOCK.
@@ -47,13 +85,16 @@ export interface ValidationDecisionOutcome {
  * 4. Approval-eligible non-blocking finding → HUMAN_APPROVAL_REQUIRED.
  * 5. Otherwise → PASS.
  *
+ * Every HUMAN_APPROVAL_REQUIRED above passes through boundedHumanEscalation:
+ * an unresolved blocking approvalEligible=false finding turns it into BLOCK.
+ *
  * PASS is not approval. The run remains in VALIDATING; Phase 6 owns approval.
  */
 export class ValidationDecisionEngine {
   decide(input: ValidationDecisionInput): ValidationDecisionOutcome {
     const hardBlocking = input.findings.filter(
       (finding) =>
-        finding.blocking && !finding.repairable && !finding.approvalEligible,
+        !finding.repairable && isNonApprovalEligibleBlockingFinding(finding),
     );
     if (hardBlocking.length > 0) {
       return {
@@ -69,14 +110,15 @@ export class ValidationDecisionEngine {
         finding.blocking && !finding.repairable && finding.approvalEligible,
     );
     if (approvableBlocking.length > 0) {
-      return {
-        decision: "HUMAN_APPROVAL_REQUIRED",
-        reasonCodes: ["APPROVAL_REQUIRED_NON_REPAIRABLE"],
-        requiresHumanAction: true,
+      // A revision envelope cannot be built beside an unrepairable blocker, so
+      // any repairable non-approvable blocker here stays unresolved.
+      return boundedHumanEscalation({
+        findings: input.findings,
+        reasonCode: "APPROVAL_REQUIRED_NON_REPAIRABLE",
         decidingFindingIds: approvableBlocking.map(
           (finding) => finding.findingId,
         ),
-      };
+      });
     }
 
     const repairableBlocking = input.findings.filter(
@@ -88,22 +130,20 @@ export class ValidationDecisionEngine {
         repeated.has(finding.semanticFingerprint),
       );
       if (recurring.length > 0) {
-        return {
-          decision: "HUMAN_APPROVAL_REQUIRED",
-          reasonCodes: ["REPEATED_SEMANTIC_VIOLATION"],
-          requiresHumanAction: true,
+        return boundedHumanEscalation({
+          findings: input.findings,
+          reasonCode: "REPEATED_SEMANTIC_VIOLATION",
           decidingFindingIds: recurring.map((finding) => finding.findingId),
-        };
+        });
       }
       if (input.remainingRevisionAttempts <= 0) {
-        return {
-          decision: "HUMAN_APPROVAL_REQUIRED",
-          reasonCodes: ["REVISION_ATTEMPTS_EXHAUSTED"],
-          requiresHumanAction: true,
+        return boundedHumanEscalation({
+          findings: input.findings,
+          reasonCode: "REVISION_ATTEMPTS_EXHAUSTED",
           decidingFindingIds: repairableBlocking.map(
             (finding) => finding.findingId,
           ),
-        };
+        });
       }
       return {
         decision: "REVISE",

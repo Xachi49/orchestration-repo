@@ -10,7 +10,11 @@ import {
   parseApprovalDecisionCard,
   type ApprovalDecisionCard,
 } from "../domain/authorization/index.js";
-import type { PlanningException } from "../validation/exception.js";
+import {
+  planningExceptionSummaryFromDecision,
+  summarizePlanningException,
+  type PlanningException,
+} from "../validation/exception.js";
 import {
   capabilitySetFingerprint,
   uniqueCapabilitiesForPlanActions,
@@ -155,13 +159,11 @@ export function buildApprovalDecisionCard(input: {
     expiresAt: input.expiresAt,
   };
 
-  if (input.planningException) {
-    card.planningExceptionSummary = {
-      exceptionId: input.planningException.exceptionId,
-      exceptionType: input.planningException.exceptionType,
-      message: input.planningException.message,
-      reasonCodes: [...input.planningException.reasonCodes],
-    };
+  const exceptionSummary = input.planningException
+    ? summarizePlanningException(input.planningException)
+    : planningExceptionSummaryFromDecision(input.decision);
+  if (exceptionSummary) {
+    card.planningExceptionSummary = exceptionSummary;
   }
 
   return parseApprovalDecisionCard(card);

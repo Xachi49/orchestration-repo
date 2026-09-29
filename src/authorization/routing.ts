@@ -39,6 +39,7 @@ import {
   type DecisionNonceGenerator,
 } from "./decision-nonce.js";
 import { AuthorizationError } from "./errors.js";
+import { assertValidationApprovalEligible } from "./approval-eligibility.js";
 import type { AuthorizationRoutingOutcome } from "./result.js";
 import { commitRunTransition } from "../admission/run-transition.js";
 import type { EventStore } from "../admission/event-store.js";
@@ -163,6 +164,8 @@ export class AuthorizationRoutingService {
       decision.decision === "PASS" ||
       decision.decision === "HUMAN_APPROVAL_REQUIRED"
     ) {
+      // Before any nonce or ApprovalRequest exists.
+      assertValidationApprovalEligible(decision);
       return this.routeForApproval(runId, plan, decision);
     }
 

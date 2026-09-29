@@ -38,8 +38,14 @@ export function mapRecoveryCaseToAdmissionRequest(input: {
     ],
     constraints: [
       `Allowed channels: ${allowedChannels.join(",") || "NONE"}`,
-      `Max SMS attempts: ${input.config.maxSmsAttempts}`,
-      `Max email attempts: ${input.config.maxEmailAttempts}`,
+      // Attempt limits for channels the contact policy excludes would read as
+      // objective scope for those channels.
+      ...(allowedChannels.includes("SMS")
+        ? [`Max SMS attempts: ${input.config.maxSmsAttempts}`]
+        : []),
+      ...(allowedChannels.includes("EMAIL")
+        ? [`Max email attempts: ${input.config.maxEmailAttempts}`]
+        : []),
       `Contact window: ${input.config.contactWindow.startHourLocal}-${input.config.contactWindow.endHourLocal} ${input.config.timezone}`,
       "No contact after opt-out / DO_NOT_CONTACT",
       "Recipient must match canonical lead channel",

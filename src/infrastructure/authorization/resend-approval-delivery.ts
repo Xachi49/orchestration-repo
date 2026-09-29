@@ -72,6 +72,24 @@ export function approvalDeliveryIdempotencyKey(
   return `${APPROVAL_DELIVERY_IDEMPOTENCY_PREFIX}${approvalRequestId}`;
 }
 
+function planningExceptionLines(card: ApprovalDecisionCard): string[] {
+  const summary = card.planningExceptionSummary;
+  if (!summary) {
+    return [];
+  }
+  const cause =
+    summary.causeClass !== undefined
+      ? ` cause=${summary.causeClass}${
+          summary.causeCode !== undefined ? `/${summary.causeCode}` : ""
+        }`
+      : "";
+  return [
+    "Planning exception:",
+    `${summary.exceptionType} (${summary.reasonCodes.join(", ")})${cause}`,
+    "",
+  ];
+}
+
 /**
  * Builds operator-facing email text. Includes plaintext nonce for human decide.
  * Callers must not log the returned string (contains nonce).
@@ -127,6 +145,7 @@ export function buildApprovalDeliveryEmailText(input: {
     "Approval-eligible finding summaries:",
     findings,
     "",
+    ...planningExceptionLines(card),
     "Decision nonce (one-time; present with your APPROVE/REJECT decision):",
     decisionNonce,
     "",

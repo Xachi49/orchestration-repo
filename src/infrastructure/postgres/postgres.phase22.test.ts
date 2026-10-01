@@ -23,7 +23,9 @@ import {
   seedP22Authority,
 } from "./postgres.phase22.helpers.js";
 
-const ANCHOR = "2026-09-01T00:00:00.000Z";
+// Stacks run on SystemClock, so lifecycle windows must bracket real time:
+// effectiveFrom in the past, governance-case expiry in the future.
+const ANCHOR = new Date(Date.now() - 7 * 86_400_000).toISOString();
 
 describe("Phase 22 postgres governed federation", () => {
   it("B-unit. preserves FederationError through withTransaction", async () => {

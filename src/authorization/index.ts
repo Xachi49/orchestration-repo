@@ -24,6 +24,11 @@ export {
 } from "./authorization-record-repository.js";
 
 export {
+  assessHistoricalExecutionAuthority,
+  type HistoricalExecutionAuthority,
+} from "./historical-authority.js";
+
+export {
   InMemoryModificationRequestRepository,
   type ModificationRequestRepository,
 } from "./modification-request-repository.js";

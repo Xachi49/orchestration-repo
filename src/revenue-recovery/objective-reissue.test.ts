@@ -408,6 +408,7 @@ describe("objective reissue — corrected objective + replacement run", () => {
       targetObjectiveVersion: 2,
       predecessorRunId: h.runId,
       predecessorRunState: "REJECTED",
+      predecessorAuthority: "NONE",
       replacementRunId: result.replacementRunId,
       reason: REASON,
       admissionOutcome: "ADMITTED",

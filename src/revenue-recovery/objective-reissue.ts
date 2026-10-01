@@ -18,6 +18,7 @@ import type { AdmissionResult } from "../admission/result.js";
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
 import type { RunRecord, RunRepository } from "../admission/run-repository.js";
 import type { ApprovalRequestRepository } from "../authorization/approval-request-repository.js";
+import { assessHistoricalExecutionAuthority } from "../authorization/historical-authority.js";
 import type { AuthorizationRecordRepository } from "../authorization/authorization-record-repository.js";
 import { objectiveFingerprint } from "../domain/objective/fingerprint.js";
 import type { Objective } from "../domain/objective/objective.js";
@@ -310,12 +311,13 @@ export class RevenueRecoveryObjectiveReissueService {
       );
     }
 
-    const predecessor = await this.assertPredecessorEligible({
-      recoveryCase,
-      predecessorRunId,
-      objectiveId,
-      sourceObjectiveVersion,
-    });
+    const { run: predecessor, authorityState: predecessorAuthority } =
+      await this.assertPredecessorEligible({
+        recoveryCase,
+        predecessorRunId,
+        objectiveId,
+        sourceObjectiveVersion,
+      });
 
     const targetObjectiveVersion = sourceObjectiveVersion + 1;
     const reissueId = objectiveReissueId({
@@ -432,6 +434,7 @@ export class RevenueRecoveryObjectiveReissueService {
         targetObjectiveVersion,
         predecessorRunId,
         predecessorRunState: predecessor.state,
+        predecessorAuthority,
         replacementRunId,
         reason: request.reason,
         admissionOutcome,
@@ -474,7 +477,10 @@ export class RevenueRecoveryObjectiveReissueService {
     predecessorRunId: string;
     objectiveId: string;
     sourceObjectiveVersion: number;
-  }): Promise<RunRecord> {
+  }): Promise<{
+    run: RunRecord;
+    authorityState: "NONE" | "HISTORICAL_SUPERSEDED_APPROVE_ONLY";
+  }> {
     const { orchestrator } = this.deps;
     const { predecessorRunId } = input;
     const run = await orchestrator.runs.getById(predecessorRunId);
@@ -512,25 +518,30 @@ export class RevenueRecoveryObjectiveReissueService {
       );
     }
 
-    // A REJECT / REQUEST_MODIFICATION record is history, not authority.
-    const records = await orchestrator.authorizationRecords.listByRun(
-      predecessorRunId,
-    );
-    if (records.some((r) => r.decision === "APPROVE")) {
-      throw new RevenueRecoveryError(
-        "OBJECTIVE_REISSUE_AUTHORITY_PRESENT",
-        "Predecessor run holds an APPROVE AuthorizationRecord",
-        { predecessorRunId },
-      );
-    }
+    // A REJECT / REQUEST_MODIFICATION record is history, not authority; so is
+    // an APPROVE bound only to a SUPERSEDED plan and followed by a later decision.
     const requests = await orchestrator.approvalRequests.listByRun(
       predecessorRunId,
     );
-    if (requests.some((r) => r.status === "APPROVED")) {
+    const authority = assessHistoricalExecutionAuthority({
+      runId: predecessorRunId,
+      authorizationRecords: await orchestrator.authorizationRecords.listByRun(
+        predecessorRunId,
+      ),
+      approvalRequests: requests,
+      plans: await orchestrator.plans.listByRunId(predecessorRunId),
+    });
+    if (authority.kind === "CURRENT_APPROVE" || authority.kind === "AMBIGUOUS") {
       throw new RevenueRecoveryError(
         "OBJECTIVE_REISSUE_AUTHORITY_PRESENT",
-        "Predecessor run holds an APPROVED ApprovalRequest",
-        { predecessorRunId },
+        authority.kind === "CURRENT_APPROVE"
+          ? "Predecessor run holds effective APPROVE authority"
+          : "Predecessor run APPROVE history cannot be proven historical",
+        {
+          predecessorRunId,
+          authorityState: authority.kind,
+          reasonCode: authority.reasonCode,
+        },
       );
     }
     if (requests.some((r) => r.status === "PENDING")) {
@@ -560,7 +571,7 @@ export class RevenueRecoveryObjectiveReissueService {
         { predecessorRunId },
       );
     }
-    return run;
+    return { run, authorityState: authority.kind };
   }
 
   /**

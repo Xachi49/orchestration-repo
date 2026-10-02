@@ -19,7 +19,7 @@ import {
   formatRecoveryCaseTarget,
   formatRecoveryLeadTarget,
   formatRecoveryTemplateTarget,
-  parseRecoveryOutreachTargets,
+  parseRecoveryTemplateTargetValue,
   RECOVERY_TARGET_PREFIX,
 } from "./target-grammar.js";
 import type {
@@ -406,60 +406,82 @@ export class RevenueRecoveryTargetBinder {
     return targets;
   }
 
+  /**
+   * Model targets are suggestions; each authority dimension is judged on its
+   * own. A recognizable claim that differs from canonical truth fails closed.
+   * Absent / empty claims are filled. A malformed rr_template: claim names no
+   * template, so it carries no authority and is replaced canonically.
+   */
   private assertNoModelConflict(
     modelTargets: readonly string[],
     binding: CanonicalRecoveryTargetBinding,
     checkTemplate: boolean,
   ): void {
-    const parsed = parseRecoveryOutreachTargets(modelTargets, {
-      requireTemplate: false,
-    });
-    // Empty / incomplete model targets are filled — not a conflict.
-    if (!parsed.ok) {
-      if (parsed.code === "RECOVERY_TARGETS_MISSING") {
-        return;
-      }
-      throw new RecoveryTargetBinderError(
-        "MODEL_TARGET_CONFLICT",
-        parsed.message,
-        parsed.details,
-      );
-    }
-
-    if (parsed.value.recoveryCaseId !== binding.recoveryCaseId) {
+    const modelCaseId = firstModelTargetValue(
+      modelTargets,
+      RECOVERY_TARGET_PREFIX.case,
+    );
+    if (modelCaseId !== undefined && modelCaseId !== binding.recoveryCaseId) {
       throw new RecoveryTargetBinderError(
         "MODEL_TARGET_CONFLICT",
         "Model rr_case: conflicts with canonical RecoveryCase",
         {
-          model: parsed.value.recoveryCaseId,
+          model: modelCaseId,
           canonical: binding.recoveryCaseId,
         },
       );
     }
-    if (parsed.value.leadId !== binding.leadId) {
+    const modelLeadId = firstModelTargetValue(
+      modelTargets,
+      RECOVERY_TARGET_PREFIX.lead,
+    );
+    if (modelLeadId !== undefined && modelLeadId !== binding.leadId) {
       throw new RecoveryTargetBinderError(
         "MODEL_TARGET_CONFLICT",
         "Model rr_lead: conflicts with canonical Lead",
         {
-          model: parsed.value.leadId,
+          model: modelLeadId,
           canonical: binding.leadId,
         },
       );
     }
-    if (checkTemplate && parsed.value.templateId !== undefined) {
-      if (
-        parsed.value.templateId !== binding.templateId ||
-        parsed.value.templateVersion !== binding.templateVersion
-      ) {
-        throw new RecoveryTargetBinderError(
-          "MODEL_TARGET_CONFLICT",
-          "Model rr_template: conflicts with canonical template binding",
-          {
-            model: `${parsed.value.templateId}@${parsed.value.templateVersion}`,
-            canonical: `${binding.templateId}@${binding.templateVersion}`,
-          },
-        );
-      }
+    if (!checkTemplate) {
+      return;
+    }
+    const modelTemplateRaw = firstModelTargetValue(
+      modelTargets,
+      RECOVERY_TARGET_PREFIX.template,
+    );
+    if (modelTemplateRaw === undefined) {
+      return;
+    }
+    const modelTemplate = parseRecoveryTemplateTargetValue(modelTemplateRaw);
+    if (!modelTemplate.ok) {
+      return;
+    }
+    if (
+      modelTemplate.value.templateId !== binding.templateId ||
+      modelTemplate.value.templateVersion !== binding.templateVersion
+    ) {
+      throw new RecoveryTargetBinderError(
+        "MODEL_TARGET_CONFLICT",
+        "Model rr_template: conflicts with canonical template binding",
+        {
+          model: `${modelTemplate.value.templateId}@${modelTemplate.value.templateVersion}`,
+          canonical: `${binding.templateId}@${binding.templateVersion}`,
+        },
+      );
     }
   }
+}
+
+/** First occurrence per prefix, as in the shared parseRecoveryOutreachTargets. */
+function firstModelTargetValue(
+  modelTargets: readonly string[],
+  prefix: string,
+): string | undefined {
+  const value = modelTargets
+    .find((t) => t.startsWith(prefix))
+    ?.slice(prefix.length);
+  return value ? value : undefined;
 }

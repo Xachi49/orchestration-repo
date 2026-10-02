@@ -79,25 +79,12 @@ export function parseRecoveryOutreachTargets(
   let templateId: string | undefined;
   let templateVersion: number | undefined;
   if (templateRaw) {
-    const at = templateRaw.lastIndexOf("@");
-    if (at <= 0) {
-      return {
-        ok: false,
-        code: "RECOVERY_TEMPLATE_MALFORMED",
-        message: "rr_template must be templateId@version",
-        details: { templateRaw },
-      };
+    const template = parseRecoveryTemplateTargetValue(templateRaw);
+    if (!template.ok) {
+      return template;
     }
-    templateId = templateRaw.slice(0, at);
-    templateVersion = Number(templateRaw.slice(at + 1));
-    if (!Number.isInteger(templateVersion) || templateVersion < 1) {
-      return {
-        ok: false,
-        code: "RECOVERY_TEMPLATE_VERSION_INVALID",
-        message: "Invalid recovery template version",
-        details: { templateRaw },
-      };
-    }
+    templateId = template.value.templateId;
+    templateVersion = template.value.templateVersion;
   } else if (contract.requireTemplate) {
     return {
       ok: false,
@@ -116,6 +103,43 @@ export function parseRecoveryOutreachTargets(
       ...(templateVersion !== undefined ? { templateVersion } : {}),
       ...(note !== undefined ? { note } : {}),
     },
+  };
+}
+
+/**
+ * Strict parse of the value after `rr_template:` (`templateId@version`).
+ */
+export function parseRecoveryTemplateTargetValue(
+  templateRaw: string,
+):
+  | { ok: true; value: { templateId: string; templateVersion: number } }
+  | {
+      ok: false;
+      code: "RECOVERY_TEMPLATE_MALFORMED" | "RECOVERY_TEMPLATE_VERSION_INVALID";
+      message: string;
+      details: Readonly<Record<string, unknown>>;
+    } {
+  const at = templateRaw.lastIndexOf("@");
+  if (at <= 0) {
+    return {
+      ok: false,
+      code: "RECOVERY_TEMPLATE_MALFORMED",
+      message: "rr_template must be templateId@version",
+      details: { templateRaw },
+    };
+  }
+  const templateVersion = Number(templateRaw.slice(at + 1));
+  if (!Number.isInteger(templateVersion) || templateVersion < 1) {
+    return {
+      ok: false,
+      code: "RECOVERY_TEMPLATE_VERSION_INVALID",
+      message: "Invalid recovery template version",
+      details: { templateRaw },
+    };
+  }
+  return {
+    ok: true,
+    value: { templateId: templateRaw.slice(0, at), templateVersion },
   };
 }
 

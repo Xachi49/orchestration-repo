@@ -887,7 +887,10 @@ describe("PostgreSQL Phase 11 acceptance", () => {
       await leases.acquire({ coordinationKey: execKey, phase: "execution", ownerId: "dead_worker" });
       await leases.acquire({ coordinationKey: verKey, phase: "verification", ownerId: "dead_worker" });
       await leases.acquire({ coordinationKey: learnKey, phase: "learning", ownerId: "dead_worker" });
-      await waitUntilPostgresLeaseExpired(env.db, planKey);
+      // Recovery must see every lease abandoned at once, not just the first.
+      for (const key of [planKey, execKey, verKey, learnKey]) {
+        await waitUntilPostgresLeaseExpired(env.db, key);
+      }
 
       // Seed unsettled outbox record
       const outbox = new PostgresTransactionalOutbox(env.db);

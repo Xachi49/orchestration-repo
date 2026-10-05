@@ -7,9 +7,11 @@ import {
   type ProductRuntimeEnvironment,
   type RecoveryMessagingProvider,
   type RecoveryObjectiveReissueOrchestratorPorts,
+  type RecoveryRunReplacementOrchestratorPorts,
   type RecoveryPilotConfig,
   type ResendTransport,
 } from "../revenue-recovery/index.js";
+import type { AdmissionIdentityGenerator } from "../admission/identity.js";
 import type { ObjectiveAdmissionService } from "../admission/service.js";
 import type { ProjectRegistry } from "../control-plane/projects/registry.js";
 import type { PostgresDatabase } from "../infrastructure/postgres/database.js";
@@ -36,6 +38,10 @@ export function createMemoryRevenueRecoveryService(input?: {
   resendTransport?: ResendTransport;
   projects?: ProjectRegistry;
   orchestrator?: RecoveryObjectiveReissueOrchestratorPorts;
+  runReplacement?: {
+    orchestrator: RecoveryRunReplacementOrchestratorPorts;
+    identities: AdmissionIdentityGenerator;
+  };
 }): {
   service: RevenueRecoveryService;
   messaging: RecoveryMessagingProvider;
@@ -61,6 +67,7 @@ export function createMemoryRevenueRecoveryService(input?: {
     ...(input?.admission ? { admission: input.admission } : {}),
     ...(input?.projects ? { projects: input.projects } : {}),
     ...(input?.orchestrator ? { orchestrator: input.orchestrator } : {}),
+    ...(input?.runReplacement ? { runReplacement: input.runReplacement } : {}),
   });
   return { service, messaging, repos, pilotConfig };
 }
@@ -80,6 +87,10 @@ export function createPostgresRevenueRecoveryService(input: {
   resendTransport?: ResendTransport;
   projects?: ProjectRegistry;
   orchestrator?: RecoveryObjectiveReissueOrchestratorPorts;
+  runReplacement?: {
+    orchestrator: RecoveryRunReplacementOrchestratorPorts;
+    identities: AdmissionIdentityGenerator;
+  };
 }): {
   service: RevenueRecoveryService;
   messaging: RecoveryMessagingProvider;
@@ -126,6 +137,25 @@ export function createPostgresRevenueRecoveryService(input: {
         );
         return fn();
       }),
+    ...(input.runReplacement
+      ? {
+          runReplacement: {
+            orchestrator: input.runReplacement.orchestrator,
+            identities: input.runReplacement.identities,
+            withReplacementLock: <T>(
+              recoveryCaseId: string,
+              fn: () => Promise<T>,
+            ) =>
+              input.db.withTransaction(async () => {
+                await input.db.query(
+                  `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+                  [`rr-run-replacement:${recoveryCaseId}`],
+                );
+                return fn();
+              }),
+          },
+        }
+      : {}),
   });
   return { service, messaging, pilotConfig };
 }

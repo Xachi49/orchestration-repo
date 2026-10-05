@@ -20,8 +20,46 @@ export class InMemoryRunRepository implements RunRepository {
     if (this.runs.has(parsed.runId)) {
       throw new Error(`Run already exists: ${parsed.runId}`);
     }
+    for (const existing of this.runs.values()) {
+      if (existing.idempotencyKey === parsed.idempotencyKey) {
+        throw new Error(
+          `idempotency key already exists: ${parsed.idempotencyKey}`,
+        );
+      }
+      if (
+        existing.projectId === parsed.projectId &&
+        existing.objectiveId === parsed.objectiveId &&
+        existing.objectiveVersion === parsed.objectiveVersion &&
+        existing.requestedEnvironment === parsed.requestedEnvironment &&
+        existing.runAttempt === parsed.runAttempt
+      ) {
+        throw new Error(
+          `logical run identity already exists for attempt ${parsed.runAttempt}`,
+        );
+      }
+    }
     this.runs.set(parsed.runId, Object.freeze(parsed));
     return parsed;
+  }
+
+  async maxRunAttempt(identity: {
+    projectId: string;
+    objectiveId: string;
+    objectiveVersion: number;
+    requestedEnvironment: string;
+  }): Promise<number> {
+    let max = 0;
+    for (const run of this.runs.values()) {
+      if (
+        run.projectId === identity.projectId &&
+        run.objectiveId === identity.objectiveId &&
+        run.objectiveVersion === identity.objectiveVersion &&
+        run.requestedEnvironment === identity.requestedEnvironment
+      ) {
+        max = Math.max(max, run.runAttempt);
+      }
+    }
+    return max;
   }
 
   async getById(runId: string): Promise<RunRecord | null> {

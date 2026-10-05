@@ -1862,6 +1862,23 @@ export async function createPostgresOrchestratorStack(options: {
         authorizationRecords,
         executionAttempts,
       },
+      runReplacement: {
+        identities: new UuidAdmissionIdentityGenerator(),
+        orchestrator: {
+          runs,
+          objectives,
+          plans,
+          approvalRequests,
+          authorizationRecords,
+          executionAttempts,
+          planning: planningCoordinator,
+          usage: planningUsage,
+          controlPlane,
+          events,
+          idempotency,
+          locks: admissionLocks,
+        },
+      },
       ...(options.revenueRecoveryRuntimeEnvironment
         ? { runtimeEnvironment: options.revenueRecoveryRuntimeEnvironment }
         : {}),

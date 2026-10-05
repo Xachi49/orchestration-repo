@@ -45,6 +45,12 @@ import {
   type RecoveryObjectiveReissueResult,
 } from "./objective-reissue.js";
 import {
+  RecoveryRunReplacementService,
+  type RecoveryRunReplacementOrchestratorPorts,
+  type RecoveryRunReplacementResult,
+} from "./run-replacement.js";
+import type { AdmissionIdentityGenerator } from "../admission/identity.js";
+import {
   CreateCallbackTaskSchema,
   SendRecoveryEmailSchema,
   SendRecoverySmsSchema,
@@ -152,6 +158,18 @@ export type RevenueRecoveryServiceDeps = {
     recoveryCaseId: string,
     fn: () => Promise<T>,
   ) => Promise<T>;
+  /**
+   * Governed same-objective run replacement. Absent composers fail closed.
+   * The lock callback must be one database transaction in production.
+   */
+  runReplacement?: {
+    orchestrator: RecoveryRunReplacementOrchestratorPorts;
+    identities: AdmissionIdentityGenerator;
+    withReplacementLock?: <T>(
+      recoveryCaseId: string,
+      fn: () => Promise<T>,
+    ) => Promise<T>;
+  };
 };
 
 export type RecoveryTemplateProvisionResult = {
@@ -192,12 +210,18 @@ export class RevenueRecoveryService {
     recoveryCaseId: string,
     fn: () => Promise<T>,
   ) => Promise<T>;
+  private readonly withRunReplacementLock: <T>(
+    recoveryCaseId: string,
+    fn: () => Promise<T>,
+  ) => Promise<T>;
 
   constructor(private readonly deps: RevenueRecoveryServiceDeps) {
     this.runtimeEnvironment = deps.runtimeEnvironment ?? "DEVELOPMENT";
     this.pilotConfig = deps.pilotConfig ?? { mode: "FAKE", livePilotRecipientAllowlist: [] };
     this.withObjectiveReissueLock =
       deps.withObjectiveReissueLock ?? createKeyedSerialLock();
+    this.withRunReplacementLock =
+      deps.runReplacement?.withReplacementLock ?? createKeyedSerialLock();
   }
 
   getPilotHealth() {
@@ -923,6 +947,34 @@ export class RevenueRecoveryService {
       withReissueLock: this.withObjectiveReissueLock,
     });
     return reissuer.reissue(input);
+  }
+
+  /**
+   * Governed same-objective run replacement. See `run-replacement.ts`.
+   * Does not mint an objective version and does not admit through Phase 2.
+   */
+  async replaceRecoveryRun(input: {
+    recoveryCaseId: string;
+    body: unknown;
+    principalId?: string;
+  }): Promise<RecoveryRunReplacementResult> {
+    const configured = this.deps.runReplacement;
+    if (!configured) {
+      throw new RevenueRecoveryError(
+        "RUN_REPLACEMENT_UNAVAILABLE",
+        "Run replacement is not configured",
+      );
+    }
+    const replacement = new RecoveryRunReplacementService({
+      nowIso: this.deps.nowIso,
+      cases: this.deps.cases,
+      attempts: this.deps.attempts,
+      audits: this.deps.audits,
+      orchestrator: configured.orchestrator,
+      identities: configured.identities,
+      withReplacementLock: this.withRunReplacementLock,
+    });
+    return replacement.replace(input);
   }
 
   private async buildCanonicalRecoveryObjective(input: {

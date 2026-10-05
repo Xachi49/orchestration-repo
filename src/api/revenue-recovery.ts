@@ -30,7 +30,14 @@ function httpStatus(code: string): number {
     case "OBJECTIVE_REISSUE_CONFLICT":
     case "OBJECTIVE_REISSUE_AUTHORITY_PRESENT":
     case "OBJECTIVE_REISSUE_BINDING_CHANGED":
+    case "RUN_REPLACEMENT_NOT_ELIGIBLE":
+    case "RUN_REPLACEMENT_LIMIT_REACHED":
+    case "RUN_REPLACEMENT_CONFLICT":
+    case "RUN_REPLACEMENT_AUTHORITY_PRESENT":
+    case "RUN_REPLACEMENT_BINDING_CHANGED":
       return 409;
+    case "RUN_REPLACEMENT_UNAVAILABLE":
+      return 503;
     case "TENANT_ISOLATION_VIOLATION":
     case "CONTACT_NOT_PERMITTED":
     case "CONTACT_WINDOW_CLOSED":
@@ -313,6 +320,41 @@ export function registerRevenueRecoveryRoutes(
           });
         }
         throw error;
+      }
+    },
+  );
+
+  // RUN REPLACEMENT != OBJECTIVE RESUBMISSION. Same objective version, new
+  // run attempt. The principal is lineage only and grants no execution authority.
+  app.post(
+    "/v1/revenue-recovery/cases/:recoveryCaseId/run-replacement",
+    async (request, reply) => {
+      const params = z
+        .object({ recoveryCaseId: z.string().min(1) })
+        .safeParse(request.params);
+      if (!params.success) {
+        return reply.code(400).send({
+          error: "RUN_REPLACEMENT_INVALID",
+          message: "recoveryCaseId is required",
+        });
+      }
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const projectId = body["projectId"];
+      if (typeof projectId === "string" && denyProjectAccess(request, reply, projectId)) {
+        return reply;
+      }
+      try {
+        const principalId = principalOf(request);
+        const result = await service.replaceRecoveryRun({
+          recoveryCaseId: params.data.recoveryCaseId,
+          body: request.body,
+          ...(principalId !== undefined ? { principalId } : {}),
+        });
+        return reply
+          .code(result.outcome === "REPLACED" ? 201 : 200)
+          .send(result);
+      } catch (error) {
+        return sendRecoveryError(reply, error);
       }
     },
   );

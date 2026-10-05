@@ -1565,7 +1565,7 @@ describe("Phase 24 postgres production synthesis", () => {
   it("T. migration continuity 016–022 + current schema", async () => {
     const env = await createP24Env("schema-t");
     try {
-      expect(SUPPORTED_SCHEMA_VERSION).toBe("022_product_revenue_recovery_live_pilot");
+      expect(SUPPORTED_SCHEMA_VERSION).toBe("023_governed_run_replacement");
       const health = await new PostgresHealthService(
         env.db,
         "postgres",
@@ -1581,6 +1581,7 @@ describe("Phase 24 postgres production synthesis", () => {
       expect(applied).toContain("020_product_revenue_recovery");
       expect(applied).toContain("021_product_revenue_recovery_integrity");
       expect(applied).toContain("022_product_revenue_recovery_live_pilot");
+      expect(applied).toContain("023_governed_run_replacement");
       const restarted = await createP24ConcurrentRuntime(env.db, "schema-tr");
       expect(restarted.stack.assuranceService).toBeDefined();
       expect(restarted.stack.qualificationService).toBeDefined();

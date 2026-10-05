@@ -305,6 +305,9 @@ describe("PortfolioSchedulerService memory", () => {
       async listByProject(projectId) {
         return [...runs.values()].filter((r) => r.projectId === projectId);
       },
+      async maxRunAttempt() {
+        return 0;
+      },
       async transition(runId, _expected, _rev, next, updatedAt) {
         const current = runs.get(runId);
         if (!current) {

@@ -1,4 +1,5 @@
 import {
+  reconcilePersistedRun,
   RunRecordSchema,
   withRunState,
   type RunRecord,
@@ -51,16 +52,24 @@ function objectiveFingerprintContent(objective: Objective): ObjectiveFingerprint
 function mapRunRow(row: {
   payload: unknown;
   record_revision: string | number;
+  run_attempt: string | number;
 }): RunRecord {
-  const parsed = hydrateRecord(
-    (input) => RunRecordSchema.parse(input),
-    row.payload,
-    "runs",
-  );
-  return RunRecordSchema.parse({
-    ...parsed,
-    recordRevision: Number(row.record_revision),
-  });
+  try {
+    return reconcilePersistedRun({
+      payload: row.payload,
+      runAttempt: Number(row.run_attempt),
+      recordRevision: Number(row.record_revision),
+    });
+  } catch (error) {
+    throw new DurabilityError(
+      "PERSISTED_RECORD_INVALID",
+      "Persisted run record is invalid",
+      {
+        context: "runs",
+        cause: error instanceof Error ? error.message : String(error),
+      },
+    );
+  }
 }
 
 export class PostgresRunRepository implements RunRepository {
@@ -72,8 +81,8 @@ export class PostgresRunRepository implements RunRepository {
       await this.db.query(
         `INSERT INTO runs (
            run_id, project_id, objective_id, objective_version, requested_environment,
-           idempotency_key, state, payload, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::timestamptz, $10::timestamptz)`,
+           idempotency_key, state, record_revision, run_attempt, payload, created_at, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::timestamptz, $12::timestamptz)`,
         [
           parsed.runId,
           parsed.projectId,
@@ -82,6 +91,8 @@ export class PostgresRunRepository implements RunRepository {
           parsed.requestedEnvironment,
           parsed.idempotencyKey,
           parsed.state,
+          parsed.recordRevision,
+          parsed.runAttempt,
           JSON.stringify(parsed),
           parsed.createdAt,
           parsed.updatedAt,
@@ -97,8 +108,9 @@ export class PostgresRunRepository implements RunRepository {
     const result = await this.db.query<{
       payload: unknown;
       record_revision: string | number;
+      run_attempt: string | number;
     }>(
-      `SELECT payload, record_revision FROM runs WHERE run_id = $1`,
+      `SELECT payload, record_revision, run_attempt FROM runs WHERE run_id = $1`,
       [runId],
     );
     const row = result.rows[0];
@@ -131,6 +143,7 @@ export class PostgresRunRepository implements RunRepository {
        SET state = $2,
            payload = $3::jsonb,
            record_revision = record_revision + 1,
+           run_attempt = $6,
            updated_at = $4::timestamptz
        WHERE run_id = $1 AND project_id = $5`,
       [
@@ -139,6 +152,7 @@ export class PostgresRunRepository implements RunRepository {
         JSON.stringify(parsed),
         parsed.updatedAt,
         parsed.projectId,
+        parsed.runAttempt,
       ],
     );
     if (result.rowCount !== 1) {
@@ -150,13 +164,37 @@ export class PostgresRunRepository implements RunRepository {
     return parsed;
   }
 
+  async maxRunAttempt(identity: {
+    projectId: string;
+    objectiveId: string;
+    objectiveVersion: number;
+    requestedEnvironment: string;
+  }): Promise<number> {
+    const result = await this.db.query<{ max_attempt: string | number | null }>(
+      `SELECT COALESCE(MAX(run_attempt), 0) AS max_attempt
+       FROM runs
+       WHERE project_id = $1
+         AND objective_id = $2
+         AND objective_version = $3
+         AND requested_environment = $4`,
+      [
+        identity.projectId,
+        identity.objectiveId,
+        identity.objectiveVersion,
+        identity.requestedEnvironment,
+      ],
+    );
+    return Number(result.rows[0]?.max_attempt ?? 0);
+  }
+
   async listByProject(projectId: string): Promise<readonly RunRecord[]> {
     const result = await this.db.query<{
       payload: unknown;
       record_revision: string | number;
+      run_attempt: string | number;
       run_id: string;
     }>(
-      `SELECT run_id, payload, record_revision FROM runs WHERE project_id = $1 ORDER BY created_at ASC`,
+      `SELECT run_id, payload, record_revision, run_attempt FROM runs WHERE project_id = $1 ORDER BY created_at ASC`,
       [projectId],
     );
     return result.rows.map((row) => mapRunRow(row));
@@ -183,6 +221,7 @@ export class PostgresRunRepository implements RunRepository {
        SET state = $2,
            payload = $3::jsonb,
            record_revision = record_revision + 1,
+           run_attempt = $8,
            updated_at = $4::timestamptz
        WHERE run_id = $1
          AND project_id = $5
@@ -196,6 +235,7 @@ export class PostgresRunRepository implements RunRepository {
         current.projectId,
         expected,
         expectedRecordRevision,
+        updated.runAttempt,
       ],
     );
     if (result.rowCount !== 1) {
@@ -213,8 +253,9 @@ export class PostgresRunRepository implements RunRepository {
     const result = await this.db.query<{
       payload: unknown;
       record_revision: string | number;
+      run_attempt: string | number;
     }>(
-      `SELECT payload, record_revision FROM runs
+      `SELECT payload, record_revision, run_attempt FROM runs
        ORDER BY updated_at DESC, run_id DESC
        LIMIT $1`,
       [limit],
@@ -232,8 +273,9 @@ export class PostgresRunRepository implements RunRepository {
     const result = await this.db.query<{
       payload: unknown;
       record_revision: string | number;
+      run_attempt: string | number;
     }>(
-      `SELECT payload, record_revision FROM runs
+      `SELECT payload, record_revision, run_attempt FROM runs
        WHERE state = ANY($1::text[])
        ORDER BY updated_at ASC, run_id ASC
        LIMIT $2`,

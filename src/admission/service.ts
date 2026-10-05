@@ -296,6 +296,7 @@ export class ObjectiveAdmissionService {
         projectId: request.projectId,
         objectiveId: request.objectiveId,
         objectiveVersion: request.objectiveVersion,
+        runAttempt: 1,
         idempotencyKey,
         requesterId: request.requesterId,
         requestedEnvironment: request.requestedEnvironment,

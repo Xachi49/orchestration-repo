@@ -60,6 +60,7 @@ try {
       "src/infrastructure/postgres/postgres.revenue-recovery-live-pilot.test.ts",
       "src/infrastructure/postgres/postgres.revenue-recovery-templates.test.ts",
       "src/infrastructure/postgres/postgres.revenue-recovery-objective-reissue.test.ts",
+      "src/infrastructure/postgres/postgres.revenue-recovery-run-replacement.test.ts",
       "src/infrastructure/postgres/postgres.control-plane-ops.test.ts",
       "src/infrastructure/postgres/postgres.repository-adapters.test.ts",
     ].join(" "),

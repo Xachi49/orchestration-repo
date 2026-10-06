@@ -142,13 +142,16 @@ describe("recovery target grammar", () => {
 });
 
 describe("RevenueRecoveryTargetBinder", () => {
-  async function seed(emailTemplateId = "rtpl_email_1") {
+  async function seed(
+    emailTemplateId = "rtpl_email_1",
+    ids: { recoveryCaseId?: string; leadId?: string } = {},
+  ) {
     const repos = createInMemoryRevenueRecoveryRepos();
     const runs = new InMemoryRunRepository();
     const objectives = new InMemoryObjectiveRepository();
     const now = "2026-09-14T15:00:00.000Z";
-    const recoveryCaseId = "rcase_bind_1";
-    const leadId = "lead_bind_1";
+    const recoveryCaseId = ids.recoveryCaseId ?? "rcase_bind_1";
+    const leadId = ids.leadId ?? "lead_bind_1";
     const runId = "run_bind_1";
     const objectiveId = `obj_rr_${recoveryCaseId}`;
 
@@ -254,35 +257,36 @@ describe("RevenueRecoveryTargetBinder", () => {
     ]);
   });
 
-  it("rejects model-selected conflicting case/lead", async () => {
-    const { binder, runId } = await seed();
-    await expect(
-      binder.bindProposalSteps({
-        runId,
-        steps: [
-          {
-            stepId: "step_recovery_email",
-            actionType: "SEND_RECOVERY_EMAIL",
-            description: "Send recovery email",
-            targetIds: [
-              "rr_case:rcase_other",
-              "rr_lead:lead_other",
-              "rr_template:rtpl_email_1@1",
-            ],
-            evidenceRefs: [],
-            dependsOn: [],
-            preconditions: [],
-            expectedPostconditions: ["done"],
-            resourceEstimate: { durationMs: 1 },
-            risk: { level: "MEDIUM", categories: [] },
-            validationChecks: [],
-            rollbackStrategy: "NONE",
-          },
-        ] as never,
-      }),
-    ).rejects.toMatchObject({
-      code: "MODEL_TARGET_CONFLICT",
+  it("replaces a well-formed conflicting model case and lead with canonical identity", async () => {
+    const { binder, recoveryCaseId, leadId, runId } = await seed();
+    const steps = await binder.bindProposalSteps({
+      runId,
+      steps: [
+        {
+          stepId: "step_recovery_email",
+          actionType: "SEND_RECOVERY_EMAIL",
+          description: "Send recovery email",
+          targetIds: [
+            "rr_case:rcase_other",
+            "rr_lead:lead_other",
+            "rr_template:rtpl_email_1@1",
+          ],
+          evidenceRefs: [],
+          dependsOn: [],
+          preconditions: [],
+          expectedPostconditions: ["done"],
+          resourceEstimate: { durationMs: 1 },
+          risk: { level: "MEDIUM", categories: [] },
+          validationChecks: [],
+          rollbackStrategy: "NONE",
+        },
+      ] as never,
     });
+    expect(steps[0]?.targetIds).toEqual([
+      formatRecoveryCaseTarget(recoveryCaseId),
+      formatRecoveryLeadTarget(leadId),
+      formatRecoveryTemplateTarget("rtpl_email_1", 1),
+    ]);
   });
 
   it("fails closed when no enabled template exists", async () => {
@@ -703,7 +707,7 @@ describe("RevenueRecoveryTargetBinder", () => {
     it.each([
       ["wrong templateId", "rr_template:rtpl_other@1"],
       ["wrong templateVersion", `rr_template:${PILOT_TEMPLATE}@2`],
-    ])("well-formed %s → MODEL_TARGET_CONFLICT", async (_label, template) => {
+    ])("well-formed %s is replaced by the approved template", async (_label, template) => {
       const seeded = await seed(PILOT_TEMPLATE);
       for (const modelTargets of [
         [
@@ -713,46 +717,51 @@ describe("RevenueRecoveryTargetBinder", () => {
         ],
         [template],
       ]) {
-        await expect(
-          bindOne(seeded, "SEND_RECOVERY_EMAIL", modelTargets),
-        ).rejects.toMatchObject({
-          code: "MODEL_TARGET_CONFLICT",
-          message: "Model rr_template: conflicts with canonical template binding",
-        });
+        const bound = await bindOne(seeded, "SEND_RECOVERY_EMAIL", modelTargets);
+        expect(bound.targetIds).toEqual([
+          formatRecoveryCaseTarget(seeded.recoveryCaseId),
+          formatRecoveryLeadTarget(seeded.leadId),
+          formatRecoveryTemplateTarget(PILOT_TEMPLATE, 1),
+        ]);
+        expectStrictGrammar(bound);
       }
     });
 
     it.each([
-      ["wrong case", { case: "rcase_wrong" }, "Model rr_case: conflicts with canonical RecoveryCase"],
-      ["wrong lead", { lead: "lead_wrong" }, "Model rr_lead: conflicts with canonical Lead"],
-      [
-        "wrong case + wrong lead",
-        { case: "rcase_wrong", lead: "lead_wrong" },
-        "Model rr_case: conflicts with canonical RecoveryCase",
-      ],
+      ["wrong case", { case: "rcase_wrong" }],
+      ["wrong lead", { lead: "lead_wrong" }],
+      ["wrong case + wrong lead", { case: "rcase_wrong", lead: "lead_wrong" }],
     ])(
-      "%s + malformed template → still MODEL_TARGET_CONFLICT",
-      async (_label, wrong: { case?: string; lead?: string }, message) => {
+      "%s + malformed template is replaced by canonical targets",
+      async (_label, wrong: { case?: string; lead?: string }) => {
         const seeded = await seed(PILOT_TEMPLATE);
-        await expect(
-          bindOne(seeded, "SEND_RECOVERY_EMAIL", [
-            formatRecoveryCaseTarget(wrong.case ?? seeded.recoveryCaseId),
-            formatRecoveryLeadTarget(wrong.lead ?? seeded.leadId),
-            "rr_template:foo@abc",
-          ]),
-        ).rejects.toMatchObject({ code: "MODEL_TARGET_CONFLICT", message });
+        const bound = await bindOne(seeded, "SEND_RECOVERY_EMAIL", [
+          formatRecoveryCaseTarget(wrong.case ?? seeded.recoveryCaseId),
+          formatRecoveryLeadTarget(wrong.lead ?? seeded.leadId),
+          "rr_template:foo@abc",
+        ]);
+        expect(bound.targetIds).toEqual([
+          formatRecoveryCaseTarget(seeded.recoveryCaseId),
+          formatRecoveryLeadTarget(seeded.leadId),
+          formatRecoveryTemplateTarget(PILOT_TEMPLATE, 1),
+        ]);
+        expectStrictGrammar(bound);
       },
     );
 
-    it("a lone conflicting case or lead claim fails closed even when the other is absent", async () => {
+    it("a lone conflicting case or lead claim is replaced, not vetoed", async () => {
       const seeded = await seed(PILOT_TEMPLATE);
       for (const modelTargets of [
         ["rr_case:rcase_wrong", "rr_template:foo@abc"],
         ["rr_lead:lead_wrong"],
       ]) {
-        await expect(
-          bindOne(seeded, "SEND_RECOVERY_EMAIL", modelTargets),
-        ).rejects.toMatchObject({ code: "MODEL_TARGET_CONFLICT" });
+        const bound = await bindOne(seeded, "SEND_RECOVERY_EMAIL", modelTargets);
+        expect(bound.targetIds).toEqual([
+          formatRecoveryCaseTarget(seeded.recoveryCaseId),
+          formatRecoveryLeadTarget(seeded.leadId),
+          formatRecoveryTemplateTarget(PILOT_TEMPLATE, 1),
+        ]);
+        expectStrictGrammar(bound);
       }
     });
 
@@ -789,16 +798,383 @@ describe("RevenueRecoveryTargetBinder", () => {
       }
     });
 
-    it("callback: conflicting case or lead still blocks", async () => {
+    it("callback: conflicting case or lead is replaced; only the permitted note survives", async () => {
       const seeded = await seed(PILOT_TEMPLATE);
       for (const modelTargets of [
-        ["rr_case:rcase_wrong", "rr_template:foo@abc"],
-        [formatRecoveryCaseTarget(seeded.recoveryCaseId), "rr_lead:lead_wrong"],
+        ["rr_case:rcase_wrong", "rr_template:foo@abc", "rr_note:call after 5pm"],
+        [
+          formatRecoveryCaseTarget(seeded.recoveryCaseId),
+          "rr_lead:lead_wrong",
+          "rr_note:call after 5pm",
+          "rr_note:second note",
+        ],
       ]) {
-        await expect(
-          bindOne(seeded, "CREATE_CALLBACK_TASK", modelTargets),
-        ).rejects.toMatchObject({ code: "MODEL_TARGET_CONFLICT" });
+        const bound = await bindOne(seeded, "CREATE_CALLBACK_TASK", modelTargets);
+        expect(bound.targetIds).toEqual([
+          formatRecoveryCaseTarget(seeded.recoveryCaseId),
+          formatRecoveryLeadTarget(seeded.leadId),
+          "rr_note:call after 5pm",
+        ]);
+        expect(bound.targetIds.some((t) => t.startsWith("rr_template:"))).toBe(false);
+        expect(bound.targetIds.some((t) => t.includes("rcase_wrong") || t.includes("lead_wrong"))).toBe(false);
+        expectStrictGrammar(bound);
       }
     });
+
+    it("wrong case, lead, and template together emit only canonical targets", async () => {
+      const seeded = await seed(PILOT_TEMPLATE);
+      const bound = await bindOne(seeded, "SEND_RECOVERY_EMAIL", [
+        "rr_case:rcase_wrong",
+        "rr_case:rcase_also_wrong",
+        "rr_lead:lead_wrong",
+        "rr_lead:lead_also_wrong",
+        "rr_template:rtpl_other@9",
+        "rr_template:foo@abc",
+        "rr_note:operator note",
+        "rr_note:duplicate note",
+        "model:arbitrary",
+      ]);
+      expect(bound.targetIds).toEqual([
+        formatRecoveryCaseTarget(seeded.recoveryCaseId),
+        formatRecoveryLeadTarget(seeded.leadId),
+        formatRecoveryTemplateTarget(PILOT_TEMPLATE, 1),
+        "rr_note:operator note",
+      ]);
+      expect(new Set(bound.targetIds).size).toBe(bound.targetIds.length);
+      expect(bound.targetIds.some((t) => t.includes("wrong") || t.includes("other") || t === "model:arbitrary")).toBe(false);
+      expectStrictGrammar(bound);
+    });
+
+    it("production shape: recognizable wrong rr_case is not a terminal conflict", async () => {
+      const seeded = await seed(PILOT_TEMPLATE, {
+        recoveryCaseId: "rcase_real",
+        leadId: "lead_real",
+      });
+      const modelCase = "rr_case:rcase_model_other";
+      const bound = await bindOne(seeded, "SEND_RECOVERY_EMAIL", [
+        modelCase,
+        "rr_lead:lead_model_other",
+        "rr_template:rtpl_other@4",
+      ]);
+      expect(bound.targetIds).toEqual([
+        "rr_case:rcase_real",
+        "rr_lead:lead_real",
+        `rr_template:${PILOT_TEMPLATE}@1`,
+      ]);
+      expectStrictGrammar(bound);
+      expect(bound.targetIds.join(" ")).not.toContain("rcase_model_other");
+      await expect(
+        bindOne(seeded, "SEND_RECOVERY_EMAIL", [modelCase]),
+      ).resolves.toMatchObject({
+        targetIds: [
+          "rr_case:rcase_real",
+          "rr_lead:lead_real",
+          `rr_template:${PILOT_TEMPLATE}@1`,
+        ],
+      });
+    });
+  });
+
+  it("canonical lead disagreement still fails closed", async () => {
+    const repos = createInMemoryRevenueRecoveryRepos();
+    const runs = new InMemoryRunRepository();
+    const objectives = new InMemoryObjectiveRepository();
+    const now = "2026-09-14T15:00:00.000Z";
+    const recoveryCaseId = "rcase_lead_mismatch";
+    const leadId = "lead_mismatch";
+    const runId = "run_lead_mismatch";
+    await repos.leads.save(
+      leadFixture({
+        leadId,
+        customerAccountId: "cust_other",
+        projectId: "proj_a",
+        externalLeadId: "ext_mismatch",
+        now,
+      }),
+    );
+    await repos.cases.save(
+      parseRecoveryCase({
+        recoveryCaseId,
+        gapIdentityKey: "gap_mismatch",
+        leadId,
+        customerAccountId: "cust_a",
+        projectId: "proj_a",
+        gapDetectedAt: now,
+        reasonCode: "NO_RESPONSE",
+        status: "IN_ORCHESTRATION",
+        configId: "cfg_1",
+        configVersion: 1,
+        configFingerprint: "fp",
+        orchestratorRunId: runId,
+        objectiveId: `obj_rr_${recoveryCaseId}`,
+        createdAt: now,
+        updatedAt: now,
+        recordRevision: 1,
+      }),
+    );
+    await repos.templates.save(
+      parseRecoveryMessageTemplate({
+        templateId: "rtpl_email_1",
+        customerAccountId: "cust_a",
+        projectId: "proj_a",
+        channel: "EMAIL",
+        version: 1,
+        body: "Hello",
+        allowedVariables: ["firstName"],
+        enabled: true,
+        createdAt: now,
+      }),
+    );
+    await runs.create(
+      runFixture({
+        runId,
+        projectId: "proj_a",
+        objectiveId: `obj_rr_${recoveryCaseId}`,
+        now,
+      }),
+    );
+    const binder = new RevenueRecoveryTargetBinder({
+      runs,
+      objectives,
+      cases: repos.cases,
+      leads: repos.leads,
+      templates: repos.templates,
+    });
+    await expect(
+      binder.bindProposalSteps({
+        runId,
+        steps: [
+          {
+            stepId: "step_recovery_email",
+            actionType: "SEND_RECOVERY_EMAIL",
+            description: "Send",
+            targetIds: ["rr_case:rcase_model"],
+            evidenceRefs: [],
+            dependsOn: [],
+            preconditions: [],
+            expectedPostconditions: ["done"],
+            resourceEstimate: { durationMs: 1 },
+            risk: { level: "MEDIUM", categories: [] },
+            validationChecks: [],
+            rollbackStrategy: "NONE",
+          },
+        ] as never,
+      }),
+    ).rejects.toMatchObject({ code: "RECOVERY_LEAD_MISMATCH" });
+  });
+
+  it("a RecoveryCase in another project still fails closed", async () => {
+    const repos = createInMemoryRevenueRecoveryRepos();
+    const runs = new InMemoryRunRepository();
+    const objectives = new InMemoryObjectiveRepository();
+    const now = "2026-09-14T15:00:00.000Z";
+    const recoveryCaseId = "rcase_other_project";
+    const leadId = "lead_other_project";
+    const otherRunId = "run_other_project";
+    await repos.leads.save(
+      leadFixture({
+        leadId,
+        customerAccountId: "cust_a",
+        projectId: "proj_other",
+        externalLeadId: "ext_other",
+        now,
+      }),
+    );
+    await repos.cases.save(
+      parseRecoveryCase({
+        recoveryCaseId,
+        gapIdentityKey: "gap_other_project",
+        leadId,
+        customerAccountId: "cust_a",
+        projectId: "proj_other",
+        gapDetectedAt: now,
+        reasonCode: "NO_RESPONSE",
+        status: "IN_ORCHESTRATION",
+        configId: "cfg_1",
+        configVersion: 1,
+        configFingerprint: "fp",
+        orchestratorRunId: otherRunId,
+        objectiveId: `obj_rr_${recoveryCaseId}`,
+        createdAt: now,
+        updatedAt: now,
+        recordRevision: 1,
+      }),
+    );
+    await runs.create(
+      runFixture({
+        runId: otherRunId,
+        projectId: "proj_a",
+        objectiveId: `obj_rr_${recoveryCaseId}`,
+        now,
+      }),
+    );
+    const otherBinder = new RevenueRecoveryTargetBinder({
+      runs,
+      objectives,
+      cases: repos.cases,
+      leads: repos.leads,
+      templates: repos.templates,
+    });
+    await expect(
+      otherBinder.bindProposalSteps({
+        runId: otherRunId,
+        steps: [
+          {
+            stepId: "step_recovery_email",
+            actionType: "SEND_RECOVERY_EMAIL",
+            description: "Send",
+            targetIds: [`rr_case:${recoveryCaseId}`],
+            evidenceRefs: [],
+            dependsOn: [],
+            preconditions: [],
+            expectedPostconditions: ["done"],
+            resourceEstimate: { durationMs: 1 },
+            risk: { level: "MEDIUM", categories: [] },
+            validationChecks: [],
+            rollbackStrategy: "NONE",
+          },
+        ] as never,
+      }),
+    ).rejects.toMatchObject({
+      code: "RECOVERY_CASE_NOT_BOUND",
+      message: "RecoveryCase does not belong to the run project",
+    });
+  });
+
+  it("disabled, wrong-channel, foreign, and ambiguous templates still fail closed", async () => {
+    const now = "2026-09-14T15:00:00.000Z";
+    async function bindWithTemplates(
+      templates: ReturnType<typeof parseRecoveryMessageTemplate>[],
+    ) {
+      const repos = createInMemoryRevenueRecoveryRepos();
+      const runs = new InMemoryRunRepository();
+      const objectives = new InMemoryObjectiveRepository();
+      const recoveryCaseId = "rcase_tpl";
+      const leadId = "lead_tpl";
+      const runId = "run_tpl";
+      await repos.leads.save(
+        leadFixture({
+          leadId,
+          customerAccountId: "cust_a",
+          projectId: "proj_a",
+          externalLeadId: "ext_tpl",
+          now,
+        }),
+      );
+      await repos.cases.save(
+        parseRecoveryCase({
+          recoveryCaseId,
+          gapIdentityKey: "gap_tpl",
+          leadId,
+          customerAccountId: "cust_a",
+          projectId: "proj_a",
+          gapDetectedAt: now,
+          reasonCode: "NO_RESPONSE",
+          status: "IN_ORCHESTRATION",
+          configId: "cfg_1",
+          configVersion: 1,
+          configFingerprint: "fp",
+          orchestratorRunId: runId,
+          objectiveId: `obj_rr_${recoveryCaseId}`,
+          createdAt: now,
+          updatedAt: now,
+          recordRevision: 1,
+        }),
+      );
+      for (const template of templates) {
+        await repos.templates.save(template);
+      }
+      await runs.create(
+        runFixture({
+          runId,
+          projectId: "proj_a",
+          objectiveId: `obj_rr_${recoveryCaseId}`,
+          now,
+        }),
+      );
+      const binder = new RevenueRecoveryTargetBinder({
+        runs,
+        objectives,
+        cases: repos.cases,
+        leads: repos.leads,
+        templates: repos.templates,
+      });
+      return binder.bindProposalSteps({
+        runId,
+        steps: [
+          {
+            stepId: "step_recovery_email",
+            actionType: "SEND_RECOVERY_EMAIL",
+            description: "Send",
+            targetIds: ["rr_template:rtpl_unapproved@1"],
+            evidenceRefs: [],
+            dependsOn: [],
+            preconditions: [],
+            expectedPostconditions: ["done"],
+            resourceEstimate: { durationMs: 1 },
+            risk: { level: "MEDIUM", categories: [] },
+            validationChecks: [],
+            rollbackStrategy: "NONE",
+          },
+        ] as never,
+      });
+    }
+
+    const base = {
+      customerAccountId: "cust_a",
+      projectId: "proj_a",
+      version: 1,
+      body: "Hello",
+      allowedVariables: ["firstName"],
+      createdAt: now,
+    };
+    await expect(
+      bindWithTemplates([
+        parseRecoveryMessageTemplate({
+          ...base,
+          templateId: "rtpl_email_1",
+          channel: "EMAIL",
+          enabled: false,
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "RECOVERY_TEMPLATE_UNRESOLVED" });
+    await expect(
+      bindWithTemplates([
+        parseRecoveryMessageTemplate({
+          ...base,
+          templateId: "rtpl_sms_only",
+          channel: "SMS",
+          enabled: true,
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "RECOVERY_TEMPLATE_UNRESOLVED" });
+    await expect(
+      bindWithTemplates([
+        parseRecoveryMessageTemplate({
+          ...base,
+          templateId: "rtpl_foreign",
+          customerAccountId: "cust_other",
+          projectId: "proj_other",
+          channel: "EMAIL",
+          enabled: true,
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "RECOVERY_TEMPLATE_UNRESOLVED" });
+    await expect(
+      bindWithTemplates([
+        parseRecoveryMessageTemplate({
+          ...base,
+          templateId: "rtpl_email_a",
+          channel: "EMAIL",
+          enabled: true,
+        }),
+        parseRecoveryMessageTemplate({
+          ...base,
+          templateId: "rtpl_email_b",
+          channel: "EMAIL",
+          enabled: true,
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "RECOVERY_TEMPLATE_AMBIGUOUS" });
   });
 });

@@ -2,10 +2,12 @@
  * Deterministic Revenue Recovery target binder.
  *
  * OpenAI may propose SEND_RECOVERY_* action semantics.
- * This binder owns canonical case / lead / template targetIds from persisted records.
+ * Executable case / lead / template identity comes only from persisted records.
  *
+ * MODEL-SUPPLIED RECOVERY IDENTITY != TARGET AUTHORITY
  * MODEL PROPOSAL != TARGET AUTHORITY
  * CANONICAL BUSINESS RECORD != MODEL-GENERATED IDENTITY
+ * MODEL CONFLICT != CANONICAL CONFLICT
  */
 
 import type { ObjectiveRepository } from "../admission/objective-repository.js";
@@ -19,7 +21,6 @@ import {
   formatRecoveryCaseTarget,
   formatRecoveryLeadTarget,
   formatRecoveryTemplateTarget,
-  parseRecoveryTemplateTargetValue,
   RECOVERY_TARGET_PREFIX,
 } from "./target-grammar.js";
 import type {
@@ -39,6 +40,10 @@ export type RecoveryTargetBinderErrorCode =
   | "RECOVERY_TEMPLATE_AMBIGUOUS"
   | "RECOVERY_TEMPLATE_DISABLED"
   | "RECOVERY_TEMPLATE_TENANT_MISMATCH"
+  /**
+   * Retained for callers that classify a binder failure by code.
+   * Model-supplied identity disagreement does not raise it.
+   */
   | "MODEL_TARGET_CONFLICT"
   | "UNSUPPORTED_RECOVERY_ACTION";
 
@@ -112,6 +117,16 @@ export class RevenueRecoveryTargetBinder {
     }
 
     const recoveryCase = await this.resolveCaseForRun(run.runId, run.objectiveId);
+    if (recoveryCase.projectId !== run.projectId) {
+      throw new RecoveryTargetBinderError(
+        "RECOVERY_CASE_NOT_BOUND",
+        "RecoveryCase does not belong to the run project",
+        {
+          runProjectId: run.projectId,
+          caseProjectId: recoveryCase.projectId,
+        },
+      );
+    }
     const lead = await this.deps.leads.getById(recoveryCase.leadId);
     if (!lead) {
       throw new RecoveryTargetBinderError(
@@ -160,7 +175,8 @@ export class RevenueRecoveryTargetBinder {
   }
 
   /**
-   * Bind proposal steps: fill missing recovery targets; reject model conflicts.
+   * Bind proposal steps from canonical records.
+   * Model rr_case / rr_lead / rr_template values are ignored.
    *
    * Activation is driven solely by {@link hasRecoveryPhase7Actions}.
    * Zero RR actions → deterministic NO-OP (no RecoveryCase repository lookup).
@@ -213,16 +229,14 @@ export class RevenueRecoveryTargetBinder {
       });
       bound.push({
         ...step,
-        targetIds: this.mergeOutreachTargets(step.targetIds, binding, {
-          requireTemplate: true,
-        }),
+        targetIds: this.mergeOutreachTargets(step.targetIds, binding),
       });
     }
     return bound;
   }
 
   /**
-   * Bind execution-plan style steps (repair path). Same conflict policy.
+   * Bind execution-plan style steps (repair path). Same canonical identity policy.
    */
   async bindPlanSteps(input: {
     runId: string;
@@ -371,12 +385,8 @@ export class RevenueRecoveryTargetBinder {
   private mergeOutreachTargets(
     modelTargets: readonly string[],
     binding: CanonicalRecoveryTargetBinding,
-    contract: { requireTemplate: boolean },
   ): string[] {
-    this.assertNoModelConflict(modelTargets, binding, contract.requireTemplate);
-    const note = modelTargets.find((t) =>
-      t.startsWith(RECOVERY_TARGET_PREFIX.note),
-    );
+    const note = permittedModelNote(modelTargets);
     const targets = [
       formatRecoveryCaseTarget(binding.recoveryCaseId),
       formatRecoveryLeadTarget(binding.leadId),
@@ -392,10 +402,7 @@ export class RevenueRecoveryTargetBinder {
     modelTargets: readonly string[],
     binding: CanonicalRecoveryTargetBinding,
   ): string[] {
-    this.assertNoModelConflict(modelTargets, binding, false);
-    const note = modelTargets.find((t) =>
-      t.startsWith(RECOVERY_TARGET_PREFIX.note),
-    );
+    const note = permittedModelNote(modelTargets);
     const targets = [
       formatRecoveryCaseTarget(binding.recoveryCaseId),
       formatRecoveryLeadTarget(binding.leadId),
@@ -406,82 +413,14 @@ export class RevenueRecoveryTargetBinder {
     return targets;
   }
 
-  /**
-   * Model targets are suggestions; each authority dimension is judged on its
-   * own. A recognizable claim that differs from canonical truth fails closed.
-   * Absent / empty claims are filled. A malformed rr_template: claim names no
-   * template, so it carries no authority and is replaced canonically.
-   */
-  private assertNoModelConflict(
-    modelTargets: readonly string[],
-    binding: CanonicalRecoveryTargetBinding,
-    checkTemplate: boolean,
-  ): void {
-    const modelCaseId = firstModelTargetValue(
-      modelTargets,
-      RECOVERY_TARGET_PREFIX.case,
-    );
-    if (modelCaseId !== undefined && modelCaseId !== binding.recoveryCaseId) {
-      throw new RecoveryTargetBinderError(
-        "MODEL_TARGET_CONFLICT",
-        "Model rr_case: conflicts with canonical RecoveryCase",
-        {
-          model: modelCaseId,
-          canonical: binding.recoveryCaseId,
-        },
-      );
-    }
-    const modelLeadId = firstModelTargetValue(
-      modelTargets,
-      RECOVERY_TARGET_PREFIX.lead,
-    );
-    if (modelLeadId !== undefined && modelLeadId !== binding.leadId) {
-      throw new RecoveryTargetBinderError(
-        "MODEL_TARGET_CONFLICT",
-        "Model rr_lead: conflicts with canonical Lead",
-        {
-          model: modelLeadId,
-          canonical: binding.leadId,
-        },
-      );
-    }
-    if (!checkTemplate) {
-      return;
-    }
-    const modelTemplateRaw = firstModelTargetValue(
-      modelTargets,
-      RECOVERY_TARGET_PREFIX.template,
-    );
-    if (modelTemplateRaw === undefined) {
-      return;
-    }
-    const modelTemplate = parseRecoveryTemplateTargetValue(modelTemplateRaw);
-    if (!modelTemplate.ok) {
-      return;
-    }
-    if (
-      modelTemplate.value.templateId !== binding.templateId ||
-      modelTemplate.value.templateVersion !== binding.templateVersion
-    ) {
-      throw new RecoveryTargetBinderError(
-        "MODEL_TARGET_CONFLICT",
-        "Model rr_template: conflicts with canonical template binding",
-        {
-          model: `${modelTemplate.value.templateId}@${modelTemplate.value.templateVersion}`,
-          canonical: `${binding.templateId}@${binding.templateVersion}`,
-        },
-      );
-    }
-  }
 }
 
-/** First occurrence per prefix, as in the shared parseRecoveryOutreachTargets. */
-function firstModelTargetValue(
-  modelTargets: readonly string[],
-  prefix: string,
-): string | undefined {
-  const value = modelTargets
-    .find((t) => t.startsWith(prefix))
-    ?.slice(prefix.length);
-  return value ? value : undefined;
+/**
+ * First rr_note: only. Identity prefixes and any other model target are omitted.
+ * A note does not select case, lead, or template identity.
+ */
+function permittedModelNote(modelTargets: readonly string[]): string | undefined {
+  return modelTargets.find((target) =>
+    target.startsWith(RECOVERY_TARGET_PREFIX.note),
+  );
 }

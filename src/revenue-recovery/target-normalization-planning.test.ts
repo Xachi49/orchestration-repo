@@ -1,10 +1,9 @@
 /**
  * Planning-path regression for the pilot replacement-run failure:
- * a malformed model rr_template: suggestion must not block canonical binding.
+ * a model rr_case: or rr_template: suggestion must not block canonical binding.
  *
- * MODEL PROPOSAL != TARGET AUTHORITY.
- * MALFORMED MODEL METADATA != MALFORMED CANONICAL PLAN.
- * WELL-FORMED CONFLICTING MODEL AUTHORITY != IGNORABLE.
+ * MODEL-SUPPLIED RECOVERY IDENTITY != TARGET AUTHORITY.
+ * MODEL CONFLICT != CANONICAL CONFLICT.
  */
 import { describe, expect, it } from "vitest";
 import { exampleAdmissionRequest } from "../admission/fixtures.js";
@@ -147,34 +146,28 @@ describe("planning — untrusted rr_template normalization", () => {
     ).toEqual(templateBefore);
   });
 
-  it("well-formed conflicting template still fails closed; the PLANNING run re-plans on a retryable fence", async () => {
+  it("well-formed wrong model case and template bind the canonical targets", async () => {
     const r = await ingestedRecoveryRun();
+    r.binding.recoveryCaseId = "rcase_model_other";
+    r.binding.leadId = "lead_model_other";
     r.binding.templateVersion = 2;
 
-    await expect(r.stack.planning.plan(r.runId)).rejects.toMatchObject({
-      code: "RECOVERY_TARGET_BINDING_FAILED",
-      details: { binderCode: "MODEL_TARGET_CONFLICT" },
-    });
-    expect((await r.stack.runs.getById(r.runId))!.state).toBe("PLANNING");
-    expect(await r.stack.plans.getByRunId(r.runId)).toBeNull();
-    expect(await r.stack.planningCoordinator.get(r.runId)).toMatchObject({
-      status: "FAILED",
-      attempt: 1,
-      failureCode: "RECOVERY_TARGET_BINDING_FAILED",
-      retryable: true,
-    });
-
-    // Same state as the stranded pilot run: PLANNING + retryable FAILED fence.
-    r.binding.templateVersion = 0;
-    const replanned = await r.stack.planning.plan(r.runId);
-    expect(replanned).toMatchObject({ outcome: "PLANNED", runState: "VALIDATING" });
-    expect(await r.stack.planningCoordinator.get(r.runId)).toMatchObject({
-      status: "PLANNED",
-      attempt: 2,
-    });
+    const planned = await r.stack.planning.plan(r.runId);
+    expect(planned).toMatchObject({ outcome: "PLANNED", runState: "VALIDATING" });
+    expect((await r.stack.runs.getById(r.runId))!.state).toBe("VALIDATING");
     const stored = (await r.stack.plans.getByRunId(r.runId))!;
     expect(
       stored.plan.steps.find((s) => s.actionType === "SEND_RECOVERY_EMAIL")!.targetIds,
-    ).toContain(`rr_template:${PILOT_TEMPLATE}@1`);
+    ).toEqual([
+      `rr_case:${r.recoveryCaseId}`,
+      `rr_lead:${r.leadId}`,
+      `rr_template:${PILOT_TEMPLATE}@1`,
+    ]);
+    expect(validateRecoveryStepsTargetGrammar(stored.plan.steps)).toMatchObject({
+      ok: true,
+    });
+    expect(JSON.stringify(stored.plan.steps)).not.toContain("rcase_model_other");
+    expect(JSON.stringify(stored.plan.steps)).not.toContain("lead_model_other");
+    expect(JSON.stringify(stored.plan.steps)).not.toContain(`${PILOT_TEMPLATE}@2`);
   });
 });

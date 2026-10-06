@@ -82,12 +82,19 @@ async function objectiveV2PlanningCase(label: string) {
   return { env, rr, cases, recoveryCaseId, runId, objectiveId, leadId: lead.leadId };
 }
 
-async function seedTokenExhaustion(env: RrPostgresEnv, runId: string) {
+async function seedPlanningFailure(
+  env: RrPostgresEnv,
+  runId: string,
+  input: {
+    failureCode: string;
+    totals: readonly [number, number];
+  },
+) {
   const usage = new PostgresPlanningUsageLedger(env.db);
   const now = env.clock.nowIso();
-  for (const [index, operation] of (
-    ["GAP_ANALYSIS", "PLAN_PROPOSAL"] as const
-  ).entries()) {
+  const operations = ["GAP_ANALYSIS", "PLAN_PROPOSAL"] as const;
+  for (const [index, operation] of operations.entries()) {
+    const totalUsage = input.totals[index]!;
     const reserved = await usage.reserve({
       callId: `${runId}_${operation}`,
       runId,
@@ -105,18 +112,17 @@ async function seedTokenExhaustion(env: RrPostgresEnv, runId: string) {
       outcome: "SUCCESS",
       completedAt: now,
       charging: "ACTUAL",
-      totalUsage: 100_000,
+      totalUsage,
       inputUsage: 50,
-      outputUsage: 99_950,
+      outputUsage: totalUsage - 50,
     });
-    void index;
   }
   const fence = {
     runId,
     status: "FAILED",
     attempt: 1,
     lastUpdatedAt: now,
-    failureCode: "PLANNING_MODEL_BUDGET_EXCEEDED",
+    failureCode: input.failureCode,
     failedAt: now,
     retryable: true,
   };
@@ -128,10 +134,30 @@ async function seedTokenExhaustion(env: RrPostgresEnv, runId: string) {
   );
 }
 
-function bodyFor(env: RrPostgresEnv) {
+async function seedTokenExhaustion(env: RrPostgresEnv, runId: string) {
+  await seedPlanningFailure(env, runId, {
+    failureCode: "PLANNING_MODEL_BUDGET_EXCEEDED",
+    totals: [100_000, 100_000],
+  });
+}
+
+async function enterPlanning(env: RrPostgresEnv, runId: string) {
+  let run = await env.stack.runs.getById(runId);
+  if (!run) throw new Error("missing run");
+  const now = env.clock.nowIso();
+  if (run.state === "ADMITTED") {
+    run = await commitRunTransition(env.stack.runs, run, "INGESTING", now);
+  }
+  if (run.state === "INGESTING") {
+    await commitRunTransition(env.stack.runs, run, "PLANNING", now);
+  }
+}
+
+function bodyFor(env: RrPostgresEnv, expectedPredecessorRunId: string) {
   return {
     customerAccountId: env.ids.customerAccountId,
     projectId: env.ids.projectId,
+    expectedPredecessorRunId,
     reason: REASON,
   };
 }
@@ -221,7 +247,7 @@ describe("Postgres — governed run replacement", () => {
       const beforeObjective = await t.env.stack.objectives.getById(t.objectiveId, 2);
       const result = await t.rr.replaceRecoveryRun({
         recoveryCaseId: t.recoveryCaseId,
-        body: bodyFor(t.env),
+        body: bodyFor(t.env, t.runId),
         principalId: "operator_pg",
       });
       expect(result).toMatchObject({
@@ -232,6 +258,7 @@ describe("Postgres — governed run replacement", () => {
         predecessorRunState: "SUPERSEDED",
         replacementRunAttempt: 2,
         replacementRunState: "ADMITTED",
+        evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
       });
       const predecessor = await t.env.stack.runs.getById(t.runId);
       const replacement = await t.env.stack.runs.getById(result.replacementRunId);
@@ -288,7 +315,7 @@ describe("Postgres — governed run replacement", () => {
 
       const replay = await t.rr.replaceRecoveryRun({
         recoveryCaseId: t.recoveryCaseId,
-        body: bodyFor(t.env),
+        body: bodyFor(t.env, t.runId),
       });
       expect(replay).toMatchObject({
         outcome: "ALREADY_REPLACED",
@@ -311,12 +338,16 @@ describe("Postgres — governed run replacement", () => {
         objectiveVersion: 2,
         updatedAt: t.env.clock.nowIso(),
       });
-      await expect(
-        t.rr.replaceRecoveryRun({
-          recoveryCaseId: t.recoveryCaseId,
-          body: bodyFor(t.env),
-        }),
-      ).rejects.toMatchObject({ code: "RUN_REPLACEMENT_LIMIT_REACHED" });
+      const historical = await t.rr.replaceRecoveryRun({
+        recoveryCaseId: t.recoveryCaseId,
+        body: bodyFor(t.env, t.runId),
+      });
+      expect(historical).toMatchObject({
+        outcome: "ALREADY_REPLACED",
+        predecessorRunId: t.runId,
+        replacementRunId: result.replacementRunId,
+        evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+      });
       const count = await t.env.db.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM runs WHERE objective_id = $1`,
         [t.objectiveId],
@@ -334,11 +365,11 @@ describe("Postgres — governed run replacement", () => {
       const [a, b] = await Promise.all([
         t.rr.replaceRecoveryRun({
           recoveryCaseId: t.recoveryCaseId,
-          body: bodyFor(t.env),
+          body: bodyFor(t.env, t.runId),
         }),
         t.rr.replaceRecoveryRun({
           recoveryCaseId: t.recoveryCaseId,
-          body: bodyFor(t.env),
+          body: bodyFor(t.env, t.runId),
         }),
       ]);
       expect(a.replacementRunId).toBe(b.replacementRunId);
@@ -413,7 +444,7 @@ describe("Postgres — governed run replacement", () => {
       await expect(
         service.replace({
           recoveryCaseId: t.recoveryCaseId,
-          body: bodyFor(t.env),
+          body: bodyFor(t.env, t.runId),
         }),
       ).rejects.toMatchObject({
         code: "RUN_REPLACEMENT_CONFLICT",
@@ -439,6 +470,207 @@ describe("Postgres — governed run replacement", () => {
         [PROJECT_RUN_REPLACEMENT_ADMITTED, t.env.ids.projectId],
       );
       expect(events.rows[0]?.n).toBe(0);
+    } finally {
+      await t.env.close();
+    }
+  });
+
+  it("mints attempt 3 from legacy class A plus proven class B and refuses attempt 4", async () => {
+    const t = await objectiveV2PlanningCase("rr_replace_attempt3");
+    try {
+      await seedTokenExhaustion(t.env, t.runId);
+      const attempt2 = await t.rr.replaceRecoveryRun({
+        recoveryCaseId: t.recoveryCaseId,
+        body: bodyFor(t.env, t.runId),
+        principalId: "operator_pg",
+      });
+      expect(attempt2.replacementRunAttempt).toBe(2);
+      await t.env.db.query(
+        `UPDATE revenue_recovery_audit_events
+            SET payload = jsonb_set(
+              payload,
+              '{payload}',
+              (payload->'payload') - 'evidenceClass'
+            )
+          WHERE recovery_case_id = $1 AND kind = 'RECOVERY_RUN_REPLACED'`,
+        [t.recoveryCaseId],
+      );
+      const legacyReplay = await t.rr.replaceRecoveryRun({
+        recoveryCaseId: t.recoveryCaseId,
+        body: bodyFor(t.env, t.runId),
+      });
+      expect(legacyReplay).toMatchObject({
+        outcome: "ALREADY_REPLACED",
+        replacementRunId: attempt2.replacementRunId,
+        evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+      });
+
+      await enterPlanning(t.env, attempt2.replacementRunId);
+      await seedPlanningFailure(t.env, attempt2.replacementRunId, {
+        failureCode: "RECOVERY_TARGET_BINDING_FAILED",
+        totals: [18_146, 20_337],
+      });
+      const attempt3 = await t.rr.replaceRecoveryRun({
+        recoveryCaseId: t.recoveryCaseId,
+        body: bodyFor(t.env, attempt2.replacementRunId),
+        principalId: "operator_pg",
+      });
+      expect(attempt3).toMatchObject({
+        outcome: "REPLACED",
+        objectiveId: t.objectiveId,
+        objectiveVersion: 2,
+        predecessorRunId: attempt2.replacementRunId,
+        predecessorRunAttempt: 2,
+        predecessorRunState: "SUPERSEDED",
+        replacementRunAttempt: 3,
+        replacementRunState: "ADMITTED",
+        evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+      });
+
+      const stored = await t.env.db.query<{
+        run_attempt: number | string;
+        payload_attempt: string;
+      }>(
+        `SELECT run_attempt, payload->>'runAttempt' AS payload_attempt
+           FROM runs WHERE run_id = $1`,
+        [attempt3.replacementRunId],
+      );
+      expect(Number(stored.rows[0]?.run_attempt)).toBe(3);
+      expect(stored.rows[0]?.payload_attempt).toBe("3");
+      expect(
+        (await t.env.stack.runs.getById(attempt3.replacementRunId))?.runAttempt,
+      ).toBe(3);
+      await expect(
+        t.env.stack.runs.create({
+          ...(await t.env.stack.runs.getById(t.runId))!,
+          runId: `run_schema_attempt_3b_${t.runId}`,
+          runAttempt: 3,
+          idempotencyKey: `schema-attempt-3b-${t.runId}`,
+          state: "ADMITTED",
+          recordRevision: 1,
+        }),
+      ).rejects.toMatchObject({ code: "DURABLE_CONFLICT" });
+
+      expect((await t.env.stack.runs.getById(attempt2.replacementRunId))?.state).toBe(
+        "SUPERSEDED",
+      );
+      expect((await t.cases.getById(t.recoveryCaseId))?.orchestratorRunId).toBe(
+        attempt3.replacementRunId,
+      );
+      expect(
+        (await t.cases.getById(t.recoveryCaseId))?.recoveryObjectiveVersion,
+      ).toBe(2);
+
+      const plans = new PostgresPlanRepository(t.env.db);
+      const execution = new PostgresExecutionAttemptRepository(t.env.db);
+      const usage = new PostgresPlanningUsageLedger(t.env.db);
+      expect(await plans.listByRunId(attempt3.replacementRunId)).toEqual([]);
+      expect(
+        await t.env.stack.approvalRequests.listByRun(attempt3.replacementRunId),
+      ).toEqual([]);
+      expect(
+        await t.env.stack.authorizationRecords.listByRun(attempt3.replacementRunId),
+      ).toEqual([]);
+      expect(await execution.listByRun(attempt3.replacementRunId)).toEqual([]);
+      const recoveryAttempts = await t.env.db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM revenue_recovery_attempts
+          WHERE recovery_case_id = $1 AND payload->>'runId' = $2`,
+        [t.recoveryCaseId, attempt3.replacementRunId],
+      );
+      expect(recoveryAttempts.rows[0]?.n).toBe(0);
+      expect(await usage.listByRunId(attempt3.replacementRunId)).toEqual([]);
+
+      const audits = new PostgresProductAuditRepository(t.env.db);
+      const lineage = (await audits.listByCase(t.recoveryCaseId)).filter(
+        (event) => event.kind === "RECOVERY_RUN_REPLACED",
+      );
+      expect(lineage).toHaveLength(2);
+      const storedLegacy = lineage.find(
+        (event) => event.payload?.["replacementRunAttempt"] === 2,
+      );
+      const storedThird = lineage.find(
+        (event) => event.payload?.["replacementRunAttempt"] === 3,
+      );
+      expect(storedLegacy?.payload).not.toHaveProperty("evidenceClass");
+      expect(storedThird?.payload).toMatchObject({
+        evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+        predecessorRunAttempt: 2,
+        replacementRunAttempt: 3,
+      });
+      const admitted = await t.env.stack.events.listByRunId(attempt3.replacementRunId);
+      expect(admitted[0]?.data).toMatchObject({
+        evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+        replacementRunAttempt: 3,
+      });
+
+      const replay = await t.rr.replaceRecoveryRun({
+        recoveryCaseId: t.recoveryCaseId,
+        body: bodyFor(t.env, attempt2.replacementRunId),
+      });
+      expect(replay).toMatchObject({
+        outcome: "ALREADY_REPLACED",
+        replacementRunId: attempt3.replacementRunId,
+      });
+      const historical = await t.rr.replaceRecoveryRun({
+        recoveryCaseId: t.recoveryCaseId,
+        body: bodyFor(t.env, t.runId),
+      });
+      expect(historical).toMatchObject({
+        outcome: "ALREADY_REPLACED",
+        replacementRunId: attempt2.replacementRunId,
+        evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+      });
+      await expect(
+        t.rr.replaceRecoveryRun({
+          recoveryCaseId: t.recoveryCaseId,
+          body: bodyFor(t.env, attempt3.replacementRunId),
+        }),
+      ).rejects.toMatchObject({
+        code: "RUN_REPLACEMENT_LIMIT_REACHED",
+        details: { reasonCode: "MAX_RUN_ATTEMPT_REACHED" },
+      });
+      const count = await t.env.db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM runs WHERE objective_id = $1`,
+        [t.objectiveId],
+      );
+      expect(count.rows[0]?.n).toBe(3);
+    } finally {
+      await t.env.close();
+    }
+  });
+
+  it("converges concurrent attempt 2 to 3 replacements onto one successor", async () => {
+    const t = await objectiveV2PlanningCase("rr_replace_attempt3_race");
+    try {
+      await seedTokenExhaustion(t.env, t.runId);
+      const attempt2 = await t.rr.replaceRecoveryRun({
+        recoveryCaseId: t.recoveryCaseId,
+        body: bodyFor(t.env, t.runId),
+      });
+      await enterPlanning(t.env, attempt2.replacementRunId);
+      await seedPlanningFailure(t.env, attempt2.replacementRunId, {
+        failureCode: "RECOVERY_TARGET_BINDING_FAILED",
+        totals: [18_146, 20_337],
+      });
+      const [a, b] = await Promise.all([
+        t.rr.replaceRecoveryRun({
+          recoveryCaseId: t.recoveryCaseId,
+          body: bodyFor(t.env, attempt2.replacementRunId),
+        }),
+        t.rr.replaceRecoveryRun({
+          recoveryCaseId: t.recoveryCaseId,
+          body: bodyFor(t.env, attempt2.replacementRunId),
+        }),
+      ]);
+      expect(a.replacementRunId).toBe(b.replacementRunId);
+      expect(new Set([a.outcome, b.outcome])).toEqual(
+        new Set(["REPLACED", "ALREADY_REPLACED"]),
+      );
+      const count = await t.env.db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM runs WHERE objective_id = $1 AND run_attempt = 3`,
+        [t.objectiveId],
+      );
+      expect(count.rows[0]?.n).toBe(1);
     } finally {
       await t.env.close();
     }

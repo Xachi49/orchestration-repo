@@ -59,9 +59,16 @@ import {
   DISCOVERABLE_RUN_STATES,
 } from "../scheduling/discovery-map.js";
 import { parseRecoveryAttempt } from "./recovery-attempt.js";
+import type { ProductAuditEvent } from "./audit.js";
 import {
+  assertPostModelDeterministicFailure,
   assertReplacementPlanningEvidence,
+  classifyRunReplacementEvidence,
+  evidenceClassFromReplacementPayload,
   RecoveryRunReplacementService,
+  recoveryRunReplacementLineage,
+  validateReplacementLineage,
+  type RecoveryRunReplacementLineageEntry,
   type RecoveryRunReplacementOrchestratorPorts,
 } from "./run-replacement.js";
 
@@ -405,6 +412,236 @@ describe("planning evidence", () => {
   });
 });
 
+describe("post-model evidence and lineage", () => {
+  const budget = EXAMPLE_BUDGET;
+  const pair = [
+    settledUsage({
+      callId: "gap",
+      runId: "run",
+      operation: "GAP_ANALYSIS",
+      totalUsage: 18_146,
+    }),
+    settledUsage({
+      callId: "plan",
+      runId: "run",
+      operation: "PLAN_PROPOSAL",
+      totalUsage: 20_337,
+    }),
+  ];
+  const bindingFence = failedFence("run", "RECOVERY_TARGET_BINDING_FAILED");
+
+  it("classifies a proven post-model failure and keeps token exhaustion separate", () => {
+    expect(
+      classifyRunReplacementEvidence({
+        fence: bindingFence,
+        usage: pair,
+        budget,
+      }),
+    ).toBe("POST_MODEL_DETERMINISTIC_FAILURE");
+    expect(() =>
+      assertPostModelDeterministicFailure({ fence: bindingFence, usage: pair }),
+    ).not.toThrow();
+    expect(
+      classifyRunReplacementEvidence({
+        fence: failedFence("run", "PLANNING_MODEL_BUDGET_EXCEEDED"),
+        usage: pair,
+        budget,
+      }),
+    ).toBe("TOKEN_RESERVATION_EXHAUSTION");
+  });
+
+  it("rejects an unproven post-model sequence", () => {
+    const reject = (
+      usage: PlanningModelUsage[],
+      fence: PlanningFence | null = bindingFence,
+    ) => {
+      expect(() =>
+        assertPostModelDeterministicFailure({ fence, usage }),
+      ).toThrow(expect.objectContaining({
+        code: "RUN_REPLACEMENT_NOT_ELIGIBLE",
+        details: { reasonCode: "POST_MODEL_FAILURE_UNPROVEN" },
+      }));
+    };
+    reject(pair, failedFence("run", "PLANNING_MODEL_INVALID_OUTPUT"));
+    reject(pair, { ...bindingFence, retryable: false });
+    reject(pair, null);
+    reject([pair[1]!]);
+    reject([pair[0]!]);
+    reject([{ ...pair[0]!, status: "FAILED" }, pair[1]!]);
+    reject([{ ...pair[0]!, status: "REFUSED" }, pair[1]!]);
+    reject([{ ...pair[0]!, status: "TIMEOUT" }, pair[1]!]);
+    reject([{ ...pair[0]!, status: "RELEASED" }, pair[1]!]);
+    reject([pair[0]!, pair[1]!, { ...pair[0]!, callId: "gap_2" }]);
+    reject([{ ...pair[0]!, status: "STARTED", totalUsage: undefined }, pair[1]!]);
+    reject([
+      { ...pair[0]!, budgetInvariantViolation: true },
+      pair[1]!,
+    ]);
+    reject([
+      { ...pair[0]!, planningAttempt: 2 },
+      { ...pair[1]!, planningAttempt: 2 },
+    ]);
+    expect(() =>
+      classifyRunReplacementEvidence({ fence: null, usage: pair, budget }),
+    ).toThrow(/does not prove a governed system defect/);
+  });
+
+  it("hydrates legacy attempt 1 to 2 as token exhaustion and rejects other omissions", () => {
+    const legacy = {
+      reason: REASON,
+      predecessorRunAttempt: 1,
+      replacementRunAttempt: 2,
+      predecessorRunId: "run_b",
+      replacementRunId: "run_c",
+      objectiveId: "obj",
+      objectiveVersion: 2,
+      replacementId: "rrunrepl_legacy",
+      recoveryCaseId: "rcase",
+      principalId: null,
+    };
+    expect(evidenceClassFromReplacementPayload(legacy)).toBe(
+      "TOKEN_RESERVATION_EXHAUSTION",
+    );
+    const events: ProductAuditEvent[] = [
+      {
+        eventId: "raud_legacy",
+        kind: "RECOVERY_RUN_REPLACED",
+        customerAccountId: RR_CUSTOMER,
+        projectId: RR_PROJECT,
+        recoveryCaseId: "rcase",
+        occurredAt: NOW,
+        payload: legacy,
+      },
+    ];
+    expect(recoveryRunReplacementLineage(events)[0]?.evidenceClass).toBe(
+      "TOKEN_RESERVATION_EXHAUSTION",
+    );
+    expect(() =>
+      evidenceClassFromReplacementPayload({
+        ...legacy,
+        predecessorRunAttempt: 2,
+        replacementRunAttempt: 3,
+      }),
+    ).toThrow(/missing evidenceClass/);
+    expect(() =>
+      evidenceClassFromReplacementPayload({
+        ...legacy,
+        evidenceClass: "OPERATOR_OVERRIDE",
+      }),
+    ).toThrow(/not a governed class/);
+    expect(() =>
+      evidenceClassFromReplacementPayload({ ...legacy, evidenceClass: "" }),
+    ).toThrow(/not a governed class/);
+  });
+
+  it("rejects forked, gapped, duplicate, and repeated-class lineage", () => {
+    const entry = (
+      overrides: Partial<RecoveryRunReplacementLineageEntry>,
+    ): RecoveryRunReplacementLineageEntry => ({
+      replacementId: "rrunrepl_1",
+      recoveryCaseId: "rcase",
+      objectiveId: "obj",
+      objectiveVersion: 2,
+      predecessorRunId: "run_1",
+      predecessorRunAttempt: 1,
+      replacementRunId: "run_2",
+      replacementRunAttempt: 2,
+      reason: REASON,
+      evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+      principalId: null,
+      occurredAt: NOW,
+      ...overrides,
+    });
+    expect(() => validateReplacementLineage([entry({})])).not.toThrow();
+    expect(() =>
+      validateReplacementLineage([
+        entry({}),
+        entry({
+          replacementId: "rrunrepl_2",
+          predecessorRunId: "run_2",
+          predecessorRunAttempt: 2,
+          replacementRunId: "run_3",
+          replacementRunAttempt: 3,
+          evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+        }),
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      validateReplacementLineage([
+        entry({ replacementRunAttempt: 3, predecessorRunAttempt: 2 }),
+      ]),
+    ).toThrow(/does not start/);
+    expect(() =>
+      validateReplacementLineage([
+        entry({ predecessorRunAttempt: 1, replacementRunAttempt: 3 }),
+      ]),
+    ).toThrow(/not continuous/);
+    expect(() =>
+      validateReplacementLineage([
+        entry({}),
+        entry({
+          replacementId: "rrunrepl_fork",
+          predecessorRunId: "run_other",
+          predecessorRunAttempt: 2,
+          replacementRunId: "run_fork",
+          replacementRunAttempt: 3,
+          evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+        }),
+      ]),
+    ).toThrow(/forked/);
+    expect(() =>
+      validateReplacementLineage([
+        entry({}),
+        entry({
+          replacementId: "rrunrepl_dup_pred",
+          predecessorRunId: "run_other",
+          replacementRunId: "run_other_successor",
+          evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+        }),
+      ]),
+    ).toThrow(/forked|repeats/);
+    expect(() =>
+      validateReplacementLineage([
+        entry({ replacementRunId: "run_1" }),
+        entry({
+          replacementId: "rrunrepl_reused_predecessor",
+          predecessorRunId: "run_1",
+          predecessorRunAttempt: 2,
+          replacementRunId: "run_3",
+          replacementRunAttempt: 3,
+          evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+        }),
+      ]),
+    ).toThrow(/repeats/);
+    expect(() =>
+      validateReplacementLineage([
+        entry({}),
+        entry({
+          replacementId: "rrunrepl_dup_successor",
+          predecessorRunId: "run_2",
+          predecessorRunAttempt: 2,
+          replacementRunId: "run_2",
+          replacementRunAttempt: 3,
+          evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+        }),
+      ]),
+    ).toThrow(/repeats/);
+    expect(() =>
+      validateReplacementLineage([
+        entry({}),
+        entry({
+          replacementId: "rrunrepl_same_class",
+          predecessorRunId: "run_2",
+          predecessorRunAttempt: 2,
+          replacementRunId: "run_3",
+          replacementRunAttempt: 3,
+          evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+        }),
+      ]),
+    ).toThrow(/repeats/);
+  });
+});
+
 type Harness = Awaited<ReturnType<typeof eligibleHarness>>;
 
 async function seedConsumption(
@@ -556,6 +793,7 @@ async function eligibleHarness(options?: {
   const body = {
     customerAccountId: RR_CUSTOMER,
     projectId: RR_PROJECT,
+    expectedPredecessorRunId: runId,
     reason: REASON,
   };
   return {
@@ -575,6 +813,28 @@ async function eligibleHarness(options?: {
     body,
     product,
   };
+}
+
+async function enterPlanning(h: Harness, runId: string) {
+  let run = await h.admission.runs.getById(runId);
+  if (!run) throw new Error("missing run");
+  if (run.state === "ADMITTED") {
+    run = await commitRunTransition(h.admission.runs, run, "INGESTING", NOW);
+  }
+  if (run.state === "INGESTING") {
+    await commitRunTransition(h.admission.runs, run, "PLANNING", NOW);
+  }
+}
+
+async function proveDefect(h: Harness, runId: string, kind: "A" | "B") {
+  await enterPlanning(h, runId);
+  if (kind === "A") {
+    await markBudgetFailed(h.planning, runId, "PLANNING_MODEL_BUDGET_EXCEEDED");
+    await seedConsumption(h.usage, runId, [100_000, 100_000]);
+    return;
+  }
+  await markBudgetFailed(h.planning, runId, "RECOVERY_TARGET_BINDING_FAILED");
+  await seedConsumption(h.usage, runId, [18_146, 20_337]);
 }
 
 function directService(
@@ -637,6 +897,7 @@ describe("governed run replacement", () => {
       replacementRunAttempt: 2,
       replacementRunState: "ADMITTED",
       reason: REASON,
+      evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
     });
     expect(result.replacementRunId).not.toBe(h.runId);
 
@@ -713,6 +974,13 @@ describe("governed run replacement", () => {
     expect(replacementEvents.map((event) => event.eventType)).toEqual([
       PROJECT_RUN_REPLACEMENT_ADMITTED,
     ]);
+    expect(replacementEvents[0]?.data).toMatchObject({
+      predecessorRunId: h.runId,
+      predecessorRunAttempt: 1,
+      replacementRunAttempt: 2,
+      reason: REASON,
+      evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+    });
 
     const audits = (await h.repos.audits.listByCase(h.recoveryCaseId)).filter(
       (event) => event.kind === "RECOVERY_RUN_REPLACED",
@@ -724,6 +992,7 @@ describe("governed run replacement", () => {
       replacementRunId: result.replacementRunId,
       objectiveVersion: 2,
       reason: REASON,
+      evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
     });
 
     const replay = await h.service.replaceRecoveryRun({
@@ -750,7 +1019,7 @@ describe("governed run replacement", () => {
     ).toBe(2);
   });
 
-  it("does not mint attempt 3 after the one SYSTEM_DEFECT_RETRY", async () => {
+  it("replays the historical predecessor after the case pointer moves", async () => {
     const h = await eligibleHarness();
     const first = await h.service.replaceRecoveryRun({
       recoveryCaseId: h.recoveryCaseId,
@@ -768,12 +1037,16 @@ describe("governed run replacement", () => {
       updatedAt: NOW,
     });
     expect(moved).not.toBeNull();
-    await expect(
-      h.service.replaceRecoveryRun({
-        recoveryCaseId: h.recoveryCaseId,
-        body: h.body,
-      }),
-    ).rejects.toMatchObject({ code: "RUN_REPLACEMENT_LIMIT_REACHED" });
+    const replay = await h.service.replaceRecoveryRun({
+      recoveryCaseId: h.recoveryCaseId,
+      body: h.body,
+    });
+    expect(replay).toMatchObject({
+      outcome: "ALREADY_REPLACED",
+      predecessorRunId: h.runId,
+      replacementRunId: first.replacementRunId,
+      evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+    });
     expect(
       await h.admission.runs.maxRunAttempt({
         projectId: RR_PROJECT,
@@ -885,6 +1158,25 @@ describe("governed run replacement", () => {
         body: { ...h.body, predecessorRunId: h.runId },
       }),
     ).rejects.toMatchObject({ code: "RUN_REPLACEMENT_INVALID" });
+    await expect(
+      h.service.replaceRecoveryRun({
+        recoveryCaseId: h.recoveryCaseId,
+        body: {
+          ...h.body,
+          evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+        },
+      }),
+    ).rejects.toMatchObject({ code: "RUN_REPLACEMENT_INVALID" });
+    await expect(
+      h.service.replaceRecoveryRun({
+        recoveryCaseId: h.recoveryCaseId,
+        body: {
+          customerAccountId: h.body.customerAccountId,
+          projectId: h.body.projectId,
+          reason: h.body.reason,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "RUN_REPLACEMENT_INVALID" });
 
     const stale = await h.repos.cases.getById(h.recoveryCaseId);
     await h.repos.cases.compareAndSetOrchestratorRunBinding({
@@ -901,6 +1193,15 @@ describe("governed run replacement", () => {
       h.service.replaceRecoveryRun({
         recoveryCaseId: h.recoveryCaseId,
         body: h.body,
+      }),
+    ).rejects.toMatchObject({
+      code: "RUN_REPLACEMENT_NOT_ELIGIBLE",
+      details: { reasonCode: "EXPECTED_PREDECESSOR_MISMATCH" },
+    });
+    await expect(
+      h.service.replaceRecoveryRun({
+        recoveryCaseId: h.recoveryCaseId,
+        body: { ...h.body, expectedPredecessorRunId: "run_missing" },
       }),
     ).rejects.toMatchObject({
       code: "RUN_REPLACEMENT_NOT_ELIGIBLE",
@@ -998,6 +1299,268 @@ describe("governed run replacement", () => {
     });
   });
 
+  it("rejects a stale expected predecessor that has no historical replacement", async () => {
+    const h = await eligibleHarness();
+    await expect(
+      h.service.replaceRecoveryRun({
+        recoveryCaseId: h.recoveryCaseId,
+        body: { ...h.body, expectedPredecessorRunId: "run_not_current" },
+      }),
+    ).rejects.toMatchObject({
+      code: "RUN_REPLACEMENT_NOT_ELIGIBLE",
+      details: { reasonCode: "EXPECTED_PREDECESSOR_MISMATCH" },
+    });
+    expect((await h.repos.cases.getById(h.recoveryCaseId))?.orchestratorRunId).toBe(
+      h.runId,
+    );
+    expect((await h.admission.runs.getById(h.runId))?.state).toBe("PLANNING");
+  });
+
+  it("fails closed on malformed lineage without minting a successor", async () => {
+    const h = await eligibleHarness();
+    await h.repos.audits.append({
+      eventId: "raud_gap",
+      kind: "RECOVERY_RUN_REPLACED",
+      customerAccountId: RR_CUSTOMER,
+      projectId: RR_PROJECT,
+      recoveryCaseId: h.recoveryCaseId,
+      occurredAt: NOW,
+      payload: {
+        replacementId: "rrunrepl_gap",
+        recoveryCaseId: h.recoveryCaseId,
+        objectiveId: h.objectiveId,
+        objectiveVersion: 2,
+        predecessorRunId: h.runId,
+        predecessorRunAttempt: 1,
+        replacementRunId: "run_skipped",
+        replacementRunAttempt: 3,
+        reason: REASON,
+        evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+        principalId: null,
+      },
+    });
+    await expect(
+      h.service.replaceRecoveryRun({
+        recoveryCaseId: h.recoveryCaseId,
+        body: h.body,
+      }),
+    ).rejects.toMatchObject({
+      code: "RUN_REPLACEMENT_CONFLICT",
+      details: { reasonCode: "MALFORMED_REPLACEMENT_LINEAGE" },
+    });
+    expect((await h.admission.runs.getById(h.runId))?.state).toBe("PLANNING");
+    expect(
+      await h.admission.runs.maxRunAttempt({
+        projectId: RR_PROJECT,
+        objectiveId: h.objectiveId,
+        objectiveVersion: 2,
+        requestedEnvironment: EXAMPLE_ENVIRONMENT,
+      }),
+    ).toBe(1);
+  });
+
+  it("mints attempt 3 only for a different evidence class and then stops", async () => {
+    const classBFirst = await eligibleHarness({
+      failureCode: "RECOVERY_TARGET_BINDING_FAILED",
+      consume: [18_146, 20_337],
+    });
+    const firstB = await classBFirst.service.replaceRecoveryRun({
+      recoveryCaseId: classBFirst.recoveryCaseId,
+      body: classBFirst.body,
+    });
+    expect(firstB).toMatchObject({
+      outcome: "REPLACED",
+      predecessorRunAttempt: 1,
+      replacementRunAttempt: 2,
+      evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+      objectiveVersion: 2,
+    });
+    await proveDefect(classBFirst, firstB.replacementRunId, "A");
+    const secondA = await classBFirst.service.replaceRecoveryRun({
+      recoveryCaseId: classBFirst.recoveryCaseId,
+      body: {
+        ...classBFirst.body,
+        expectedPredecessorRunId: firstB.replacementRunId,
+      },
+    });
+    expect(secondA).toMatchObject({
+      outcome: "REPLACED",
+      predecessorRunAttempt: 2,
+      replacementRunAttempt: 3,
+      evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+      objectiveId: classBFirst.objectiveId,
+      objectiveVersion: 2,
+    });
+    await expect(
+      classBFirst.service.replaceRecoveryRun({
+        recoveryCaseId: classBFirst.recoveryCaseId,
+        body: {
+          ...classBFirst.body,
+          expectedPredecessorRunId: secondA.replacementRunId,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "RUN_REPLACEMENT_LIMIT_REACHED",
+      details: { reasonCode: "MAX_RUN_ATTEMPT_REACHED" },
+    });
+
+    const repeatedA = await eligibleHarness();
+    const attempt2 = await repeatedA.service.replaceRecoveryRun({
+      recoveryCaseId: repeatedA.recoveryCaseId,
+      body: repeatedA.body,
+    });
+    await proveDefect(repeatedA, attempt2.replacementRunId, "A");
+    await expect(
+      repeatedA.service.replaceRecoveryRun({
+        recoveryCaseId: repeatedA.recoveryCaseId,
+        body: {
+          ...repeatedA.body,
+          expectedPredecessorRunId: attempt2.replacementRunId,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "RUN_REPLACEMENT_LIMIT_REACHED",
+      details: { reasonCode: "EVIDENCE_CLASS_ALREADY_CONSUMED" },
+    });
+
+    const repeatedB = await eligibleHarness({
+      failureCode: "RECOVERY_TARGET_BINDING_FAILED",
+      consume: [1_000, 1_000],
+    });
+    const attempt2B = await repeatedB.service.replaceRecoveryRun({
+      recoveryCaseId: repeatedB.recoveryCaseId,
+      body: repeatedB.body,
+    });
+    await proveDefect(repeatedB, attempt2B.replacementRunId, "B");
+    await expect(
+      repeatedB.service.replaceRecoveryRun({
+        recoveryCaseId: repeatedB.recoveryCaseId,
+        body: {
+          ...repeatedB.body,
+          expectedPredecessorRunId: attempt2B.replacementRunId,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "RUN_REPLACEMENT_LIMIT_REACHED",
+      details: { reasonCode: "EVIDENCE_CLASS_ALREADY_CONSUMED" },
+    });
+  });
+
+  it("replaces a production-shaped legacy class A then class B lineage through attempt 3", async () => {
+    const h = await eligibleHarness();
+    const attempt2 = await h.service.replaceRecoveryRun({
+      recoveryCaseId: h.recoveryCaseId,
+      body: h.body,
+      principalId: "operator_test",
+    });
+    const legacy = (await h.repos.audits.listByCase(h.recoveryCaseId)).find(
+      (event) => event.kind === "RECOVERY_RUN_REPLACED",
+    );
+    delete legacy?.payload?.evidenceClass;
+    const historical = await h.service.replaceRecoveryRun({
+      recoveryCaseId: h.recoveryCaseId,
+      body: h.body,
+    });
+    expect(historical).toMatchObject({
+      outcome: "ALREADY_REPLACED",
+      predecessorRunId: h.runId,
+      replacementRunId: attempt2.replacementRunId,
+      evidenceClass: "TOKEN_RESERVATION_EXHAUSTION",
+    });
+
+    await proveDefect(h, attempt2.replacementRunId, "B");
+    const attempt3 = await h.service.replaceRecoveryRun({
+      recoveryCaseId: h.recoveryCaseId,
+      body: {
+        ...h.body,
+        expectedPredecessorRunId: attempt2.replacementRunId,
+      },
+      principalId: "operator_test",
+    });
+    expect(attempt3).toMatchObject({
+      outcome: "REPLACED",
+      objectiveId: h.objectiveId,
+      objectiveVersion: 2,
+      predecessorRunId: attempt2.replacementRunId,
+      predecessorRunAttempt: 2,
+      predecessorRunState: "SUPERSEDED",
+      replacementRunAttempt: 3,
+      replacementRunState: "ADMITTED",
+      evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+    });
+    expect((await h.admission.runs.getById(attempt3.replacementRunId))?.state).toBe(
+      "ADMITTED",
+    );
+    expect(await h.plans.listByRunId(attempt3.replacementRunId)).toEqual([]);
+    expect(await h.approvalRequests.listByRun(attempt3.replacementRunId)).toEqual(
+      [],
+    );
+    expect(
+      await h.authorizationRecords.listByRun(attempt3.replacementRunId),
+    ).toEqual([]);
+    expect(await h.executionAttempts.listByRun(attempt3.replacementRunId)).toEqual(
+      [],
+    );
+    expect(await h.usage.listByRunId(attempt3.replacementRunId)).toEqual([]);
+    expect((await h.repos.cases.getById(h.recoveryCaseId))?.orchestratorRunId).toBe(
+      attempt3.replacementRunId,
+    );
+    expect(
+      (await h.repos.cases.getById(h.recoveryCaseId))?.recoveryObjectiveVersion,
+    ).toBe(2);
+
+    const replayAttempt2 = await h.service.replaceRecoveryRun({
+      recoveryCaseId: h.recoveryCaseId,
+      body: {
+        ...h.body,
+        expectedPredecessorRunId: attempt2.replacementRunId,
+      },
+    });
+    expect(replayAttempt2).toMatchObject({
+      outcome: "ALREADY_REPLACED",
+      replacementRunId: attempt3.replacementRunId,
+      evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+    });
+    const replayAttempt1 = await h.service.replaceRecoveryRun({
+      recoveryCaseId: h.recoveryCaseId,
+      body: h.body,
+    });
+    expect(replayAttempt1).toMatchObject({
+      outcome: "ALREADY_REPLACED",
+      replacementRunId: attempt2.replacementRunId,
+    });
+    await expect(
+      h.service.replaceRecoveryRun({
+        recoveryCaseId: h.recoveryCaseId,
+        body: {
+          ...h.body,
+          expectedPredecessorRunId: attempt3.replacementRunId,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "RUN_REPLACEMENT_LIMIT_REACHED",
+      details: { reasonCode: "MAX_RUN_ATTEMPT_REACHED" },
+    });
+    expect(
+      await h.admission.runs.maxRunAttempt({
+        projectId: RR_PROJECT,
+        objectiveId: h.objectiveId,
+        objectiveVersion: 2,
+        requestedEnvironment: EXAMPLE_ENVIRONMENT,
+      }),
+    ).toBe(3);
+    const admittedEvents = await h.admission.events.listByRunId(
+      attempt3.replacementRunId,
+    );
+    expect(admittedEvents.map((event) => event.eventType)).toEqual([
+      PROJECT_RUN_REPLACEMENT_ADMITTED,
+    ]);
+    expect(admittedEvents[0]?.data).toMatchObject({
+      evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+      replacementRunAttempt: 3,
+    });
+  });
+
   it("returns 503 when replacement is not configured", async () => {
     const { service } = createMemoryRevenueRecoveryService({
       nowIso: () => NOW,
@@ -1063,6 +1626,34 @@ describe("run replacement HTTP", () => {
     });
     expect(smuggled.statusCode).toBe(400);
     expect(smuggled.json().error).toBe("RUN_REPLACEMENT_INVALID");
+    const missingPredecessor = await app.inject({
+      method: "POST",
+      url,
+      payload: {
+        customerAccountId: h.body.customerAccountId,
+        projectId: h.body.projectId,
+        reason: h.body.reason,
+      },
+    });
+    expect(missingPredecessor.statusCode).toBe(400);
+    expect(missingPredecessor.json().error).toBe("RUN_REPLACEMENT_INVALID");
+    const callerClass = await app.inject({
+      method: "POST",
+      url,
+      payload: {
+        ...h.body,
+        evidenceClass: "POST_MODEL_DETERMINISTIC_FAILURE",
+      },
+    });
+    expect(callerClass.statusCode).toBe(400);
+    expect(callerClass.json().error).toBe("RUN_REPLACEMENT_INVALID");
+    const mismatch = await app.inject({
+      method: "POST",
+      url,
+      payload: { ...h.body, expectedPredecessorRunId: "run_not_current" },
+    });
+    expect(mismatch.statusCode).toBe(409);
+    expect(mismatch.json().error).toBe("RUN_REPLACEMENT_NOT_ELIGIBLE");
     await app.close();
 
     const blocked = await eligibleHarness({ toPlanning: false });

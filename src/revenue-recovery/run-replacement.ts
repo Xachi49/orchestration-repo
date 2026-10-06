@@ -12,8 +12,16 @@
  * SUPERSEDED != FAILED OBJECTIVE.
  * FAILED RUN HISTORY != AUTHORITY TO MUTATE HISTORY.
  *
- * V1 permits one SYSTEM_DEFECT_RETRY per RecoveryCase + objectiveId +
- * objectiveVersion. That mints run attempt 2 and then fails closed.
+ * At most two governed SYSTEM_DEFECT_RETRY replacements may exist for one
+ * objective version, and at most one consumption per durable evidence class.
+ * Run attempt 3 is the hard ceiling. The evidence class is system-derived;
+ * the caller cannot select it.
+ *
+ * A historical attempt-1 → attempt-2 audit without evidenceClass is legacy
+ * TOKEN_RESERVATION_EXHAUSTION. Any other missing class is malformed lineage.
+ * Request identity includes expectedPredecessorRunId. Replaying that
+ * predecessor returns the historical successor even after the case advances.
+ *
  * This service does not call objective reissue and does not call
  * AdmissionService.admit().
  */
@@ -62,10 +70,18 @@ export const RUN_REPLACEMENT_REASONS = ["SYSTEM_DEFECT_RETRY"] as const;
 export type RunReplacementReason = (typeof RUN_REPLACEMENT_REASONS)[number];
 
 /**
- * V1 cap: one governed replacement, which is attempt 2.
- * Further attempts require a future explicit governance design.
+ * Hard ceiling on the run attempt this primitive may produce.
+ * The constant does not authorize a replacement. A new attempt also requires
+ * an unused durable evidence class and a continuous lineage chain.
  */
-export const MAX_SYSTEM_DEFECT_RETRY_ATTEMPT = 2;
+export const MAX_GOVERNED_SYSTEM_DEFECT_RUN_ATTEMPT = 3;
+
+export const RUN_REPLACEMENT_EVIDENCE_CLASSES = [
+  "TOKEN_RESERVATION_EXHAUSTION",
+  "POST_MODEL_DETERMINISTIC_FAILURE",
+] as const;
+export type RunReplacementEvidenceClass =
+  (typeof RUN_REPLACEMENT_EVIDENCE_CLASSES)[number];
 
 const LOCK_TTL_MS = 60 * 60 * 1000;
 const EVENT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -74,6 +90,7 @@ export const RunReplacementRequestSchema = z
   .object({
     customerAccountId: z.string().min(1),
     projectId: z.string().min(1),
+    expectedPredecessorRunId: z.string().min(1),
     reason: z.enum(RUN_REPLACEMENT_REASONS),
   })
   .strict();
@@ -124,6 +141,7 @@ export type RecoveryRunReplacementResult = {
   replacementRunAttempt: number;
   replacementRunState: string | null;
   reason: RunReplacementReason;
+  evidenceClass: RunReplacementEvidenceClass;
 };
 
 export type RecoveryRunReplacementLineageEntry = {
@@ -136,6 +154,7 @@ export type RecoveryRunReplacementLineageEntry = {
   replacementRunId: string;
   replacementRunAttempt: number;
   reason: string;
+  evidenceClass: RunReplacementEvidenceClass;
   principalId: string | null;
   occurredAt: string;
 };
@@ -148,6 +167,43 @@ export function recoveryRunReplacementId(input: {
   reason: RunReplacementReason;
 }): string {
   return `rrunrepl_${hashCanonical(input).slice(0, 32)}`;
+}
+
+/**
+ * Missing evidenceClass is legacy Class A only for the single transition the
+ * pre-evidence implementation could mint: SYSTEM_DEFECT_RETRY, attempt 1 → 2.
+ * That implementation required the token-reservation proof. Any other missing
+ * or unrecognized class is malformed lineage and is not rewritten.
+ */
+export function evidenceClassFromReplacementPayload(
+  payload: Readonly<Record<string, string | number | boolean | null>>,
+): RunReplacementEvidenceClass {
+  const raw = payload["evidenceClass"];
+  if (
+    raw === "TOKEN_RESERVATION_EXHAUSTION" ||
+    raw === "POST_MODEL_DETERMINISTIC_FAILURE"
+  ) {
+    return raw;
+  }
+  if (raw !== undefined && raw !== null) {
+    throw lineageConflict(
+      "MALFORMED_REPLACEMENT_LINEAGE",
+      "Replacement lineage evidenceClass is not a governed class",
+    );
+  }
+  const predecessorRunAttempt = Number(payload["predecessorRunAttempt"]);
+  const replacementRunAttempt = Number(payload["replacementRunAttempt"]);
+  if (
+    payload["reason"] === "SYSTEM_DEFECT_RETRY" &&
+    predecessorRunAttempt === 1 &&
+    replacementRunAttempt === 2
+  ) {
+    return "TOKEN_RESERVATION_EXHAUSTION";
+  }
+  throw lineageConflict(
+    "MALFORMED_REPLACEMENT_LINEAGE",
+    "Replacement lineage is missing evidenceClass",
+  );
 }
 
 export function recoveryRunReplacementLineage(
@@ -167,6 +223,7 @@ export function recoveryRunReplacementLineage(
         replacementRunId: String(payload["replacementRunId"]),
         replacementRunAttempt: Number(payload["replacementRunAttempt"]),
         reason: String(payload["reason"]),
+        evidenceClass: evidenceClassFromReplacementPayload(payload),
         principalId:
           typeof payload["principalId"] === "string"
             ? payload["principalId"]
@@ -175,6 +232,74 @@ export function recoveryRunReplacementLineage(
       };
     })
     .sort((a, b) => a.replacementRunAttempt - b.replacementRunAttempt);
+}
+
+/**
+ * A replacement chain is continuous, unforked, and consumes each evidence
+ * class once. Historical rows are not repaired.
+ */
+export function validateReplacementLineage(
+  entries: readonly RecoveryRunReplacementLineageEntry[],
+): void {
+  const sorted = [...entries].sort(
+    (a, b) => a.replacementRunAttempt - b.replacementRunAttempt,
+  );
+  const predecessors = new Set<string>();
+  const replacements = new Set<string>();
+  const attempts = new Set<number>();
+  const classes = new Set<string>();
+  let previous: RecoveryRunReplacementLineageEntry | null = null;
+  for (const entry of sorted) {
+    if (entry.reason !== "SYSTEM_DEFECT_RETRY") {
+      throw lineageConflict(
+        "MALFORMED_REPLACEMENT_LINEAGE",
+        "Replacement lineage reason is not SYSTEM_DEFECT_RETRY",
+      );
+    }
+    if (
+      !Number.isInteger(entry.predecessorRunAttempt) ||
+      entry.predecessorRunAttempt < 1 ||
+      entry.replacementRunAttempt !== entry.predecessorRunAttempt + 1 ||
+      entry.replacementRunAttempt > MAX_GOVERNED_SYSTEM_DEFECT_RUN_ATTEMPT
+    ) {
+      throw lineageConflict(
+        "MALFORMED_REPLACEMENT_LINEAGE",
+        "Replacement lineage attempt chain is not continuous",
+      );
+    }
+    if (
+      predecessors.has(entry.predecessorRunId) ||
+      replacements.has(entry.replacementRunId) ||
+      attempts.has(entry.replacementRunAttempt) ||
+      classes.has(entry.evidenceClass)
+    ) {
+      throw lineageConflict(
+        "MALFORMED_REPLACEMENT_LINEAGE",
+        "Replacement lineage repeats a predecessor, successor, attempt, or evidence class",
+      );
+    }
+    if (previous === null) {
+      if (entry.predecessorRunAttempt !== 1) {
+        throw lineageConflict(
+          "MALFORMED_REPLACEMENT_LINEAGE",
+          "Replacement lineage does not start at run attempt 1",
+        );
+      }
+    } else if (
+      entry.predecessorRunId !== previous.replacementRunId ||
+      entry.predecessorRunAttempt !== previous.replacementRunAttempt
+    ) {
+      throw lineageConflict(
+        "MALFORMED_REPLACEMENT_LINEAGE",
+        "Replacement lineage is forked or has a gap",
+      );
+    }
+    predecessors.add(entry.predecessorRunId);
+    replacements.add(entry.replacementRunId);
+    attempts.add(entry.replacementRunAttempt);
+    classes.add(entry.evidenceClass);
+    previous = entry;
+  }
 }
 
 /**
@@ -255,6 +380,105 @@ export function assertReplacementPlanningEvidence(input: {
       "Charged planning usage names a different budget profile than the resolved project budget",
     );
   }
+}
+
+/**
+ * Inference for the failed fence attempt completed, and deterministic
+ * post-model processing failed before a plan was saved. The fence code alone
+ * is not this proof.
+ */
+export function assertPostModelDeterministicFailure(input: {
+  fence: PlanningFence | null;
+  usage: readonly PlanningModelUsage[];
+}): void {
+  const fence = input.fence;
+  if (
+    !fence ||
+    fence.status !== "FAILED" ||
+    fence.failureCode !== "RECOVERY_TARGET_BINDING_FAILED" ||
+    fence.retryable !== true
+  ) {
+    throw notEligible(
+      "POST_MODEL_FAILURE_UNPROVEN",
+      "Durable planning evidence does not prove a retryable post-model failure",
+    );
+  }
+  if (input.usage.some((record) => record.status === "STARTED")) {
+    throw notEligible(
+      "POST_MODEL_FAILURE_UNPROVEN",
+      "Planning usage still has an active reservation",
+    );
+  }
+  if (aggregatePlanningUsage(input.usage).budgetInvariantViolated) {
+    throw notEligible(
+      "POST_MODEL_FAILURE_UNPROVEN",
+      "Planning usage recorded a budget invariant violation",
+    );
+  }
+  const onAttempt = input.usage.filter(
+    (record) => record.planningAttempt === fence.attempt,
+  );
+  const bound = onAttempt.filter((record) => record.provider.trim().length > 0);
+  const gap = bound.filter((record) => record.operation === "GAP_ANALYSIS");
+  const proposal = bound.filter((record) => record.operation === "PLAN_PROPOSAL");
+  const proven = (record: PlanningModelUsage | undefined) =>
+    record?.status === "SUCCESS" && (record.totalUsage ?? 0) > 0;
+  if (
+    onAttempt.length !== 2 ||
+    bound.length !== 2 ||
+    gap.length !== 1 ||
+    proposal.length !== 1 ||
+    !proven(gap[0]) ||
+    !proven(proposal[0])
+  ) {
+    throw notEligible(
+      "POST_MODEL_FAILURE_UNPROVEN",
+      "Durable usage does not prove one successful gap analysis and one successful plan proposal for the failed planning attempt",
+    );
+  }
+}
+
+/**
+ * Exactly one governed defect class, or fail closed. Class A and Class B
+ * are different fence codes, so a record cannot satisfy both.
+ */
+export function classifyRunReplacementEvidence(input: {
+  fence: PlanningFence | null;
+  usage: readonly PlanningModelUsage[];
+  budget: ResourceBudgetProfile;
+}): RunReplacementEvidenceClass {
+  if (input.fence?.failureCode === "PLANNING_MODEL_BUDGET_EXCEEDED") {
+    assertReplacementPlanningEvidence(input);
+    return "TOKEN_RESERVATION_EXHAUSTION";
+  }
+  if (input.fence?.failureCode === "RECOVERY_TARGET_BINDING_FAILED") {
+    assertPostModelDeterministicFailure(input);
+    return "POST_MODEL_DETERMINISTIC_FAILURE";
+  }
+  throw notEligible(
+    "PLANNING_FAILURE_UNPROVEN",
+    "Durable planning evidence does not prove a governed system defect",
+  );
+}
+
+function lineageConflict(
+  reasonCode: string,
+  message: string,
+): RevenueRecoveryError {
+  return new RevenueRecoveryError("RUN_REPLACEMENT_CONFLICT", message, {
+    reasonCode,
+  });
+}
+
+function limitReached(
+  reasonCode: string,
+  message: string,
+  details: Record<string, unknown> = {},
+): RevenueRecoveryError {
+  return new RevenueRecoveryError("RUN_REPLACEMENT_LIMIT_REACHED", message, {
+    reasonCode,
+    ...details,
+  });
 }
 
 function notEligible(
@@ -371,25 +595,20 @@ export class RecoveryRunReplacementService {
     const lineage = recoveryRunReplacementLineage(events).filter(
       (entry) =>
         entry.objectiveId === objectiveId &&
-        entry.objectiveVersion === objectiveVersion &&
-        entry.reason === request.reason,
+        entry.objectiveVersion === objectiveVersion,
     );
-    if (lineage.length > 1) {
-      throw new RevenueRecoveryError(
-        "RUN_REPLACEMENT_CONFLICT",
-        "Replacement lineage for this objective version is ambiguous",
+    validateReplacementLineage(lineage);
+    const historical = lineage.filter(
+      (entry) => entry.predecessorRunId === request.expectedPredecessorRunId,
+    );
+    if (historical.length > 1) {
+      throw lineageConflict(
+        "MALFORMED_REPLACEMENT_LINEAGE",
+        "More than one replacement records the expected predecessor",
       );
     }
-    if (lineage.length === 1) {
-      const existing = lineage[0]!;
-      if (recoveryCase.orchestratorRunId === existing.replacementRunId) {
-        return this.alreadyReplaced(existing);
-      }
-      throw new RevenueRecoveryError(
-        "RUN_REPLACEMENT_LIMIT_REACHED",
-        "This objective version already has its one SYSTEM_DEFECT_RETRY replacement",
-        { replacementId: existing.replacementId },
-      );
+    if (historical.length === 1) {
+      return this.alreadyReplaced(historical[0]!);
     }
 
     if (recoveryCase.status !== "IN_ORCHESTRATION") {
@@ -400,10 +619,27 @@ export class RecoveryRunReplacementService {
       );
     }
     const predecessorRunId = recoveryCase.orchestratorRunId;
-    if (!predecessorRunId) {
+    if (!predecessorRunId || predecessorRunId !== request.expectedPredecessorRunId) {
       throw notEligible(
-        "NO_CURRENT_RUN",
-        "RecoveryCase has no current orchestrator run",
+        "EXPECTED_PREDECESSOR_MISMATCH",
+        "Expected predecessor is not the RecoveryCase current run",
+        {
+          expectedPredecessorRunId: request.expectedPredecessorRunId,
+          currentRunId: predecessorRunId ?? null,
+        },
+      );
+    }
+    const named = await this.deps.orchestrator.runs.getById(predecessorRunId);
+    if (!named) {
+      throw notEligible("PREDECESSOR_NOT_FOUND", "Predecessor run not found", {
+        predecessorRunId,
+      });
+    }
+    if (named.runAttempt >= MAX_GOVERNED_SYSTEM_DEFECT_RUN_ATTEMPT) {
+      throw limitReached(
+        "MAX_RUN_ATTEMPT_REACHED",
+        "Governed system-defect replacement cannot mint another run attempt",
+        { predecessorRunAttempt: named.runAttempt },
       );
     }
 
@@ -454,7 +690,14 @@ export class RecoveryRunReplacementService {
     }
     const usage = await this.deps.orchestrator.usage.listByRunId(predecessor.runId);
     const fence = await this.deps.orchestrator.planning.get(predecessor.runId);
-    assertReplacementPlanningEvidence({ fence, usage, budget });
+    const evidenceClass = classifyRunReplacementEvidence({ fence, usage, budget });
+    if (lineage.some((entry) => entry.evidenceClass === evidenceClass)) {
+      throw limitReached(
+        "EVIDENCE_CLASS_ALREADY_CONSUMED",
+        "This evidence class already authorized a system-defect replacement",
+        { evidenceClass },
+      );
+    }
 
     const maxAttempt = await this.deps.orchestrator.runs.maxRunAttempt({
       projectId: predecessor.projectId,
@@ -462,15 +705,23 @@ export class RecoveryRunReplacementService {
       objectiveVersion,
       requestedEnvironment: predecessor.requestedEnvironment,
     });
-    const replacementRunAttempt = maxAttempt + 1;
-    if (
-      predecessor.runAttempt !== 1 ||
-      maxAttempt !== predecessor.runAttempt ||
-      replacementRunAttempt !== MAX_SYSTEM_DEFECT_RETRY_ATTEMPT
-    ) {
-      throw new RevenueRecoveryError(
-        "RUN_REPLACEMENT_LIMIT_REACHED",
-        "This objective version already used its one SYSTEM_DEFECT_RETRY replacement",
+    const replacementRunAttempt = predecessor.runAttempt + 1;
+    const last = lineage[lineage.length - 1];
+    const chainAgrees =
+      lineage.length === 0
+        ? predecessor.runAttempt === 1
+        : last?.replacementRunId === predecessor.runId &&
+          last.replacementRunAttempt === predecessor.runAttempt;
+    if (!chainAgrees || maxAttempt !== predecessor.runAttempt) {
+      throw lineageConflict(
+        "MALFORMED_REPLACEMENT_LINEAGE",
+        "Current run does not continue the replacement lineage",
+      );
+    }
+    if (replacementRunAttempt > MAX_GOVERNED_SYSTEM_DEFECT_RUN_ATTEMPT) {
+      throw limitReached(
+        "MAX_RUN_ATTEMPT_REACHED",
+        "Governed system-defect replacement cannot mint another run attempt",
         { maxAttempt, predecessorRunAttempt: predecessor.runAttempt },
       );
     }
@@ -508,6 +759,7 @@ export class RecoveryRunReplacementService {
         objectiveVersion,
         predecessor,
         reason: request.reason,
+        evidenceClass,
       });
     }
 
@@ -592,6 +844,7 @@ export class RecoveryRunReplacementService {
             predecessorRunAttempt: predecessor.runAttempt,
             replacementRunAttempt,
             reason: request.reason,
+            evidenceClass,
             requesterId: predecessor.requesterId,
             requestedEnvironment: predecessor.requestedEnvironment,
           },
@@ -671,6 +924,7 @@ export class RecoveryRunReplacementService {
           replacementRunId: admitted.runId,
           replacementRunAttempt,
           reason: request.reason,
+          evidenceClass,
           principalId: principalId ?? null,
         },
       });
@@ -693,6 +947,7 @@ export class RecoveryRunReplacementService {
         replacementRunAttempt,
         replacementRunState: admitted.state,
         reason: request.reason,
+        evidenceClass,
       };
     } catch (error) {
       await this.deps.orchestrator.idempotency
@@ -733,6 +988,7 @@ export class RecoveryRunReplacementService {
       replacementRunAttempt: existing.replacementRunAttempt,
       replacementRunState: replacement?.state ?? null,
       reason: existing.reason,
+      evidenceClass: existing.evidenceClass,
     };
   }
 
@@ -747,6 +1003,7 @@ export class RecoveryRunReplacementService {
     objectiveVersion: number;
     predecessor: RunRecord;
     reason: RunReplacementReason;
+    evidenceClass: RunReplacementEvidenceClass;
   }): Promise<RecoveryRunReplacementResult> {
     if (
       input.reserved.status === "OBJECTIVE_VERSION_CONFLICT" ||
@@ -790,6 +1047,7 @@ export class RecoveryRunReplacementService {
       replacementRunAttempt: existingRun.runAttempt,
       replacementRunState: existingRun.state,
       reason: input.reason,
+      evidenceClass: input.evidenceClass,
     };
   }
 

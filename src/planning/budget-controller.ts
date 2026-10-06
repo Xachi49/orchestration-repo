@@ -23,7 +23,7 @@ export interface ContextBudgetConfig {
 
 export const DEFAULT_CONTEXT_BUDGET: ContextBudgetConfig = {
   maxEvidenceCount: 24,
-  maxExcerptChars: 48_000,
+  maxExcerptChars: 24_000,
   maxExcerptCharsPerItem: 4_000,
 };
 

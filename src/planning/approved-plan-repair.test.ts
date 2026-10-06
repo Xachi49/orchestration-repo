@@ -198,7 +198,7 @@ describe("deterministic binder + planning gate", () => {
     expect(plan?.planHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it("model conflicting rr_case fails closed at planning", async () => {
+  it("model conflicting rr_case is replaced by the canonical case at planning", async () => {
     const product = await seedProduct();
     const model = createRecoveryEmailPlanningModel({
       recoveryCaseId: "rcase_attacker",
@@ -239,9 +239,16 @@ describe("deterministic binder + planning gate", () => {
       EXAMPLE_PROJECT_ID,
       EXAMPLE_ENVIRONMENT,
     );
-    await expect(stack.planning.plan(admitted.runId)).rejects.toMatchObject({
-      code: "RECOVERY_TARGET_BINDING_FAILED",
-    });
+    const planned = await stack.planning.plan(admitted.runId);
+    expect(planned.outcome).toBe("PLANNED");
+    const plan = await stack.plans.getByRunId(admitted.runId);
+    expect(plan?.plan.steps[0]?.targetIds).toEqual([
+      `rr_case:${product.recoveryCase.recoveryCaseId}`,
+      `rr_lead:${product.lead.leadId}`,
+      `rr_template:${product.template.templateId}@1`,
+    ]);
+    expect(JSON.stringify(plan?.plan.steps)).not.toContain("rcase_attacker");
+    expect(JSON.stringify(plan?.plan.steps)).not.toContain("lead_attacker");
   });
 });
 
